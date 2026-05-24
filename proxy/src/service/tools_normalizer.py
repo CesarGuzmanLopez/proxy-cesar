@@ -20,6 +20,70 @@ class NormalizationMetadata:
     affected_turns: list[int] = field(default_factory=list)
 
 
+def _find_tool_result(tc_id: str, messages: list[dict], start_idx: int) -> dict | None:
+    """Find the tool result message for a given tool_call_id."""
+    for j in range(start_idx, len(messages)):
+        result_msg = messages[j]
+        if (
+            result_msg.get("role") == "tool"
+            and result_msg.get("tool_call_id") == tc_id
+        ):
+            return result_msg
+    return None
+
+
+def _serialize_parallel_turn(
+    msg: dict,
+    tool_calls: list[dict],
+    turn_number: int,
+    messages: list[dict],
+    msg_index: int,
+    normalized: list[dict],
+    skip_tool_results: set[str],
+    meta: NormalizationMetadata,
+) -> None:
+    """Serialize one turn with parallel tool calls into sequential assistant+tool pairs."""
+    meta.turns_serialized += 1
+    meta.affected_turns.append(turn_number)
+    meta.parallel_calls_serialized += len(tool_calls)
+
+    for idx, tc in enumerate(tool_calls):
+        serialized_msg: dict = {
+            "role": "assistant",
+            "content": msg.get("content") if idx == 0 else None,
+            "tool_calls": [tc],
+        }
+        normalized.append(serialized_msg)
+
+        # Find the corresponding tool result
+        tc_id = tc.get("id", "")
+        result_msg = _find_tool_result(tc_id, messages, msg_index + 1)
+        if result_msg is not None:
+            normalized.append(copy.deepcopy(result_msg))
+            skip_tool_results.add(tc_id)
+
+        # Insert annotation (except after the last call)
+        if idx < len(tool_calls) - 1:
+            normalized.append({
+                "role": "system",
+                "content": (
+                    f"[TOOL_SERIALIZED: originally parallel in "
+                    f"turn #{turn_number}, call {idx + 1} of "
+                    f"{len(tool_calls)}]"
+                ),
+            })
+
+
+def _build_parallel_call_ids(messages: list[dict]) -> set[str]:
+    """Build a set of tool_call_ids that belong to parallel groups."""
+    parallel_call_ids: set[str] = set()
+    for msg in messages:
+        if msg.get("role") == "assistant" and len(msg.get("tool_calls", [])) > 1:
+            for tc in msg["tool_calls"]:
+                parallel_call_ids.add(tc.get("id", ""))
+    return parallel_call_ids
+
+
 def normalize_history(
     messages: list[dict],
 ) -> tuple[list[dict], NormalizationMetadata]:
@@ -35,83 +99,37 @@ def normalize_history(
     Returns:
         Tuple of (normalized_messages, NormalizationMetadata).
         Original messages are NEVER modified — a deep copy is returned.
-
-    Rules:
-        1. Only modify messages that have >1 tool_call in an assistant message
-        2. Keep original tool_call IDs intact
-        3. Insert [TOOL_SERIALIZED] annotation messages between serialized groups
-        4. Preserve all non-tool content (system, user, text responses)
-        5. Original history is NEVER modified in-place — return a deep copy
     """
     normalized: list[dict] = []
     meta = NormalizationMetadata()
 
-    # Build a set of tool_call_ids that belong to parallel groups
-    parallel_call_ids: set[str] = set()
-    for msg in messages:
-        if msg.get("role") == "assistant" and len(msg.get("tool_calls", [])) > 1:
-            for tc in msg["tool_calls"]:
-                parallel_call_ids.add(tc.get("id", ""))
-
+    parallel_call_ids = _build_parallel_call_ids(messages)
     skip_tool_results: set[str] = set()
 
     for i, msg in enumerate(copy.deepcopy(messages)):
         tool_calls = msg.get("tool_calls", [])
 
         if msg.get("role") == "assistant" and len(tool_calls) > 1:
-            # This turn has parallel tool calls — serialize them
-            turn_number = i + 1
-            meta.turns_serialized += 1
-            meta.affected_turns.append(turn_number)
-            meta.parallel_calls_serialized += len(tool_calls)
-
-            for idx, tc in enumerate(tool_calls):
-                serialized_msg: dict = {
-                    "role": "assistant",
-                    "content": msg.get("content") if idx == 0 else None,
-                    "tool_calls": [tc],
-                }
-                normalized.append(serialized_msg)
-
-                # Find the corresponding tool result
-                tc_id = tc.get("id", "")
-                for j in range(i + 1, len(messages)):
-                    result_msg = messages[j]
-                    if (
-                        result_msg.get("role") == "tool"
-                        and result_msg.get("tool_call_id") == tc_id
-                    ):
-                        normalized.append(copy.deepcopy(result_msg))
-                        skip_tool_results.add(tc_id)
-                        break
-
-                # Insert annotation (except after the last call)
-                if idx < len(tool_calls) - 1:
-                    normalized.append({
-                        "role": "system",
-                        "content": (
-                            f"[TOOL_SERIALIZED: originally parallel in "
-                            f"turn #{turn_number}, call {idx + 1} of "
-                            f"{len(tool_calls)}]"
-                        ),
-                    })
+            _serialize_parallel_turn(
+                msg=msg, tool_calls=tool_calls, turn_number=i + 1,
+                messages=messages, msg_index=i,
+                normalized=normalized, skip_tool_results=skip_tool_results,
+                meta=meta,
+            )
 
         elif (
             msg.get("role") == "tool"
             and msg.get("tool_call_id", "") in skip_tool_results
         ):
-            # This tool result was already placed after its serialized call
             continue
 
         elif (
             msg.get("role") == "tool"
             and msg.get("tool_call_id", "") in parallel_call_ids
         ):
-            # This is a tool result for a parallel call we already handled
             continue
 
         else:
-            # Non-tool message or non-parallel message — pass through
             normalized.append(msg)
 
     return normalized, meta

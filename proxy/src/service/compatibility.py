@@ -17,6 +17,227 @@ from src.domain.capabilities import (
 )
 
 
+def _check_images(
+    from_pseudo_name: str, to_pseudo_name: str,
+    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+    config: ProxyConfigSchema,
+) -> CompatibilityResult | None:
+    """CHECK 1: Images → vision compatibility."""
+    if not caps.has_images:
+        return None
+
+    dest_has_vision = _any_vision(to_pseudo.physical_models)
+    if not dest_has_vision:
+        if to_pseudo.image_handling.on_downgrade == "auto_describe":
+            return CompatibilityResult(
+                status=CompatibilityStatus.WARNING,
+                reason="Images in history will be auto-described textually before migration (Sprint 5).",
+                details={"images_described_by": "current_vision_model"},
+            )
+        return CompatibilityResult(
+            status=CompatibilityStatus.BLOCKED,
+            reason=(
+                "Conversation contains images but destination pseudo-model "
+                "lacks vision support."
+            ),
+            remediation=[
+                "Enable 'auto_describe' on destination pseudo-model in pseudo_models.yaml",
+                "POST /conversations/{id}/degrade-images (available in Sprint 5)",
+            ],
+        )
+
+    # Both have vision — check for reduced visual capacity
+    from_pm = config.pseudo_models.get(from_pseudo_name)
+    if from_pm and _any_vision(from_pm.physical_models):
+        from_cw = from_pm.context_window
+        to_cw = to_pseudo.context_window
+        if from_cw and to_cw and to_cw < from_cw:
+            return CompatibilityResult(
+                status=CompatibilityStatus.WARNING,
+                reason=(
+                    f"Destination pseudo-model '{to_pseudo_name}' has "
+                    f"smaller context window ({to_cw} vs {from_cw}). "
+                    f"Reduced capacity for image processing."
+                ),
+                details={
+                    "from_context_window": from_cw,
+                    "to_context_window": to_cw,
+                },
+            )
+    return None
+
+
+def _check_audio(
+    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+) -> CompatibilityResult | None:
+    """CHECK 2: Audio in history → destination must support audio."""
+    if not caps.has_audio:
+        return None
+
+    to_has_audio = any(
+        getattr(m, "audio", False) for m in to_pseudo.physical_models
+    )
+    if not to_has_audio:
+        return CompatibilityResult(
+            status=CompatibilityStatus.BLOCKED,
+            reason=(
+                "Conversation contains audio content. No destination model "
+                "supports audio. Audio degradation is not available in v1."
+            ),
+            remediation=[
+                "Start a new conversation without audio content",
+                "Audio support is planned for v2",
+            ],
+        )
+    return None
+
+
+def _check_pdf(
+    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+) -> CompatibilityResult | None:
+    """CHECK 3: PDF in history → model without vision."""
+    if caps.has_pdf and not _any_vision(to_pseudo.physical_models):
+        return CompatibilityResult(
+            status=CompatibilityStatus.BLOCKED,
+            reason=(
+                "Conversation contains PDF files. Destination lacks vision support. "
+                "In v1, PDFs require vision models."
+            ),
+            remediation=[
+                "Use a vision-capable pseudo-model (avanzada-vision, flash-vision)",
+                "PDF text extraction is planned for v2",
+            ],
+        )
+    return None
+
+
+def _check_video(
+    caps: SessionCapabilities,
+) -> CompatibilityResult | None:
+    """CHECK 4: Video in history — not supported in v1."""
+    if caps.has_video:
+        return CompatibilityResult(
+            status=CompatibilityStatus.BLOCKED,
+            reason="Video content is not supported in any pseudo-model in v1.",
+            remediation=["Video support is planned for a future version"],
+        )
+    return None
+
+
+def _check_parallel_tools(
+    from_pseudo_name: str, to_pseudo_name: str,
+    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+    config: ProxyConfigSchema,
+) -> CompatibilityResult | None:
+    """CHECK 5: Parallel tools → destination must have parallel-capable models."""
+    if not caps.has_parallel_tools:
+        return None
+
+    parallel_eligible = [m for m in to_pseudo.physical_models if m.parallel_tools]
+    if not parallel_eligible:
+        return CompatibilityResult(
+            status=CompatibilityStatus.BLOCKED,
+            reason=(
+                "Conversation history contains parallel tool calls. "
+                "No model in the destination pseudo-model supports parallel tools."
+            ),
+            remediation=[
+                "POST /conversations/{id}/normalize-tools — serialize parallel calls to sequential (Sprint 3)",
+                "Switch to a pseudo-model with parallel_tools support",
+            ],
+        )
+
+    # Destination has parallel tools but fewer than source → WARNING
+    from_pm = config.pseudo_models.get(from_pseudo_name)
+    if from_pm:
+        from_parallel_count = sum(
+            1 for m in from_pm.physical_models if m.parallel_tools
+        )
+        if from_parallel_count > len(parallel_eligible):
+            return CompatibilityResult(
+                status=CompatibilityStatus.WARNING,
+                reason=(
+                    f"Destination pseudo-model '{to_pseudo_name}' has "
+                    f"fewer parallel-tool models ({len(parallel_eligible)}) "
+                    f"than source '{from_pseudo_name}' ({from_parallel_count}). "
+                    f"Existing parallel tool calls may be less reliable."
+                ),
+                details={
+                    "from_parallel_count": from_parallel_count,
+                    "to_parallel_count": len(parallel_eligible),
+                },
+            )
+    return None
+
+
+def _check_context(
+    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+) -> CompatibilityResult | None:
+    """CHECK 6: Context too large for destination."""
+    if to_pseudo.context_window and caps.total_tokens > to_pseudo.context_window:
+        return CompatibilityResult(
+            status=CompatibilityStatus.BLOCKED,
+            reason=(
+                f"Accumulated context ({caps.total_tokens} tokens) exceeds "
+                f"destination window ({to_pseudo.context_window} tokens)."
+            ),
+            remediation=[
+                "POST /conversations/{id}/compact — compact the conversation before switching (Sprint 6)",
+                "Switch to a pseudo-model with larger context window",
+            ],
+        )
+    return None
+
+
+def _check_tools_downgrade(
+    from_pseudo_name: str, to_pseudo: PseudoModelSchema,
+    caps: SessionCapabilities, config: ProxyConfigSchema,
+) -> CompatibilityResult | None:
+    """CHECK 7: Tools downgrade warning."""
+    if not caps.has_tools:
+        return None
+
+    to_strict_count = sum(1 for m in to_pseudo.physical_models if m.tools_strict)
+    from_pm = config.pseudo_models.get(from_pseudo_name)
+    from_strict_count = (
+        sum(1 for m in from_pm.physical_models if m.tools_strict) if from_pm else 0
+    )
+    if to_strict_count == 0 and from_strict_count > 0:
+        return CompatibilityResult(
+            status=CompatibilityStatus.WARNING,
+            reason=(
+                "Destination pseudo-model lacks models with tools_strict support. "
+                "Tool call parameter validation may be less reliable."
+            ),
+            details={
+                "from_strict_models": from_strict_count,
+                "to_strict_models": 0,
+            },
+        )
+    return None
+
+
+def _check_capacity_loss(
+    from_pseudo_name: str, to_pseudo_name: str,
+) -> CompatibilityResult | None:
+    """CHECK 8: General capacity loss when switching to budget models."""
+    _BUDGET_MODELS: set[str] = {"deep-flash", "flash-lowcost"}
+    if to_pseudo_name in _BUDGET_MODELS and from_pseudo_name not in _BUDGET_MODELS:
+        return CompatibilityResult(
+            status=CompatibilityStatus.WARNING,
+            reason=(
+                f"Switching to '{to_pseudo_name}', a budget model with "
+                f"reduced reasoning capacity and/or tool quality compared "
+                f"to '{from_pseudo_name}'."
+            ),
+            details={
+                "from_pseudo": from_pseudo_name,
+                "to_pseudo": to_pseudo_name,
+            },
+        )
+    return None
+
+
 def validate_switch(
     from_pseudo_name: str,
     to_pseudo_name: str,
@@ -43,178 +264,23 @@ def validate_switch(
             reason="Compactador is an operation, not a conversation model.",
         )
 
-    # ---- CHECK 1: Images → vision compatibility ----
-    if caps.has_images:
-        dest_has_vision = _any_vision(to_pseudo.physical_models)
-        if not dest_has_vision:
-            if to_pseudo.image_handling.on_downgrade == "auto_describe":
-                return CompatibilityResult(
-                    status=CompatibilityStatus.WARNING,
-                    reason="Images in history will be auto-described textually before migration (Sprint 5).",
-                    details={"images_described_by": "current_vision_model"},
-                )
-            return CompatibilityResult(
-                status=CompatibilityStatus.BLOCKED,
-                reason=(
-                    "Conversation contains images but destination pseudo-model "
-                    "lacks vision support."
-                ),
-                remediation=[
-                    "Enable 'auto_describe' on destination pseudo-model in pseudo_models.yaml",
-                    "POST /conversations/{id}/degrade-images (available in Sprint 5)",
-                ],
-            )
-        # Both source and destination have vision — check for reduced
-        # visual capacity (smaller context_window → fewer image tokens).
-        from_pm = config.pseudo_models.get(from_pseudo_name)
-        if from_pm and _any_vision(from_pm.physical_models):
-            from_cw = from_pm.context_window
-            to_cw = to_pseudo.context_window
-            if from_cw and to_cw and to_cw < from_cw:
-                return CompatibilityResult(
-                    status=CompatibilityStatus.WARNING,
-                    reason=(
-                        f"Destination pseudo-model '{to_pseudo_name}' has "
-                        f"smaller context window ({to_cw} vs {from_cw}). "
-                        f"Reduced capacity for image processing."
-                    ),
-                    details={
-                        "from_context_window": from_cw,
-                        "to_context_window": to_cw,
-                    },
-                )
+    # Run all compatibility checks in order
+    checks = [
+        _check_images(from_pseudo_name, to_pseudo_name, to_pseudo, caps, config),
+        _check_audio(to_pseudo, caps),
+        _check_pdf(to_pseudo, caps),
+        _check_video(caps),
+        _check_parallel_tools(from_pseudo_name, to_pseudo_name, to_pseudo, caps, config),
+        _check_context(to_pseudo, caps),
+        _check_tools_downgrade(from_pseudo_name, to_pseudo, caps, config),
+        _check_capacity_loss(from_pseudo_name, to_pseudo_name),
+    ]
 
-    # ---- CHECK 2: Audio in history ----
-    if caps.has_audio:
-        to_has_audio = any(
-            getattr(m, "audio", False) for m in to_pseudo.physical_models
-        )
-        if not to_has_audio:
-            return CompatibilityResult(
-                status=CompatibilityStatus.BLOCKED,
-                reason=(
-                    "Conversation contains audio content. No destination model "
-                    "supports audio. Audio degradation is not available in v1."
-                ),
-                remediation=[
-                    "Start a new conversation without audio content",
-                    "Audio support is planned for v2",
-                ],
-            )
+    for result in checks:
+        if result is not None:
+            return result
 
-    # ---- CHECK 3: PDF in history → model without vision ----
-    if caps.has_pdf and not _any_vision(to_pseudo.physical_models):
-        return CompatibilityResult(
-            status=CompatibilityStatus.BLOCKED,
-            reason=(
-                "Conversation contains PDF files. Destination lacks vision support. "
-                "In v1, PDFs require vision models."
-            ),
-            remediation=[
-                "Use a vision-capable pseudo-model (avanzada-vision, flash-vision)",
-                "PDF text extraction is planned for v2",
-            ],
-        )
-
-    # ---- CHECK 4: Video in history ----
-    if caps.has_video:
-        return CompatibilityResult(
-            status=CompatibilityStatus.BLOCKED,
-            reason="Video content is not supported in any pseudo-model in v1.",
-            remediation=["Video support is planned for a future version"],
-        )
-
-    # ---- CHECK 5: Parallel tools → destination lacks parallel models ----
-    if caps.has_parallel_tools:
-        parallel_eligible = [m for m in to_pseudo.physical_models if m.parallel_tools]
-        if not parallel_eligible:
-            return CompatibilityResult(
-                status=CompatibilityStatus.BLOCKED,
-                reason=(
-                    "Conversation history contains parallel tool calls. "
-                    "No model in the destination pseudo-model supports parallel tools."
-                ),
-                remediation=[
-                    "POST /conversations/{id}/normalize-tools — serialize parallel calls to sequential (Sprint 3)",
-                    "Switch to a pseudo-model with parallel_tools support",
-                ],
-            )
-        # Destination has parallel tools but fewer than source → WARNING
-        from_pm = config.pseudo_models.get(from_pseudo_name)
-        if from_pm:
-            from_parallel_count = sum(
-                1 for m in from_pm.physical_models if m.parallel_tools
-            )
-            if from_parallel_count > len(parallel_eligible):
-                return CompatibilityResult(
-                    status=CompatibilityStatus.WARNING,
-                    reason=(
-                        f"Destination pseudo-model '{to_pseudo_name}' has "
-                        f"fewer parallel-tool models ({len(parallel_eligible)}) "
-                        f"than source '{from_pseudo_name}' ({from_parallel_count}). "
-                        f"Existing parallel tool calls may be less reliable."
-                    ),
-                    details={
-                        "from_parallel_count": from_parallel_count,
-                        "to_parallel_count": len(parallel_eligible),
-                    },
-                )
-
-    # ---- CHECK 6: Context too large for destination ----
-    if to_pseudo.context_window and caps.total_tokens > to_pseudo.context_window:
-        return CompatibilityResult(
-            status=CompatibilityStatus.BLOCKED,
-            reason=(
-                f"Accumulated context ({caps.total_tokens} tokens) exceeds "
-                f"destination window ({to_pseudo.context_window} tokens)."
-            ),
-            remediation=[
-                "POST /conversations/{id}/compact — compact the conversation before switching (Sprint 6)",
-                "Switch to a pseudo-model with larger context window",
-            ],
-        )
-
-    # ---- CHECK 7: Tools downgrade warning ----
-    if caps.has_tools:
-        to_strict_count = sum(1 for m in to_pseudo.physical_models if m.tools_strict)
-        from_pm = config.pseudo_models.get(from_pseudo_name)
-        from_strict_count = (
-            sum(1 for m in from_pm.physical_models if m.tools_strict) if from_pm else 0
-        )
-        if to_strict_count == 0 and from_strict_count > 0:
-            return CompatibilityResult(
-                status=CompatibilityStatus.WARNING,
-                reason=(
-                    "Destination pseudo-model lacks models with tools_strict support. "
-                    "Tool call parameter validation may be less reliable."
-                ),
-                details={
-                    "from_strict_models": from_strict_count,
-                    "to_strict_models": 0,
-                },
-            )
-
-    # ---- CHECK 8: General capacity loss warning ----
-    # Warn when switching TO a budget model (deep-flash / flash-lowcost)
-    # from a more capable model. These are the only pseudo-models that
-    # represent a meaningful capacity downgrade warranting a warning
-    # (per compatibility matrix in analisis.md §8.2).
-    _BUDGET_MODELS: set[str] = {"deep-flash", "flash-lowcost"}
-    if to_pseudo_name in _BUDGET_MODELS and from_pseudo_name not in _BUDGET_MODELS:
-        return CompatibilityResult(
-            status=CompatibilityStatus.WARNING,
-            reason=(
-                f"Switching to '{to_pseudo_name}', a budget model with "
-                f"reduced reasoning capacity and/or tool quality compared "
-                f"to '{from_pseudo_name}'."
-            ),
-            details={
-                "from_pseudo": from_pseudo_name,
-                "to_pseudo": to_pseudo_name,
-            },
-        )
-
-    # ---- All checks passed → SAFE ----
+    # All checks passed → SAFE
     return CompatibilityResult(
         status=CompatibilityStatus.SAFE,
         reason="All capabilities compatible.",

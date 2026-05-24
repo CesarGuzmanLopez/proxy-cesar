@@ -29,6 +29,37 @@ def _get_encoding():
         return tiktoken.get_encoding("cl100k_base")
 
 
+def _scan_multimodal_content(content: list, caps: TurnCapabilities) -> None:
+    """Scan multimodal content parts for images, audio, PDF, video."""
+    for part in content:
+        part_type = part.get("type", "")
+
+        if part_type == "image_url":
+            caps.has_images = True
+        elif part_type == "input_audio":
+            caps.has_audio = True
+        elif part_type == "file":
+            mime = part.get("mime_type", part.get("mimetype", ""))
+            mime_lower = mime.lower()
+            if "pdf" in mime_lower:
+                caps.has_pdf = True
+            elif any(
+                v in mime_lower for v in ("video/", "mp4", "webm", "avi")
+            ):
+                caps.has_video = True
+        elif part_type in ("video_url", "video"):
+            caps.has_video = True
+
+
+def _scan_tool_calls(msg: dict, caps: TurnCapabilities) -> None:
+    """Scan a message for tool calls and parallel tool calls."""
+    tool_calls = msg.get("tool_calls")
+    if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
+        caps.has_tools = True
+        if len(tool_calls) > 1:
+            caps.has_parallel_tools = True
+
+
 def detect_turn_capabilities(
     messages: list[dict],
     tools: list[dict] | None = None,
@@ -56,38 +87,10 @@ def detect_turn_capabilities(
 
         # 2. Content is an array (multimodal)
         if isinstance(content, list):
-            for part in content:
-                part_type = part.get("type", "")
-
-                # 2a. Images: type "image_url"
-                if part_type == "image_url":
-                    caps.has_images = True
-
-                # 2b. Audio: type "input_audio"
-                elif part_type == "input_audio":
-                    caps.has_audio = True
-
-                # 2c. File (PDF or video)
-                elif part_type == "file":
-                    mime = part.get("mime_type", part.get("mimetype", ""))
-                    mime_lower = mime.lower()
-                    if "pdf" in mime_lower:
-                        caps.has_pdf = True
-                    elif any(
-                        v in mime_lower for v in ("video/", "mp4", "webm", "avi")
-                    ):
-                        caps.has_video = True
-
-                # 2d. Video: type "video_url" or "video"
-                elif part_type in ("video_url", "video"):
-                    caps.has_video = True
+            _scan_multimodal_content(content, caps)
 
         # 3. Tool calls in assistant messages
-        tool_calls = msg.get("tool_calls")
-        if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
-            caps.has_tools = True
-            if len(tool_calls) > 1:
-                caps.has_parallel_tools = True
+        _scan_tool_calls(msg, caps)
 
         # 4. Tool results (role: "tool")
         if msg.get("role") == "tool":
@@ -158,6 +161,75 @@ async def accumulate_capabilities(
     return updated
 
 
+def _count_string_content(encoding, content: str) -> int:
+    """Count tokens in a plain string content."""
+    return len(encoding.encode(content))
+
+
+def _count_multimodal_content(encoding, content: list) -> int:
+    """Count tokens in multimodal content (array of parts)."""
+    total = 0
+    for part in content:
+        text = part.get("text", "")
+        if text:
+            total += len(encoding.encode(text))
+    return total
+
+
+def _count_tool_arguments(encoding, msg: dict) -> int:
+    """Count tokens in tool call arguments of a message."""
+    total = 0
+    for tc in msg.get("tool_calls") or []:
+        args = tc.get("function", {}).get("arguments", "")
+        if args:
+            total += len(encoding.encode(args))
+    return total
+
+
+def _count_tool_result(encoding, msg: dict) -> int:
+    """Count tokens in tool result content."""
+    if msg.get("role") != "tool":
+        return 0
+    result_content = msg.get("content", "")
+    if not result_content:
+        return 0
+    return len(encoding.encode(result_content))
+
+
+def _tiktoken_count(encoding, messages: list[dict]) -> int:
+    """Count tokens using tiktoken encoding."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += _count_string_content(encoding, content)
+        elif isinstance(content, list):
+            total += _count_multimodal_content(encoding, content)
+
+        total += _count_tool_arguments(encoding, msg)
+        total += _count_tool_result(encoding, msg)
+        total += 4  # Per-message overhead
+
+    return max(1, total)
+
+
+def _char_fallback_count(messages: list[dict]) -> int:
+    """Fallback: 4 chars = 1 token heuristic."""
+    total_chars = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total_chars += len(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part.get("text"), str):
+                    total_chars += len(part["text"])
+        for tc in msg.get("tool_calls") or []:
+            args = tc.get("function", {}).get("arguments", "")
+            total_chars += len(args)
+    return max(1, total_chars // 4)
+
+
 def estimate_tokens(messages: list[dict]) -> int:
     """Count tokens in messages using tiktoken.
 
@@ -172,46 +244,6 @@ def estimate_tokens(messages: list[dict]) -> int:
     """
     try:
         encoding = _get_encoding()
-        total = 0
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                total += len(encoding.encode(content))
-            elif isinstance(content, list):
-                for part in content:
-                    text = part.get("text", "")
-                    if text:
-                        total += len(encoding.encode(text))
-
-            # Tool call arguments
-            for tc in msg.get("tool_calls") or []:
-                args = tc.get("function", {}).get("arguments", "")
-                if args:
-                    total += len(encoding.encode(args))
-
-            # Tool result content
-            if msg.get("role") == "tool":
-                result_content = msg.get("content", "")
-                if result_content:
-                    total += len(encoding.encode(result_content))
-
-            # Per-message overhead (~4 tokens for role framing)
-            total += 4
-
-        return max(1, total)
+        return _tiktoken_count(encoding, messages)
     except Exception:
-        # Fallback: 4 chars = 1 token heuristic
-        total_chars = 0
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                total_chars += len(content)
-            elif isinstance(content, list):
-                for part in content:
-                    if isinstance(part.get("text"), str):
-                        total_chars += len(part["text"])
-            for tc in msg.get("tool_calls") or []:
-                args = tc.get("function", {}).get("arguments", "")
-                total_chars += len(args)
-
-        return max(1, total_chars // 4)
+        return _char_fallback_count(messages)

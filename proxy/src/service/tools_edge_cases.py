@@ -9,6 +9,52 @@ import json
 MAX_TOOL_RESULT_TOKENS = 8000
 
 
+def _process_tool_delta(
+    tc_delta: dict,
+    tool_calls_by_index: dict[int, dict],
+) -> None:
+    """Process a single tool call delta from a streaming chunk."""
+    idx = tc_delta.get("index", 0)
+    if idx not in tool_calls_by_index:
+        tool_calls_by_index[idx] = {
+            "id": tc_delta.get("id", ""),
+            "type": "function",
+            "function": {"name": "", "arguments_parts": []},
+        }
+
+    entry = tool_calls_by_index[idx]
+    if tc_delta.get("id"):
+        entry["id"] = tc_delta["id"]
+    if tc_delta.get("function"):
+        func = tc_delta["function"]
+        if func.get("name"):
+            entry["function"]["name"] += func["name"]
+        if func.get("arguments"):
+            entry["function"]["arguments_parts"].append(func["arguments"])
+
+
+def _assemble_tool_call(
+    idx: int, entry: dict, was_incomplete: bool,
+) -> tuple[dict | None, bool]:
+    """Assemble a single tool call from accumulated deltas, validating JSON."""
+    args = "".join(entry["function"]["arguments_parts"])
+
+    if args:
+        try:
+            json.loads(args)
+        except json.JSONDecodeError:
+            return None, True
+
+    return {
+        "id": entry["id"] or f"call_incomplete_{idx}",
+        "type": "function",
+        "function": {
+            "name": entry["function"]["name"],
+            "arguments": args,
+        },
+    }, was_incomplete
+
+
 async def accumulate_streaming_tool_calls(
     stream_generator,
 ) -> tuple[list[dict], bool]:
@@ -17,14 +63,6 @@ async def accumulate_streaming_tool_calls(
     plan-proxy.md §6.7: During SSE streaming, tool call arguments arrive
     in multiple chunks. If the stream is interrupted, the tool call is
     incomplete and marked as such.
-
-    Args:
-        stream_generator: Async generator yielding streaming chunks.
-
-    Returns:
-        Tuple of (complete_tool_calls, was_incomplete).
-        - complete_tool_calls: List of assembled tool call dicts (OpenAI format).
-        - was_incomplete: True if any tool call was incomplete or JSON-invalid.
     """
     tool_calls_by_index: dict[int, dict] = {}
     was_incomplete = False
@@ -40,23 +78,7 @@ async def accumulate_streaming_tool_calls(
                 continue
 
             for tc_delta in tool_call_deltas:
-                idx = tc_delta.get("index", 0)
-                if idx not in tool_calls_by_index:
-                    tool_calls_by_index[idx] = {
-                        "id": tc_delta.get("id", ""),
-                        "type": "function",
-                        "function": {"name": "", "arguments_parts": []},
-                    }
-
-                entry = tool_calls_by_index[idx]
-                if tc_delta.get("id"):
-                    entry["id"] = tc_delta["id"]
-                if tc_delta.get("function"):
-                    func = tc_delta["function"]
-                    if func.get("name"):
-                        entry["function"]["name"] += func["name"]
-                    if func.get("arguments"):
-                        entry["function"]["arguments_parts"].append(func["arguments"])
+                _process_tool_delta(tc_delta, tool_calls_by_index)
 
     except Exception:
         was_incomplete = True
@@ -65,24 +87,9 @@ async def accumulate_streaming_tool_calls(
     complete: list[dict] = []
     for idx in sorted(tool_calls_by_index.keys()):
         entry = tool_calls_by_index[idx]
-        args = "".join(entry["function"]["arguments_parts"])
-
-        # Validate JSON
-        if args:
-            try:
-                json.loads(args)
-            except json.JSONDecodeError:
-                was_incomplete = True
-                continue
-
-        complete.append({
-            "id": entry["id"] or f"call_incomplete_{idx}",
-            "type": "function",
-            "function": {
-                "name": entry["function"]["name"],
-                "arguments": args,
-            },
-        })
+        tc, was_incomplete = _assemble_tool_call(idx, entry, was_incomplete)
+        if tc is not None:
+            complete.append(tc)
 
     if not complete:
         was_incomplete = True
@@ -112,59 +119,81 @@ def truncate_tool_result(content: str, max_tokens: int = MAX_TOOL_RESULT_TOKENS)
     )
 
 
+def _extract_deepseek_thinking(message: dict) -> str | None:
+    """Extract DeepSeek reasoning_content field."""
+    reasoning = message.get("reasoning_content")
+    return str(reasoning) if reasoning else None
+
+
+def _extract_anthropic_thinking(content) -> str | None:
+    """Extract Anthropic thinking blocks from content."""
+    if not isinstance(content, list):
+        return None
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "thinking":
+            thinking_text = block.get("thinking", "")
+            if thinking_text:
+                return str(thinking_text)
+    return None
+
+
+def _extract_gemini_thinking(content) -> str | None:
+    """Extract Google Gemini thought parts from content."""
+    if not isinstance(content, list):
+        return None
+    thoughts: list[str] = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "thought":
+            text = part.get("text", "")
+            if text:
+                thoughts.append(str(text))
+    return "\n".join(thoughts) if thoughts else None
+
+
+def _extract_openai_thinking(response: dict, provider: str | None) -> str | None:
+    """Extract OpenAI o-series reasoning token info."""
+    if provider != "openai":
+        return None
+    usage = response.get("usage", {})
+    reasoning_tokens = usage.get("reasoning_tokens", 0)
+    if reasoning_tokens:
+        return (
+            f"[OpenAI reasoning tokens: {reasoning_tokens}. "
+            f"Raw reasoning content not exposed by API.]"
+        )
+    return None
+
+
 def extract_thinking_content(response: dict, provider: str | None = None) -> str | None:
     """Extract thinking/reasoning content from a provider-specific response.
 
     plan-proxy.md §6.7: Different providers expose thinking content differently.
     The proxy extracts and stores it to preserve cache affinity.
-
-    Args:
-        response: The response dict from LiteLLM.
-        provider: The provider name (deepseek, anthropic, google, openai).
-
-    Returns:
-        The extracted thinking text, or None if not available.
     """
     choices = response.get("choices", [])
     if not choices:
         return None
     message = choices[0].get("message", {})
 
-    # DeepSeek: reasoning_content field
-    reasoning = message.get("reasoning_content")
-    if reasoning:
-        return str(reasoning)
+    # DeepSeek
+    result = _extract_deepseek_thinking(message)
+    if result is not None:
+        return result
 
-    # Anthropic: content blocks with type="thinking"
     content = message.get("content", "")
-    if isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "thinking":
-                thinking_text = block.get("thinking", "")
-                if thinking_text:
-                    return str(thinking_text)
 
-    # Google Gemini: content parts with type="thought"
-    if isinstance(content, list):
-        thoughts: list[str] = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "thought":
-                text = part.get("text", "")
-                if text:
-                    thoughts.append(str(text))
-        if thoughts:
-            return "\n".join(thoughts)
+    # Anthropic
+    result = _extract_anthropic_thinking(content)
+    if result is not None:
+        return result
 
-    # OpenAI o-series: usage.reasoning_tokens (just token count)
-    usage = response.get("usage", {})
-    reasoning_tokens = usage.get("reasoning_tokens", 0)
-    if reasoning_tokens and provider == "openai":
-        return (
-            f"[OpenAI reasoning tokens: {reasoning_tokens}. "
-            f"Raw reasoning content not exposed by API.]"
-        )
+    # Gemini
+    result = _extract_gemini_thinking(content)
+    if result is not None:
+        return result
 
-    return None
+    # OpenAI
+    return _extract_openai_thinking(response, provider)
 
 
 def enforce_tool_choice(response: dict, tool_choice: str | None) -> bool:

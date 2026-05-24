@@ -15,6 +15,64 @@ from src.service.capability_detector import estimate_tokens
 from src.service.compactor.prompts import build_pre_compaction_prompt
 
 
+def _resolve_pre_compactor(config, compactor_name: str, input_tokens: int) -> tuple[str | None, dict | None]:
+    """Resolve the compactor physical model for pre-compaction.
+
+    Returns (compactor_model, error_metadata). If error_metadata is set,
+    compactor_model is None and the error should be returned to the caller.
+    """
+    compactor_pm = config.pseudo_models.get(compactor_name)
+    if compactor_pm is None:
+        return None, {
+            "applied": False,
+            "reason": f"compactor_pseudo_model_not_found: {compactor_name}",
+            "warning": (
+                f"Pre-compaction configured with compactor '{compactor_name}' "
+                f"but that pseudo-model does not exist. Proceeding with original input."
+            ),
+            "original_input_tokens": input_tokens,
+        }
+
+    if not compactor_pm.physical_models:
+        return None, {
+            "applied": False,
+            "reason": "compactor_no_physical_models",
+            "warning": f"Compactor '{compactor_name}' has no physical models. Proceeding with original input.",
+            "original_input_tokens": input_tokens,
+        }
+
+    return compactor_pm.physical_models[0].model, None
+
+
+async def _call_compactor_and_extract_summary(
+    compactor_model: str,
+    compaction_prompt: str,
+    target_tokens: int,
+) -> tuple[str, int]:
+    """Call the compactor model and extract the summary + token count."""
+    compaction_messages = [{"role": "user", "content": compaction_prompt}]
+
+    response = await call_litellm(
+        model=compactor_model,
+        messages=compaction_messages,
+        max_tokens=target_tokens,
+    )
+    response_dict = response.model_dump() if hasattr(response, "model_dump") else response
+    if isinstance(response_dict, dict):
+        choices = response_dict.get("choices", [])
+        summary = choices[0].get("message", {}).get("content", "") if choices else ""
+        usage = response_dict.get("usage", {})
+        summary_tokens = usage.get("completion_tokens", 0) or 0
+    else:
+        summary = response.choices[0].message.content
+        summary_tokens = getattr(response.usage, "completion_tokens", 0)
+
+    if not summary_tokens:
+        summary_tokens = estimate_tokens([{"role": "user", "content": summary or ""}])
+
+    return summary, summary_tokens
+
+
 async def pre_compact_input(
     messages: list[dict],
     pseudo_model: PseudoModelSchema,
@@ -24,26 +82,6 @@ async def pre_compact_input(
 
     Only modifies the LAST user message. System messages, tool history,
     and assistant messages are passed through unchanged.
-
-    Args:
-        messages: The original messages array from the request.
-        pseudo_model: The target pseudo-model (with pre_compaction config).
-        config: The proxy config (to resolve compactor pseudo-model).
-
-    Returns:
-        Tuple of (modified_messages, compaction_metadata).
-        If no compaction needed or compactor fails, returns original messages
-        with metadata explaining why.
-
-    Metadata keys:
-        - applied: bool
-        - reason: str (if not applied)
-        - original_input_tokens: int
-        - compacted_input_tokens: int (if applied)
-        - compactor_model: str (if applied)
-        - compactor_pseudo_model: str (if applied)
-        - savings_tokens: int (if applied)
-        - warning: str (if compactor failed)
     """
     threshold = pseudo_model.pre_compaction.threshold
     target_tokens = pseudo_model.pre_compaction.target_tokens
@@ -69,27 +107,9 @@ async def pre_compact_input(
         }
 
     # Resolve compactor model
-    compactor_pm = config.pseudo_models.get(compactor_name)
-    if compactor_pm is None:
-        return messages, {
-            "applied": False,
-            "reason": f"compactor_pseudo_model_not_found: {compactor_name}",
-            "warning": (
-                f"Pre-compaction configured with compactor '{compactor_name}' "
-                f"but that pseudo-model does not exist. Proceeding with original input."
-            ),
-            "original_input_tokens": input_tokens,
-        }
-
-    if not compactor_pm.physical_models:
-        return messages, {
-            "applied": False,
-            "reason": "compactor_no_physical_models",
-            "warning": f"Compactor '{compactor_name}' has no physical models. Proceeding with original input.",
-            "original_input_tokens": input_tokens,
-        }
-
-    compactor_model = compactor_pm.physical_models[0].model
+    compactor_model, error_meta = _resolve_pre_compactor(config, compactor_name, input_tokens)
+    if error_meta:
+        return messages, error_meta
 
     # Build compaction prompt
     user_message = messages[last_user_idx]
@@ -100,31 +120,13 @@ async def pre_compact_input(
     )
 
     # Call compactor
-    compaction_messages = [{"role": "user", "content": compaction_prompt}]
-
     try:
-        response = await call_litellm(
-            model=compactor_model,
-            messages=compaction_messages,
-            max_tokens=target_tokens or 8000,
+        summary, summary_tokens = await _call_compactor_and_extract_summary(
+            compactor_model=compactor_model,
+            compaction_prompt=compaction_prompt,
+            target_tokens=target_tokens or 8000,
         )
-        response_dict = response.model_dump() if hasattr(response, "model_dump") else response
-        if isinstance(response_dict, dict):
-            choices = response_dict.get("choices", [])
-            if choices:
-                summary = choices[0].get("message", {}).get("content", "")
-            else:
-                summary = ""
-        else:
-            summary = response.choices[0].message.content
-        summary_tokens = 0
-        if isinstance(response_dict, dict):
-            usage = response_dict.get("usage", {})
-            summary_tokens = usage.get("completion_tokens", 0) or 0
-        if not summary_tokens:
-            summary_tokens = estimate_tokens([{"role": "user", "content": summary or ""}])
     except Exception as exc:
-        # Compactor failed — pass through original input with warning
         return messages, {
             "applied": False,
             "reason": f"compactor_failed: {exc}",

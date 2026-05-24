@@ -430,6 +430,29 @@ async def handle_auto_describe(
     return desc_meta
 
 
+async async def _assemble_snapshot_context(
+    conv: Conversation,
+    db: AsyncSession,
+    active_messages: list[dict],
+) -> list[dict] | None:
+    """If conversation has an active snapshot, assemble context with snapshot + last user message.
+
+    Returns the assembled context, or None if no snapshot exists.
+    """
+    if not conv.active_snapshot_id:
+        return None
+
+    context = await assemble_context(conv, db)
+
+    # Find and append the last user message
+    for m in reversed(active_messages):
+        if m.get("role") == "user":
+            context.append(m)
+            break
+
+    return context
+
+
 async def _apply_compaction(
     conv: Conversation,
     is_new_conversation: bool,
@@ -484,16 +507,9 @@ async def _apply_compaction(
         state["continuous_compaction_metadata"] = cc_meta
 
     # Assemble context if snapshot exists
-    if conv is not None and conv.active_snapshot_id:
-        context = await assemble_context(conv, db)
-        last_user = None
-        for m in reversed(active):
-            if m.get("role") == "user":
-                last_user = m
-                break
-        if last_user:
-            context.append(last_user)
-        state["active_messages"] = context
+    snapshot_context = await _assemble_snapshot_context(conv, db, active)
+    if snapshot_context is not None:
+        state["active_messages"] = snapshot_context
 
     return state
 
@@ -502,33 +518,13 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
     """Steps 14-20: Build turn, save to DB, accumulate capabilities, return result."""
     response_dict = ctx.response.model_dump() if hasattr(ctx.response, "model_dump") else ctx.response
 
-    input_tokens = 0
-    output_tokens = 0
-    if isinstance(response_dict, dict):
-        usage = response_dict.get("usage", {})
-        if usage:
-            input_tokens = usage.get("prompt_tokens", 0) or 0
-            output_tokens = usage.get("completion_tokens", 0) or 0
+    input_tokens, output_tokens = _parse_usage(response_dict)
+    tool_meta = _process_tool_metadata(response_dict, ctx)
 
-    tool_defs: list[dict] | None = ctx.tools
-    tool_calls = extract_tool_calls_from_response(response_dict) if tool_defs else []
-    if tool_calls:
-        try:
-            validate_tool_call_ids(tool_calls)
-        except ValueError:
-            ctx.turn_caps.tools_incomplete = True
-
-    if ctx.tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, ctx.tool_choice):
-        ctx.turn_caps.tools_incomplete = True
-
-    thinking_content = extract_thinking_content(response_dict, ctx.provider)
-
-    tools_incomplete = ctx.turn_caps.tools_incomplete
-    tools_level = determine_tool_level_for_turn(
-        tool_calls=tool_calls,
-        tool_definitions=tool_defs,
-        tools_incomplete=tools_incomplete,
-    )
+    tool_defs = ctx.tools
+    tools_incomplete = tool_meta["tools_incomplete"]
+    tools_level = tool_meta["tools_level"]
+    thinking_content = tool_meta["thinking_content"]
 
     tool_result_truncated = False
     for msg in ctx.messages:
@@ -705,6 +701,49 @@ async def evaluate_router_suggestion(
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _parse_usage(response_dict: dict) -> tuple[int, int]:
+    """Extract prompt and completion tokens from response."""
+    if not isinstance(response_dict, dict):
+        return 0, 0
+    usage = response_dict.get("usage", {})
+    if not usage:
+        return 0, 0
+    return (
+        usage.get("prompt_tokens", 0) or 0,
+        usage.get("completion_tokens", 0) or 0,
+    )
+
+
+def _process_tool_metadata(response_dict: dict, ctx) -> dict:
+    """Extract tool calls, validate, determine level, extract thinking."""
+    tool_defs = ctx.tools
+    tool_calls = extract_tool_calls_from_response(response_dict) if tool_defs else []
+
+    if tool_calls:
+        try:
+            validate_tool_call_ids(tool_calls)
+        except ValueError:
+            ctx.turn_caps.tools_incomplete = True
+
+    if ctx.tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, ctx.tool_choice):
+        ctx.turn_caps.tools_incomplete = True
+
+    thinking_content = extract_thinking_content(response_dict, ctx.provider)
+    tools_incomplete = ctx.turn_caps.tools_incomplete
+    tools_level = determine_tool_level_for_turn(
+        tool_calls=tool_calls,
+        tool_definitions=tool_defs,
+        tools_incomplete=tools_incomplete,
+    )
+
+    return {
+        "tool_calls": tool_calls,
+        "tools_incomplete": tools_incomplete,
+        "tools_level": tools_level,
+        "thinking_content": thinking_content,
+    }
 
 
 def _suggest_higher_threshold_models(

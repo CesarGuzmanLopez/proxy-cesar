@@ -162,6 +162,109 @@ async def handle_external_compaction(
 # ── Continuous Compaction ─────────────────────────────────────────────────
 
 
+def _select_turns_to_compact(
+    turns: list[ConversationTurn],
+    preserve_recent: int | None,
+) -> tuple[list[ConversationTurn], list[ConversationTurn]]:
+    """Select which turns to compact and which to preserve.
+
+    Walks turns from most recent backwards, preserving up to preserve_recent tokens.
+    Returns (compact_turns, preserved_turns).
+    """
+    compact_turns: list[ConversationTurn] = []
+    preserved_turns: list[ConversationTurn] = []
+    accumulated_tokens = 0
+
+    for turn in reversed(turns):
+        turn_tokens = turn.input_tokens + turn.output_tokens
+        if accumulated_tokens + turn_tokens <= (preserve_recent or 0):
+            preserved_turns.insert(0, turn)
+            accumulated_tokens += turn_tokens
+        else:
+            compact_turns.insert(0, turn)
+
+    return compact_turns, preserved_turns
+
+
+async def _build_compaction_history(
+    db: AsyncSession,
+    conversation: Conversation,
+    compact_turns: list[ConversationTurn],
+) -> list[dict]:
+    """Build the history list to send to the compactor.
+
+    Includes existing active snapshot if present, plus all messages from compact turns.
+    """
+    history: list[dict] = []
+
+    if conversation.active_snapshot_id:
+        snapshot = await db.get(ConversationSnapshot, conversation.active_snapshot_id)
+        if snapshot:
+            history.append({
+                "role": "system",
+                "content": (
+                    f"[Previous snapshot from turn {snapshot.turn_number_at_compaction}]\n\n"
+                    f"{snapshot.snapshot_content}"
+                ),
+            })
+
+    for turn in compact_turns:
+        turn_messages = turn.messages
+        if isinstance(turn_messages, list):
+            history.extend(turn_messages)
+
+    return history
+
+
+def _resolve_compactor_model(pseudo_model: PseudoModelSchema, config) -> tuple[str | None, str | None]:
+    """Resolve the compactor physical model name.
+
+    Returns (compactor_model, error_reason). If error_reason is set, compactor_model is None.
+    """
+    compactor_name = "deep-flash"
+    if pseudo_model.pre_compaction.enabled and pseudo_model.pre_compaction.compactor:
+        compactor_name = pseudo_model.pre_compaction.compactor
+
+    compactor_pm = config.pseudo_models.get(compactor_name)
+    if not compactor_pm or not compactor_pm.physical_models:
+        return None, f"compactor_not_available: {compactor_name}"
+
+    return compactor_pm.physical_models[0].model, None
+
+
+async def _store_compaction_snapshot(
+    db: AsyncSession,
+    conversation: Conversation,
+    compactor_model: str,
+    snapshot_content: str,
+    snapshot_tokens: int,
+    estimated_input: int,
+    total_turns: int,
+) -> str:
+    """Store a new snapshot in DB, chain with previous, update active_snapshot_id."""
+    new_snapshot = ConversationSnapshot(
+        conversation_id=conversation.id,
+        snapshot_type="continuous",
+        tokens_before=estimated_input,
+        tokens_after=snapshot_tokens,
+        compactor_model=compactor_model,
+        snapshot_content=snapshot_content or "",
+        turn_number_at_compaction=total_turns,
+    )
+    db.add(new_snapshot)
+    await db.flush()
+
+    if conversation.active_snapshot_id:
+        old_snapshot = await db.get(ConversationSnapshot, conversation.active_snapshot_id)
+        if old_snapshot:
+            old_snapshot.superseded_by = new_snapshot.id
+
+    conversation.active_snapshot_id = new_snapshot.id
+    await db.flush()
+
+    return str(new_snapshot.id)
+
+
 async def continuous_compact(
     conversation: Conversation,
     pseudo_model: PseudoModelSchema,
@@ -172,26 +275,6 @@ async def continuous_compact(
 
     Compacts old turns into a structured snapshot when accumulated context
     exceeds trigger_pct of the context window.
-
-    Args:
-        conversation: The conversation from DB (must have total_tokens).
-        pseudo_model: The pseudo-model schema with continuous_compaction config.
-        config: The proxy config.
-        db: Database session.
-
-    Returns:
-        Metadata dict about the compaction.
-
-    Metadata keys:
-        - applied: bool
-        - reason: str (if not applied)
-        - tokens_before: int
-        - tokens_after: int
-        - compactor_model: str (if applied)
-        - turns_compacted: int
-        - turns_preserved: int
-        - snapshot_id: str (if applied)
-        - warning: str (if compactor failed)
     """
     trigger_pct = pseudo_model.continuous_compaction.trigger_pct
     preserve_recent = pseudo_model.continuous_compaction.compact_preserve_recent
@@ -222,57 +305,23 @@ async def continuous_compact(
         return {"applied": False, "reason": "not_enough_turns_to_compact"}
 
     # Determine which turns to compact vs preserve
-    compact_turns: list[ConversationTurn] = []
-    preserved_turns: list[ConversationTurn] = []
-    accumulated_tokens = 0
-
-    for turn in reversed(turns):
-        turn_tokens = turn.input_tokens + turn.output_tokens
-        if accumulated_tokens + turn_tokens <= (preserve_recent or 0):
-            preserved_turns.insert(0, turn)
-            accumulated_tokens += turn_tokens
-        else:
-            compact_turns.insert(0, turn)
+    compact_turns, preserved_turns = _select_turns_to_compact(turns, preserve_recent)
 
     if len(compact_turns) < 3:
         return {"applied": False, "reason": "not_enough_turns_to_compact"}
 
-    # Build history to compact (include existing active snapshot)
-    history_to_compact: list[dict] = []
+    # Build history to compact
+    history_to_compact = await _build_compaction_history(db, conversation, compact_turns)
 
-    if conversation.active_snapshot_id:
-        snapshot = await db.get(ConversationSnapshot, conversation.active_snapshot_id)
-        if snapshot:
-            history_to_compact.append({
-                "role": "system",
-                "content": (
-                    f"[Previous snapshot from turn {snapshot.turn_number_at_compaction}]\n\n"
-                    f"{snapshot.snapshot_content}"
-                ),
-            })
-
-    for turn in compact_turns:
-        turn_messages = turn.messages
-        if isinstance(turn_messages, list):
-            history_to_compact.extend(turn_messages)
-
-    # Build compaction prompt
+    # Resolve compactor model
     compaction_prompt = build_continuous_compaction_prompt()
-
-    # Select compactor model
-    compactor_name = "deep-flash"
-    if pseudo_model.pre_compaction.enabled and pseudo_model.pre_compaction.compactor:
-        compactor_name = pseudo_model.pre_compaction.compactor
-
-    compactor_pm = config.pseudo_models.get(compactor_name)
-    if not compactor_pm or not compactor_pm.physical_models:
+    compactor_model, error_reason = _resolve_compactor_model(pseudo_model, config)
+    if error_reason:
         return {
             "applied": False,
-            "reason": f"compactor_not_available: {compactor_name}",
-            "warning": f"Continuous compaction cannot run: compactor '{compactor_name}' is not available.",
+            "reason": error_reason,
+            "warning": f"Continuous compaction cannot run: compactor not available.",
         }
-
-    compactor_model = compactor_pm.physical_models[0].model
 
     # Call compactor
     compaction_messages = [
@@ -288,7 +337,7 @@ async def continuous_compact(
         response = await call_litellm(
             model=compactor_model,
             messages=compaction_messages,
-            max_tokens=8000,  # Target snapshot size
+            max_tokens=8000,
         )
         response_dict = response.model_dump() if hasattr(response, "model_dump") else response
         if isinstance(response_dict, dict):
@@ -311,26 +360,15 @@ async def continuous_compact(
         }
 
     # Store snapshot
-    new_snapshot = ConversationSnapshot(
-        conversation_id=conversation.id,
-        snapshot_type="continuous",
-        tokens_before=estimated_input,
-        tokens_after=snapshot_tokens,
+    snapshot_id = await _store_compaction_snapshot(
+        db=db,
+        conversation=conversation,
         compactor_model=compactor_model,
-        snapshot_content=snapshot_content or "",
-        turn_number_at_compaction=len(turns),
+        snapshot_content=snapshot_content,
+        snapshot_tokens=snapshot_tokens,
+        estimated_input=estimated_input,
+        total_turns=len(turns),
     )
-    db.add(new_snapshot)
-    await db.flush()
-
-    # Chain with previous snapshot
-    if conversation.active_snapshot_id:
-        old_snapshot = await db.get(ConversationSnapshot, conversation.active_snapshot_id)
-        if old_snapshot:
-            old_snapshot.superseded_by = new_snapshot.id
-
-    conversation.active_snapshot_id = new_snapshot.id
-    await db.flush()
 
     return {
         "applied": True,
@@ -339,7 +377,7 @@ async def continuous_compact(
         "compactor_model": compactor_model,
         "turns_compacted": len(compact_turns),
         "turns_preserved": len(preserved_turns),
-        "snapshot_id": str(new_snapshot.id),
+        "snapshot_id": snapshot_id,
         "snapshot_type": "continuous",
     }
 
