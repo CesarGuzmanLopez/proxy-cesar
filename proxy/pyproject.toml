@@ -1,0 +1,37 @@
+[project]
+name = "proxy-cesar"
+version = "0.1.0"
+description = "Deterministic multi-model proxy for LLMs"
+requires-python = ">=3.13,<3.14"
+packages = [{ include = "src", from = "." }]
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.34,<0.35",
+    "litellm>=1.55,<1.56",
+    "pydantic>=2.11,<3.0",
+    "pydantic-settings>=2.7,<2.8",
+    "sqlmodel>=0.0.38,<0.1",
+    "asyncpg>=0.30,<0.31",
+    "alembic>=1.14,<1.15",
+    "valkey>=5.0,<7.0",
+    "httpx>=0.23,<0.28",
+    "pyyaml>=6.0,<6.1",
+    "python-dotenv>=1.0,<1.1",
+    "tiktoken>=0.9,<0.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<8.4",
+    "pytest-asyncio>=0.24,<0.25",
+    "pytest-mock>=3.14,<3.15",
+    "httpx>=0.23,<0.28",
+    "fakeredis[lua]>=2.26,<2.27",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: Integration tests that require API keys and real provider calls.",
+]

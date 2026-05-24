@@ -1,0 +1,49 @@
+"""GET /health — Service health check.
+
+sprint §11 — no auth required, never returns 500.
+"""
+
+import os
+
+from fastapi import APIRouter, Request
+from sqlalchemy import text
+
+router = APIRouter()
+
+
+@router.get("/health")
+async def health(request: Request):
+    """Return health status of proxy and its dependencies."""
+    app_state = request.app.state
+    config = app_state.config
+
+    # Check PostgreSQL
+    postgres_status = "connected"
+    try:
+        async with app_state.db_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception:
+        postgres_status = "disconnected"
+
+    # Check Valkey
+    valkey_status = "connected"
+    try:
+        await app_state.valkey.ping()
+    except Exception:
+        valkey_status = "disconnected"
+
+    # Check providers (API keys configured)
+    providers = {}
+    for provider in ["anthropic", "openrouter", "google", "deepseek", "groq", "zhipu"]:
+        key_env = f"{provider.upper()}_API_KEY"
+        providers[provider] = "configured" if os.getenv(key_env) else "not configured"
+
+    overall = "ok" if postgres_status == "connected" and valkey_status == "connected" else "degraded"
+
+    return {
+        "status": overall,
+        "postgres": postgres_status,
+        "valkey": valkey_status,
+        "providers": providers,
+        "pseudo_models_loaded": len(config.pseudo_models),
+    }
