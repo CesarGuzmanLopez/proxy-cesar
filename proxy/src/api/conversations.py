@@ -7,7 +7,7 @@ Sprint 3 §4.3: POST /conversations/{id}/normalize-tools.
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationTurn
@@ -46,10 +46,12 @@ async def get_conversation(
                 },
             )
 
-        # Count turns
-        turn_count = 0
-        if conv.turns:
-            turn_count = len(conv.turns)
+        # Count turns (avoid lazy load of conv.turns)
+        result = await db.execute(
+            select(func.count(ConversationTurn.id))
+            .where(ConversationTurn.conversation_id == conv_uuid)
+        )
+        turn_count = result.scalar() or 0
 
         # Load capabilities safely (handle missing fields gracefully)
         has_images = getattr(conv, "capability_has_images", False)
@@ -76,7 +78,7 @@ async def get_conversation(
                 "has_parallel_tools": has_parallel,
             },
             "max_tools_level": max_tools_level,
-            "active_snapshot_id": None,
+            "active_snapshot_id": str(conv.active_snapshot_id) if conv.active_snapshot_id else None,
         }
     finally:
         await db.close()

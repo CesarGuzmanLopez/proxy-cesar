@@ -27,7 +27,7 @@ async def test_1_new_conversation(async_client: AsyncClient, mock_litellm):
     data = response.json()
     assert "proxy_metadata" in data
     assert data["proxy_metadata"]["pseudo_model"] == "normal"
-    assert data["proxy_metadata"]["physical_model"] == "qwen3-max"
+    assert data["proxy_metadata"]["physical_model"] == "openrouter/qwen3-max"
     assert data["proxy_metadata"]["conversation_id"] == "conv-test-1"
 
 
@@ -195,6 +195,14 @@ async def test_9_streaming_returns_sse(async_client: AsyncClient, mock_litellm):
     async def mock_stream():
         chunk = MagicMock()
         chunk.model_dump_json.return_value = '{"id":"test","choices":[]}'
+        # Provide usage so _stream_response_generator can extract token counts
+        chunk.usage = MagicMock()
+        chunk.usage.prompt_tokens = 10
+        chunk.usage.completion_tokens = 5
+        chunk.model_dump.return_value = {
+            "id": "test",
+            "choices": [{"delta": {"content": "Hello"}}],
+        }
         yield chunk
 
     # Override the mock for this test

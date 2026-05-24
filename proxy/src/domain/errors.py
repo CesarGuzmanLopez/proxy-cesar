@@ -55,6 +55,23 @@ class ContentNotSupported:
     remediation: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class CompactorFailed:
+    """The compactor model failed to generate a snapshot."""
+
+    compactor_model: str
+    reason: str
+    original_input_preserved: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class CompactorNotFound:
+    """The compactor pseudo-model was not found in config."""
+
+    compactor_name: str
+    pseudo_model: str
+
+
 type DomainError = (
     PseudoModelNotFound
     | PhysicalModelNotInList
@@ -63,4 +80,6 @@ type DomainError = (
     | CapabilityIncompatible
     | InputExceedsThreshold
     | ContentNotSupported
+    | CompactorFailed
+    | CompactorNotFound
 )

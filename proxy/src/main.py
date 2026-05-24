@@ -9,6 +9,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -36,8 +37,11 @@ async def lifespan(app: FastAPI):
 
     # Database
     engine = create_async_engine(
-        settings.database_url, echo=False, pool_size=5, max_overflow=10
+        settings.database_url, echo=False,
     )
+    # Create all tables (SQLite-friendly, no Alembic needed)
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
     app.state.db_session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )

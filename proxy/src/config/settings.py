@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     proxy_port: int = 9110
-    database_url: str = "postgresql+asyncpg://proxy:proxy@localhost:5432/proxy_db"
+    database_url: str = "sqlite+aiosqlite:///./proxy.db"
     valkey_url: str = "valkey://localhost:6379"
 
     # Provider API keys — passed to LiteLLM via os.environ

@@ -38,7 +38,7 @@ async def test_3_health_ok(async_client: AsyncClient):
     assert response.status_code == 200
     data = response.json()
     assert "status" in data
-    assert "postgres" in data
+    assert "database" in data
     assert "valkey" in data
     assert "providers" in data
     assert "pseudo_models_loaded" in data

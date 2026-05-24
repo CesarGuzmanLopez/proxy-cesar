@@ -17,13 +17,13 @@ async def health(request: Request):
     app_state = request.app.state
     config = app_state.config
 
-    # Check PostgreSQL
-    postgres_status = "connected"
+    # Check database
+    db_status = "connected"
     try:
         async with app_state.db_session_factory() as session:
             await session.execute(text("SELECT 1"))
     except Exception:
-        postgres_status = "disconnected"
+        db_status = "disconnected"
 
     # Check Valkey
     valkey_status = "connected"
@@ -38,11 +38,11 @@ async def health(request: Request):
         key_env = f"{provider.upper()}_API_KEY"
         providers[provider] = "configured" if os.getenv(key_env) else "not configured"
 
-    overall = "ok" if postgres_status == "connected" and valkey_status == "connected" else "degraded"
+    overall = "ok" if db_status == "connected" and valkey_status == "connected" else "degraded"
 
     return {
         "status": overall,
-        "postgres": postgres_status,
+        "database": db_status,
         "valkey": valkey_status,
         "providers": providers,
         "pseudo_models_loaded": len(config.pseudo_models),

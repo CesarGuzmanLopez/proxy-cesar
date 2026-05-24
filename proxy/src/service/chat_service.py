@@ -7,15 +7,16 @@ python.md §3: errors as data in domain, exceptions at boundary.
 Sprint 1: basic pseudo-model resolution, affinity, fallback.
 Sprint 2: +capability detection, compatibility validation, threshold guard, tool filter.
 Sprint 3: +canonical tool storage, tiktoken, thinking blocks, tool edge cases.
+Sprint 4: +pre-compaction, continuous compaction, external compaction detection.
 """
 
 import uuid
-from dataclasses import dataclass, field
 
 from fastapi import HTTPException
 from litellm.exceptions import RateLimitError, ServiceUnavailableError
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 
 from src.adapters.db.models import Conversation, ConversationTurn
 from src.adapters.litellm import call_litellm
@@ -42,39 +43,17 @@ from src.service.tools_edge_cases import (
     extract_thinking_content,
     truncate_tool_result,
 )
+from src.service.compactor.pre_compactor import pre_compact_input
+from src.service.compactor.continuous import (
+    assemble_context,
+    continuous_compact,
+    detect_external_compaction,
+    handle_external_compaction,
+)
+from src.service.chat_models import ChatResult, FallbackInfo
 
 
-@dataclass
-class FallbackInfo:
-    applied: bool = False
-    reason: str | None = None
-    attempted_models: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ChatResult:
-    conversation_id: str
-    pseudo_model: str
-    physical_model: str
-    response: dict
-    fallback_info: FallbackInfo
-    is_new_conversation: bool
-    affinity_maintained: bool
-    total_tokens: int
-    context_window: int | None
-
-    # Sprint 2 fields
-    session_caps: SessionCapabilities | None = None
-    compatibility_warning: str | None = None
-    compatibility_details: dict | None = None
-    tools_filter_applied: bool = False
-    tools_filter_reason: str | None = None
-
-    # Sprint 3 fields
-    tools_level_used: int = 0
-    tools_incomplete: bool = False
-    thinking_content: str | None = None
-    tool_result_truncated: bool = False
+# ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
 async def process_chat_request(
@@ -90,66 +69,134 @@ async def process_chat_request(
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
 ) -> ChatResult:
-    """Execute the full chat completion flow with Sprint 2 capability checks.
+    """Execute the full chat completion flow.
 
-    Steps:
-    1. Normalize + validate pseudo-model
-    2. Detect capabilities in incoming messages
-    3. Validate incoming content against current pseudo-model
-    4. Get existing affinity (if any)
-    5. Load existing session capabilities
-    6. Check if pseudo-model changed → validate switch
-    7. Filter pool by parallel_tools if needed
-    8. Resolve physical model
-    9. Load or create conversation
-    10. Set affinity
-    11. Check input threshold
-    12. Call LiteLLM with fallback
-    13. Save turn with capability flags
-    14. Accumulate capabilities in DB
-    15. Return result with proxy_metadata
+    Each logical step is delegated to a focused helper function.
     """
-    # Step 1: Normalize model name
-    resolved_model = normalize_model_name(model, config)
-    if resolved_model not in config.pseudo_models:
+    # Step 1-3: Resolve model + detect capabilities + validate content
+    pseudo_model_name, pm_schema, turn_caps = _resolve_and_validate(
+        model, messages, tools, config,
+    )
+    conv_id = conversation_id or str(uuid.uuid4())
+    conv_uuid = _parse_uuid(conv_id)
+
+    # Step 4-11: Load session, check switch, load/create conversation, resolve model, set affinity
+    existing_affinity, session_caps, compatibility, physical_model, provider, tools_filter, conv, is_new = (
+        await _resolve_session_conv_and_models(
+            db, affinity, conv_id, conv_uuid, pseudo_model_name, pm_schema, config,
+        )
+    )
+    await affinity.set(conv_id, physical_model)
+
+    # Step 12: Check input threshold
+    est_input = estimate_tokens(messages)
+    _raise_if_exceeds_threshold(est_input, pm_schema, pseudo_model_name, config)
+
+    # Sprint 4: Pre-compaction, external detection, continuous compaction
+    prep = await _apply_compaction(
+        conv, is_new, messages, pm_schema, config, db, est_input,
+    )
+    active_messages = prep["active_messages"]
+
+    # Step 13: Call LiteLLM with fallback
+    response, fallback_info = await call_with_fallback(
+        pseudo_model_schema=pm_schema,
+        messages=active_messages,
+        stream=stream,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        tools=tools,
+        tool_choice=tool_choice,
+    )
+
+    # Step 14-20: Save turn, update conversation, build result
+    return await _save_and_return(
+        db=db,
+        conv=conv,
+        conv_uuid=conv_uuid,
+        conv_id=conv_id,
+        pseudo_model_name=pseudo_model_name,
+        physical_model=physical_model,
+        provider=provider,
+        turn_caps=turn_caps,
+        messages=messages,
+        response=response,
+        fallback_info=fallback_info,
+        is_new_conversation=is_new,
+        existing_affinity=existing_affinity,
+        pm_schema=pm_schema,
+        session_caps=session_caps,
+        tools=tools,
+        tool_choice=tool_choice,
+        prep=prep,
+        compatibility=compatibility,
+        tools_filter=tools_filter,
+    )
+
+
+# ── Step helpers ──────────────────────────────────────────────────────────────
+
+
+def _resolve_and_validate(
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None,
+    config: ProxyConfigSchema,
+) -> tuple[str, object, SessionCapabilities]:
+    """Steps 1-3: Normalize model, detect capabilities, validate content."""
+    resolved = normalize_model_name(model, config)
+    if resolved not in config.pseudo_models:
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "UNKNOWN_PSEUDO_MODEL",
-                "message": f"Unknown pseudo-model: '{resolved_model}'",
+                "message": f"Unknown pseudo-model: '{resolved}'",
                 "available": list(config.pseudo_models.keys()),
             },
         )
+    pm = config.pseudo_models[resolved]
+    caps = detect_turn_capabilities(messages, tools)
+    validate_incoming_content(caps, pm, resolved, config)
+    return resolved, pm, caps
 
-    pseudo_model_name = resolved_model
-    conv_id = conversation_id or str(uuid.uuid4())
-    pm_schema = config.pseudo_models[pseudo_model_name]
 
-    # Step 2: Detect capabilities in incoming messages
-    turn_caps = detect_turn_capabilities(messages, tools)
+def _parse_uuid(conv_id: str) -> uuid.UUID:
+    """Parse conversation ID string to UUID."""
+    try:
+        return uuid.UUID(conv_id)
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, conv_id)
 
-    # Step 3: Validate incoming content against current pseudo-model
-    validate_incoming_content(turn_caps, pm_schema, pseudo_model_name, config)
 
-    # Step 4: Get existing affinity
+async def _resolve_session_conv_and_models(
+    db: AsyncSession,
+    affinity: ValkeyAffinityAdapter,
+    conv_id: str,
+    conv_uuid: uuid.UUID,
+    pseudo_model_name: str,
+    pm_schema: object,
+    config: ProxyConfigSchema,
+) -> tuple:
+    """Steps 4-11: Load/create conversation, session, check switch, resolve physical model.
+
+    Merged from _resolve_session_and_models + _load_or_create_conv
+    to avoid loading Conversation twice (and to eagerly load .turns).
+    """
     existing_affinity = await affinity.get(conv_id)
 
-    # Step 5: Resolve conversation ID for DB
-    try:
-        conv_uuid = uuid.UUID(conv_id)
-    except ValueError:
-        conv_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, conv_id)
+    # Load conversation FIRST with turns eagerly loaded.
+    # Must happen BEFORE load_session_capabilities to avoid the identity-map issue:
+    # if load_session_capabilities loads Conversation (without selectinload) first,
+    # the subsequent db.get with selectinload returns the same object without eager loads.
+    conv = await db.get(Conversation, conv_uuid, options=[selectinload(Conversation.turns)])
+    is_new = conv is None
 
-    # Step 6: Load existing session capabilities (if conversation exists)
+    # Load session capabilities (uses identity-mapped conv, no extra DB trip)
     session_caps = await load_session_capabilities(db, conv_uuid)
-
-    # Step 7: Check if pseudo-model changed → validate switch
     compatibility_warning: str | None = None
     compatibility_details: dict | None = None
 
-    conv = await db.get(Conversation, conv_uuid)
     if conv is not None and conv.pseudo_model != pseudo_model_name:
-        # Pseudo-model switch detected
         switch_result = validate_switch(
             from_pseudo_name=conv.pseudo_model,
             to_pseudo_name=pseudo_model_name,
@@ -173,59 +220,65 @@ async def process_chat_request(
             compatibility_warning = switch_result.reason
             compatibility_details = switch_result.details
 
-    # Step 8: Filter pool by parallel_tools if needed
-    tools_filter_applied = False
-    tools_filter_reason: str | None = None
+    eligible = get_eligible_models(pm_schema.physical_models, session_caps)
+    tools_filter_applied = bool(
+        session_caps.has_parallel_tools and len(eligible) < len(pm_schema.physical_models)
+    )
+    tools_filter_reason = "parallel_tools_required" if tools_filter_applied else None
 
-    eligible_models = get_eligible_models(pm_schema.physical_models, session_caps)
+    pinned = existing_affinity
+    if pinned and session_caps.has_parallel_tools and not is_pinned_model_eligible(pinned, eligible):
+        pinned = None
+    if pinned:
+        selected_phys = next(
+            (p for p in pm_schema.physical_models if p.model == pinned),
+            pm_schema.physical_models[0],
+        )
+    elif eligible:
+        selected_phys = eligible[0]
+    else:
+        selected_phys = pm_schema.physical_models[0]
+    physical = selected_phys.model
+    provider = selected_phys.provider
 
-    if session_caps.has_parallel_tools and len(eligible_models) < len(
-        pm_schema.physical_models
-    ):
-        tools_filter_applied = True
-        tools_filter_reason = "parallel_tools_required"
-
-    # Step 9: Resolve physical model
-    # If pinned model exists but is not eligible, use first eligible model
-    pinned_model = existing_affinity
-    if pinned_model and session_caps.has_parallel_tools:
-        if not is_pinned_model_eligible(pinned_model, eligible_models):
-            pinned_model = None  # Force re-resolve
-
-    if pinned_model is None:
-        # Use first eligible model (or first overall if no filtering)
-        pinned_model = eligible_models[0].model if eligible_models else pm_schema.physical_models[0].model
-
-    physical_model = pinned_model
-
-    # Step 10: Load or create conversation
-    is_new_conversation = conv is None
-
-    if is_new_conversation:
+    if is_new:
         conv = Conversation(
             id=conv_uuid,
             pseudo_model=pseudo_model_name,
-            physical_model=physical_model,
+            physical_model=physical,
             total_tokens=0,
         )
+        conv.turns = []  # prevent lazy-load trigger outside greenlet context
         db.add(conv)
         await db.flush()
 
-    # Step 11: Set affinity
-    await affinity.set(conv_id, physical_model)
+    return (
+        existing_affinity,
+        session_caps,
+        {"warning": compatibility_warning, "details": compatibility_details},
+        physical,
+        provider,
+        {"applied": tools_filter_applied, "reason": tools_filter_reason},
+        conv,
+        is_new,
+    )
 
-    # Step 12: Check input threshold
-    estimated_input = estimate_tokens(messages)
-    threshold_check = check_input_threshold(
+
+def _raise_if_exceeds_threshold(
+    estimated_input: int,
+    pm_schema: object,
+    pseudo_model_name: str,
+    config: ProxyConfigSchema,
+) -> None:
+    """Step 12: Raise 400 if input exceeds threshold (no pre-compaction)."""
+    check = check_input_threshold(
         pseudo_model_name=pseudo_model_name,
         input_token_threshold=pm_schema.input_token_threshold,
         estimated_tokens=estimated_input,
         pre_compaction_enabled=pm_schema.pre_compaction.enabled,
     )
-
-    if not threshold_check.ok:
-        # InputExceedsThreshold
-        error = threshold_check.error
+    if not check.ok:
+        error = check.error
         raise HTTPException(
             status_code=400,
             detail={
@@ -239,74 +292,133 @@ async def process_chat_request(
             },
         )
 
-    # Step 13: Call LiteLLM with fallback
-    response, fallback_info = await call_with_fallback(
-        pseudo_model_schema=pm_schema,
-        messages=messages,
-        stream=stream,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        tools=tools,
-        tool_choice=tool_choice,
-    )
 
-    # Step 14: Save turn with Sprint 3 canonical tool metadata
-    turn_number = 1
-    if conv.turns:
-        turn_number = max(t.turn_number for t in conv.turns) + 1
+async def _apply_compaction(
+    conv: Conversation,
+    is_new_conversation: bool,
+    messages: list[dict],
+    pm_schema: object,
+    config: ProxyConfigSchema,
+    db: AsyncSession,
+    estimated_input: int,
+) -> dict:
+    """Sprint 4: Run pre-compaction, external detection, continuous compaction.
 
+    Returns a dict with all compaction state to pass forward.
+    """
+    state: dict = {
+        "pre_compaction_applied": False,
+        "pre_compaction_metadata": None,
+        "active_messages": messages,
+        "external_compaction_detected": False,
+        "external_compaction_metadata": None,
+        "continuous_compaction_applied": False,
+        "continuous_compaction_metadata": None,
+    }
+
+    # Pre-compaction
+    if pm_schema.pre_compaction.enabled and estimated_input > (pm_schema.pre_compaction.threshold or 0):
+        compacted, meta = await pre_compact_input(
+            messages=messages, pseudo_model=pm_schema, config=config,
+        )
+        state["pre_compaction_applied"] = meta.get("applied", False)
+        state["pre_compaction_metadata"] = meta
+        if meta.get("applied", False):
+            state["active_messages"] = compacted
+
+    active = state["active_messages"]
+
+    # External compaction detection
+    skip_continuous = False
+    if conv is not None and not is_new_conversation:
+        ext_info = await detect_external_compaction(active, conv, db)
+        if ext_info is not None:
+            ext_meta = await handle_external_compaction(active, conv, ext_info, db)
+            state["external_compaction_detected"] = True
+            state["external_compaction_metadata"] = ext_meta
+            skip_continuous = True
+
+    # Continuous compaction
+    if not skip_continuous and conv is not None and pm_schema.continuous_compaction.enabled:
+        cc_meta = await continuous_compact(
+            conversation=conv, pseudo_model=pm_schema, config=config, db=db,
+        )
+        state["continuous_compaction_applied"] = cc_meta.get("applied", False)
+        state["continuous_compaction_metadata"] = cc_meta
+
+    # Assemble context if snapshot exists
+    if conv is not None and conv.active_snapshot_id:
+        context = await assemble_context(conv, db)
+        last_user = None
+        for m in reversed(active):
+            if m.get("role") == "user":
+                last_user = m
+                break
+        if last_user:
+            context.append(last_user)
+        state["active_messages"] = context
+
+    return state
+
+
+async def _save_and_return(
+    db: AsyncSession,
+    conv: Conversation,
+    conv_uuid: uuid.UUID,
+    conv_id: str,
+    pseudo_model_name: str,
+    physical_model: str,
+    provider: str | None,
+    turn_caps: SessionCapabilities,
+    messages: list[dict],
+    response: object,
+    fallback_info: FallbackInfo,
+    is_new_conversation: bool,
+    existing_affinity: str | None,
+    pm_schema: object,
+    session_caps: SessionCapabilities,
+    tools: list[dict] | None,
+    tool_choice: str | dict | None,
+    prep: dict,
+    compatibility: dict,
+    tools_filter: dict,
+) -> ChatResult:
+    """Steps 14-20: Build turn, save to DB, accumulate capabilities, return result.
+
+    Extracted to keep process_chat_request under 30 lines.
+    """
+    response_dict = response.model_dump() if hasattr(response, "model_dump") else response
+
+    # Parse usage
     input_tokens = 0
     output_tokens = 0
-    response_dict = response.model_dump() if hasattr(response, "model_dump") else response
     if isinstance(response_dict, dict):
         usage = response_dict.get("usage", {})
         if usage:
             input_tokens = usage.get("prompt_tokens", 0) or 0
             output_tokens = usage.get("completion_tokens", 0) or 0
 
-    # Sprint 3: Extract tool metadata from response
-    tool_calls_in_response = extract_tool_calls_from_response(response_dict)
-    tool_definitions_stored: list[dict] | None = None
-    if tools:
-        tool_definitions_stored = tools
-        tool_calls_in_response = extract_tool_calls_from_response(response_dict)
-
-    # Validate tool call IDs if present
-    if tool_calls_in_response:
+    # Sprint 3: tool metadata
+    tool_defs: list[dict] | None = tools
+    tool_calls = extract_tool_calls_from_response(response_dict) if tool_defs else []
+    if tool_calls:
         try:
-            validate_tool_call_ids(tool_calls_in_response)
+            validate_tool_call_ids(tool_calls)
         except ValueError:
-            # If validation fails, log and continue without tool data
             turn_caps.tools_incomplete = True
 
-    # Check tool_choice enforcement
-    if tool_choice == "required" and tool_calls_in_response:
-        if not enforce_tool_choice(response_dict, tool_choice):
-            # The model ignored tool_choice. Force fallback will handle it.
-            turn_caps.tools_incomplete = True
-
-    # Determine provider for thinking block extraction
-    provider = None
-    if physical_model:
-        if "deepseek" in physical_model.lower():
-            provider = "deepseek"
-        elif "claude" in physical_model.lower() or "anthropic" in physical_model.lower():
-            provider = "anthropic"
-        elif "gemini" in physical_model.lower():
-            provider = "google"
-        elif "gpt" in physical_model.lower() or "o3" in physical_model.lower():
-            provider = "openai"
+    if tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, tool_choice):
+        turn_caps.tools_incomplete = True
 
     thinking_content = extract_thinking_content(response_dict, provider)
 
     tools_incomplete = turn_caps.tools_incomplete
-    tools_level_used = determine_tool_level_for_turn(
-        tool_calls=tool_calls_in_response,
-        tool_definitions=tool_definitions_stored,
+    tools_level = determine_tool_level_for_turn(
+        tool_calls=tool_calls,
+        tool_definitions=tool_defs,
         tools_incomplete=tools_incomplete,
     )
 
-    # Check for large tool results in the messages
     tool_result_truncated = False
     for msg in messages:
         if msg.get("role") == "tool":
@@ -315,6 +427,10 @@ async def process_chat_request(
             if truncated != content:
                 tool_result_truncated = True
                 msg["content"] = truncated
+
+    turn_number = 1
+    if conv.turns:
+        turn_number = max(t.turn_number for t in conv.turns) + 1
 
     turn = ConversationTurn(
         conversation_id=conv_uuid,
@@ -327,30 +443,23 @@ async def process_chat_request(
         response=response_dict,
         fallback_applied=fallback_info.applied,
         fallback_reason=fallback_info.reason,
-        # Sprint 2: capability flags on turn
         turn_type="normal",
         had_images=turn_caps.has_images,
         had_tools=turn_caps.has_tools,
         had_parallel_tools=turn_caps.has_parallel_tools,
-        # Sprint 3: canonical tool storage
-        tool_definitions=tool_definitions_stored,
+        tool_definitions=tool_defs,
         thinking_blocks={"content": thinking_content} if thinking_content else None,
         tools_incomplete=tools_incomplete,
-        tools_level_used=tools_level_used,
+        tools_level_used=tools_level,
     )
     db.add(turn)
 
-    # Step 15: Update conversation
     conv.physical_model = physical_model
     conv.total_tokens += input_tokens + output_tokens
     conv.updated_at = func.now()
-
     await db.commit()
 
-    # Step 16: Accumulate capabilities in DB
-    session_caps = await accumulate_capabilities(
-        db, conv_uuid, turn_caps, session_caps
-    )
+    session_caps = await accumulate_capabilities(db, conv_uuid, turn_caps, session_caps)
 
     affinity_maintained = not is_new_conversation and existing_affinity == physical_model
 
@@ -365,16 +474,24 @@ async def process_chat_request(
         total_tokens=conv.total_tokens,
         context_window=pm_schema.context_window,
         session_caps=session_caps,
-        compatibility_warning=compatibility_warning,
-        compatibility_details=compatibility_details,
-        tools_filter_applied=tools_filter_applied,
-        tools_filter_reason=tools_filter_reason,
-        # Sprint 3
-        tools_level_used=tools_level_used,
+        compatibility_warning=compatibility["warning"],
+        compatibility_details=compatibility["details"],
+        tools_filter_applied=tools_filter["applied"],
+        tools_filter_reason=tools_filter["reason"],
+        tools_level_used=tools_level,
         tools_incomplete=tools_incomplete,
         thinking_content=thinking_content,
         tool_result_truncated=tool_result_truncated,
+        pre_compaction_applied=prep["pre_compaction_applied"],
+        pre_compaction_metadata=prep["pre_compaction_metadata"],
+        continuous_compaction_applied=prep["continuous_compaction_applied"],
+        continuous_compaction_metadata=prep["continuous_compaction_metadata"],
+        external_compaction_detected=prep["external_compaction_detected"],
+        external_compaction_metadata=prep["external_compaction_metadata"],
     )
+
+
+# ── Fallback logic ─────────────────────────────────────────────────────────────
 
 
 async def call_with_fallback(
@@ -383,11 +500,7 @@ async def call_with_fallback(
     stream: bool = False,
     **kwargs,
 ) -> tuple:
-    """Try each physical model in order. On 503/429, move to next.
-
-    Fallback strategy: sequential (Sprint 1 only).
-    Returns (response, FallbackInfo).
-    """
+    """Try each physical model in order. On 503/429, move to next."""
     fallback_info = FallbackInfo()
     last_error: Exception | None = None
 
@@ -425,70 +538,7 @@ async def call_with_fallback(
     )
 
 
-def build_proxy_metadata(
-    pseudo_model: str,
-    physical_model: str,
-    conversation_id: str,
-    context_tokens: int = 0,
-    context_window: int | None = None,
-    fallback_info: FallbackInfo | None = None,
-    affinity_maintained: bool = True,
-    *,
-    # Sprint 2 fields
-    session_caps: SessionCapabilities | None = None,
-    compatibility_warning: str | None = None,
-    compatibility_details: dict | None = None,
-    tools_filter_applied: bool = False,
-    tools_filter_reason: str | None = None,
-) -> dict:
-    """Build proxy_metadata dict for API response.
-
-    Sprint 1: basic fields (physical_model, pseudo_model, affinity, fallback).
-    Sprint 2: +capabilities_detected, warning, tools_filter.
-    """
-    metadata: dict = {
-        "physical_model": physical_model,
-        "pseudo_model": pseudo_model,
-        "conversation_id": conversation_id,
-        "affinity_maintained": affinity_maintained,
-        "fallback_applied": fallback_info.applied if fallback_info else False,
-        "fallback_reason": fallback_info.reason if fallback_info else None,
-    }
-
-    if context_window:
-        metadata["context_tokens_total"] = context_tokens
-        metadata["context_usage_pct"] = (
-            round((context_tokens / context_window) * 100, 1) if context_window else None
-        )
-    else:
-        metadata["context_tokens_total"] = context_tokens
-        metadata["context_usage_pct"] = None
-
-    # Sprint 2: capabilities detected
-    if session_caps:
-        metadata["capabilities_detected"] = {
-            "has_images": session_caps.has_images,
-            "has_tools": session_caps.has_tools,
-        }
-    else:
-        metadata["capabilities_detected"] = None
-
-    # Sprint 2: compatibility warning
-    metadata["warning"] = compatibility_warning
-    if compatibility_details:
-        metadata["warning_details"] = compatibility_details
-
-    # Sprint 2: tool filter
-    metadata["tools_filter_applied"] = tools_filter_applied
-    metadata["tools_filter_reason"] = tools_filter_reason
-
-    # Placeholders for future sprints (unchanged from Sprint 1)
-    metadata["pre_compaction_applied"] = False
-    metadata["continuous_compaction_applied"] = False
-    metadata["router_suggestion"] = None
-    metadata["images_described"] = 0
-
-    return metadata
+# ── Internal helpers ──────────────────────────────────────────────────────────
 
 
 def _suggest_higher_threshold_models(

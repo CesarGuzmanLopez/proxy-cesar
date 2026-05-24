@@ -1,18 +1,20 @@
-"""SQLModel ORM models — Sprint 1 + Sprint 2 + Sprint 3.
+"""SQLModel ORM models — Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4.
 
 python.md §6.2: SQLModel combines SQLAlchemy + Pydantic.
 Sprint 1: conversations + conversation_turns (basic).
 Sprint 2: +capability_* columns, turn_type, had_* flags.
 Sprint 3: +tool_definitions, thinking_blocks, tools_incomplete,
           tools_level_used, max_tools_level.
+Sprint 4: +conversation_snapshots table, +active_snapshot_id on conversations.
 """
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
-from sqlalchemy import Column, DateTime, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Uuid as SA_Uuid
+from sqlalchemy import JSON as SA_JSON
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -37,33 +39,45 @@ class Conversation(ConversationBase, table=True):
     __tablename__ = "conversations"
 
     id: uuid.UUID = Field(
-        default_factory=uuid.uuid4, primary_key=True, sa_type=UUID(as_uuid=True)
+        default_factory=uuid.uuid4, primary_key=True, sa_type=SA_Uuid()
     )
     created_at: datetime = Field(
         default_factory=datetime.now,
-        sa_column=Column(DateTime(timezone=True), server_default="now()"),
+        sa_column=Column(DateTime(), server_default="now()"),
     )
     updated_at: datetime = Field(
         default_factory=datetime.now,
         sa_column=Column(
-            DateTime(timezone=True), server_default="now()", onupdate="now()"
+            DateTime(), server_default=func.now(), onupdate=func.now()
         ),
     )
 
+    # Sprint 4: active snapshot for compacted conversations
+    active_snapshot_id: uuid.UUID | None = Field(
+        default=None, sa_type=SA_Uuid(), foreign_key="conversation_snapshots.id"
+    )
+
     turns: list["ConversationTurn"] = Relationship(back_populates="conversation")
+    snapshots: list["ConversationSnapshot"] = Relationship(
+        back_populates="conversation",
+        sa_relationship_kwargs={
+            "foreign_keys": "ConversationSnapshot.conversation_id",
+            "order_by": "ConversationSnapshot.turn_number_at_compaction",
+        },
+    )
 
 
 class ConversationTurnBase(SQLModel):
     conversation_id: uuid.UUID = Field(
-        foreign_key="conversations.id", sa_type=UUID(as_uuid=True)
+        foreign_key="conversations.id", sa_type=SA_Uuid()
     )
     turn_number: int
     pseudo_model: str = Field(max_length=128)
     physical_model: str = Field(max_length=256)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
-    messages: dict = Field(default={}, sa_type=JSONB)
-    response: Optional[dict] = Field(default=None, sa_type=JSONB)
+    messages: Union[list, dict] = Field(default_factory=list, sa_type=SA_JSON)
+    response: Optional[dict] = Field(default=None, sa_type=SA_JSON)
     fallback_applied: bool = False
     fallback_reason: Optional[str] = Field(default=None, max_length=256)
 
@@ -74,8 +88,8 @@ class ConversationTurnBase(SQLModel):
     had_parallel_tools: bool = Field(default=False)
 
     # Sprint 3: Tool canonical storage columns
-    tool_definitions: Optional[dict] = Field(default=None, sa_type=JSONB)
-    thinking_blocks: Optional[dict] = Field(default=None, sa_type=JSONB)
+    tool_definitions: Optional[dict] = Field(default=None, sa_type=SA_JSON)
+    thinking_blocks: Optional[dict] = Field(default=None, sa_type=SA_JSON)
     tools_incomplete: bool = Field(default=False)
     tools_level_used: int = Field(default=0, ge=0)
 
@@ -84,11 +98,67 @@ class ConversationTurn(ConversationTurnBase, table=True):
     __tablename__ = "conversation_turns"
 
     id: uuid.UUID = Field(
-        default_factory=uuid.uuid4, primary_key=True, sa_type=UUID(as_uuid=True)
+        default_factory=uuid.uuid4, primary_key=True, sa_type=SA_Uuid()
     )
     created_at: datetime = Field(
         default_factory=datetime.now,
-        sa_column=Column(DateTime(timezone=True), server_default="now()"),
+        sa_column=Column(DateTime(), server_default="now()"),
     )
 
     conversation: Conversation = Relationship(back_populates="turns")
+
+
+class ConversationSnapshotBase(SQLModel):
+    """Snapshot of a compacted conversation.
+
+    plan-proxy.md §11.3: Stores a Markdown snapshot preserving decisions,
+    code, state, and pending items. Original history is never modified.
+
+    Sprint 4: used by continuous compaction and (later) explicit compaction.
+    """
+
+    conversation_id: uuid.UUID = Field(
+        foreign_key="conversations.id", sa_type=SA_Uuid()
+    )
+    snapshot_type: str = Field(max_length=32)
+    """'continuous', 'explicit' (Sprint 6), or 'external' (client-side)."""
+
+    tokens_before: int = Field(ge=0)
+    """Tokens in the history at compaction time."""
+
+    tokens_after: int = Field(ge=0)
+    """Tokens in the generated snapshot."""
+
+    compactor_model: str = Field(max_length=256)
+    """Physical model that generated the snapshot."""
+
+    snapshot_content: str = Field(sa_type=Text)
+    """Markdown snapshot content."""
+
+    turn_number_at_compaction: int = Field(ge=0)
+    """Which turn triggered the compaction."""
+
+
+class ConversationSnapshot(ConversationSnapshotBase, table=True):
+    __tablename__ = "conversation_snapshots"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4, primary_key=True, sa_type=SA_Uuid()
+    )
+    created_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(), server_default="now()"),
+    )
+
+    superseded_by: uuid.UUID | None = Field(
+        default=None,
+        sa_type=SA_Uuid(),
+        foreign_key="conversation_snapshots.id",
+    )
+
+    conversation: Conversation = Relationship(
+        back_populates="snapshots",
+        sa_relationship_kwargs={
+            "foreign_keys": "ConversationSnapshot.conversation_id",
+        },
+    )

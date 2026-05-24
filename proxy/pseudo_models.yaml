@@ -1,7 +1,7 @@
 pseudo_models:
   pensamiento-profundo-caro:
-    display_name: "Pensamiento Profundo"
-    description: "Razonamiento de máximo nivel. Bugs imposibles, arquitectura compleja."
+    display_name: Pensamiento Profundo
+    description: Razonamiento de máximo nivel. Bugs imposibles, arquitectura compleja.
     input_token_threshold: 32000
     context_window: 200000
     continuous_compaction:
@@ -12,31 +12,30 @@ pseudo_models:
       enabled: true
       threshold: 32000
       target_tokens: 8000
-      compactor: "deep-flash"
+      compactor: deep-flash
     router_llm:
       enabled: true
-      suggester: "flash-lowcost"
+      suggester: flash-lowcost
       suggest_on_downgrade_only: true
     image_handling:
-      on_downgrade: "auto_describe"
+      on_downgrade: auto_describe
     physical_models:
-      - provider: zhipu
-        model: glm-5.1
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-      - provider: deepseek
-        model: deepseek-v4-pro
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
+    - provider: zhipu
+      model: openrouter/glm-5.1
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
+    - provider: deepseek
+      model: openrouter/deepseek-v4-pro
+      openai_tools_compatible: true
+      tools_strict: true
+      parallel_tools: true
+      vision: false
     fallback_strategy: sequential
-
   tareas-avanzadas:
-    display_name: "Tareas Avanzadas"
-    description: "Desarrollo profundo y sostenido. Features largas, debugging serio."
+    display_name: Tareas Avanzadas
+    description: Desarrollo profundo y sostenido. Features largas, debugging serio.
     input_token_threshold: 64000
     context_window: 128000
     continuous_compaction:
@@ -48,31 +47,30 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: "block"
+      on_downgrade: block
     physical_models:
-      - provider: deepseek
-        model: deepseek-v4-pro
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-      - provider: deepseek
-        model: deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-      - provider: minimax
-        model: minimax-m2.5
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
+    - provider: deepseek
+      model: openrouter/deepseek-v4-pro
+      openai_tools_compatible: true
+      tools_strict: true
+      parallel_tools: true
+      vision: false
+    - provider: deepseek
+      model: openrouter/deepseek-v4-flash
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: true
+      vision: false
+    - provider: minimax
+      model: openrouter/minimax-m2.5
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
     fallback_strategy: sequential
-
   avanzada-vision:
-    display_name: "Visión Avanzada"
-    description: "Análisis visual de alto nivel. Diseño UI, OCR complejo, diagramas."
+    display_name: Visión Avanzada
+    description: Análisis visual de alto nivel. Diseño UI, OCR complejo, diagramas.
     input_token_threshold: 32000
     context_window: 32768
     continuous_compaction:
@@ -82,25 +80,24 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: "auto_describe"
+      on_downgrade: auto_describe
     physical_models:
-      - provider: google
-        model: gemini-3.5-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: true
-      - provider: groq
-        model: meta-llama/llama-4-scout-17b-16e-instruct
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: true
+    - provider: google
+      model: openrouter/gemini-3.5-flash
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: true
+    - provider: groq
+      model: openrouter/meta-llama/llama-4-scout-17b-16e-instruct
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: true
     fallback_strategy: sequential
-
   normal:
-    display_name: "Normal"
-    description: "Punto de entrada recomendado. Coding extenso, trabajo agéntico."
+    display_name: Normal
+    description: Punto de entrada recomendado. Coding extenso, trabajo agéntico.
     input_token_threshold: 96000
     context_window: 96000
     continuous_compaction:
@@ -112,25 +109,24 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: "block"
+      on_downgrade: block
     physical_models:
-      - provider: qwen
-        model: qwen3-max
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-      - provider: deepseek
-        model: deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
+    - provider: qwen
+      model: openrouter/qwen3-max
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
+    - provider: deepseek
+      model: openrouter/deepseek-v4-flash
+      openai_tools_compatible: true
+      tools_strict: true
+      parallel_tools: true
+      vision: false
     fallback_strategy: sequential
-
   deep-flash:
-    display_name: "Deep Flash"
-    description: "Velocidad y costo mínimo para tareas masivas y simples."
+    display_name: Deep Flash
+    description: Velocidad y costo mínimo para tareas masivas y simples.
     input_token_threshold: 128000
     context_window: 128000
     continuous_compaction:
@@ -140,31 +136,30 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: "block"
+      on_downgrade: block
     physical_models:
-      - provider: zhipu
-        model: glm-4.5-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-      - provider: groq
-        model: openai/gpt-oss-20b
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-      - provider: deepseek
-        model: deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
+    - provider: zhipu
+      model: openrouter/glm-4.5-flash
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
+    - provider: groq
+      model: openrouter/gpt-oss-20b
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
+    - provider: deepseek
+      model: openrouter/deepseek-v4-flash
+      openai_tools_compatible: true
+      tools_strict: true
+      parallel_tools: true
+      vision: false
     fallback_strategy: sequential
-
   flash-lowcost:
-    display_name: "Flash Lowcost"
-    description: "Sub-agentes baratos. Clasificación, extracción, parsing."
+    display_name: Flash Lowcost
+    description: Sub-agentes baratos. Clasificación, extracción, parsing.
     input_token_threshold: 64000
     context_window: 64000
     continuous_compaction:
@@ -174,31 +169,30 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: "block"
+      on_downgrade: block
     physical_models:
-      - provider: zhipu
-        model: glm-4.5-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-      - provider: qwen
-        model: qwen3.5-plus
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-      - provider: ollama
-        model: ollama/llama3.2
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
+    - provider: zhipu
+      model: openrouter/glm-4.5-flash
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
+    - provider: qwen
+      model: openrouter/qwen3.5-plus
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
+    - provider: ollama
+      model: openrouter/llama3.2
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
     fallback_strategy: sequential
-
   flash-vision:
-    display_name: "Flash Vision"
-    description: "Visión rápida y barata. OCR ligero, screenshots."
+    display_name: Flash Vision
+    description: Visión rápida y barata. OCR ligero, screenshots.
     input_token_threshold: 16000
     context_window: 16384
     continuous_compaction:
@@ -208,25 +202,24 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: "auto_describe"
+      on_downgrade: auto_describe
     physical_models:
-      - provider: google
-        model: gemini-3.5-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: true
-      - provider: ollama
-        model: ollama/llava
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: true
+    - provider: google
+      model: openrouter/gemini-3.5-flash
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: true
+    - provider: ollama
+      model: openrouter/llava
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: true
     fallback_strategy: sequential
-
   compactador:
-    display_name: "Compactador"
-    description: "Operación de compactación explícita. No es modo conversacional."
+    display_name: Compactador
+    description: Operación de compactación explícita. No es modo conversacional.
     input_token_threshold: null
     context_window: null
     continuous_compaction:
@@ -236,21 +229,21 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: "auto_describe"
+      on_downgrade: auto_describe
     physical_models:
-      - provider: google
-        model: gemini-3.5-flash
-        context_window: 1000000
-        openai_tools_compatible: true
-        vision: true
-      - provider: anthropic
-        model: claude-haiku-4-5-20251001
-        context_window: 200000
-        openai_tools_compatible: true
-        vision: false
-      - provider: zhipu
-        model: glm-4.5-flash
-        context_window: 128000
-        openai_tools_compatible: true
-        vision: false
+    - provider: google
+      model: openrouter/gemini-3.5-flash
+      context_window: 1000000
+      openai_tools_compatible: true
+      vision: true
+    - provider: anthropic
+      model: openrouter/claude-haiku-4-5-20251001
+      context_window: 200000
+      openai_tools_compatible: true
+      vision: false
+    - provider: zhipu
+      model: openrouter/glm-4.5-flash
+      context_window: 128000
+      openai_tools_compatible: true
+      vision: false
     fallback_strategy: by_context_window

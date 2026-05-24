@@ -11,7 +11,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
-from src.adapters.db.models import Conversation, ConversationTurn  # noqa: F401
+from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

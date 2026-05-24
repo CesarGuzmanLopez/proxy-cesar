@@ -56,6 +56,10 @@ async def client_with_conversation(mock_valkey):
     mock_session.flush = AsyncMock()
     mock_session.commit = AsyncMock()
     mock_session.close = AsyncMock()
+    # Mock execute() for the turn-count query in GET /conversations/{id}
+    mock_count_result = MagicMock()
+    mock_count_result.scalar = MagicMock(return_value=0)
+    mock_session.execute = AsyncMock(return_value=mock_count_result)
     app.state.db_session_factory = MagicMock(return_value=mock_session)
 
     transport = ASGITransport(app=app)
@@ -78,6 +82,9 @@ async def client_no_conversation(mock_valkey):
     mock_session.__aexit__ = AsyncMock()
     mock_session.get = AsyncMock(return_value=None)  # No conversation found
     mock_session.close = AsyncMock()
+    mock_count_result = MagicMock()
+    mock_count_result.scalar = MagicMock(return_value=0)
+    mock_session.execute = AsyncMock(return_value=mock_count_result)
     app.state.db_session_factory = MagicMock(return_value=mock_session)
 
     transport = ASGITransport(app=app)
