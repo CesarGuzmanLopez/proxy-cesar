@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     deepseek_api_key: str = ""
     groq_api_key: str = ""
-    zhipu_api_key: str = ""
+    zhipuai_api_key: str = ""
 
 
 settings = Settings()

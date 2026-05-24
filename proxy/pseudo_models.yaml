@@ -21,7 +21,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
     - provider: zhipu
-      model: openrouter/glm-5.1
+      model: zhipu/glm-5.1
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
