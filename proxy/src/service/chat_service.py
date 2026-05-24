@@ -67,6 +67,7 @@ from src.service.compactor.continuous import (
 from src.service.multimedia.image_describer import auto_describe_images
 from src.service.router_llm.suggester import evaluate_complexity, is_downgrade
 from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
+from src.service.context_alert import get_context_alert
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -138,6 +139,31 @@ async def process_chat_request(
     )
     active_messages = prep["active_messages"]
 
+    # Sprint 6: Context alerts — warn before context becomes unusable
+    context_alert = get_context_alert(
+        total_tokens=conv.total_tokens if conv else 0,
+        context_window=pm_schema.context_window,
+        conversation_id=conv_id,
+    )
+    if context_alert.alert_level == "unusable":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "CONTEXT_UNUSABLE",
+                "message": context_alert.warning,
+                "context_tokens": conv.total_tokens if conv else 0,
+                "context_window": pm_schema.context_window,
+                "remediation": {
+                    "action": "compact",
+                    "endpoint": f"POST /conversations/{conv_id}/compact",
+                    "description": (
+                        "Compact the conversation history into a snapshot. "
+                        "Original history is preserved."
+                    ),
+                },
+            },
+        )
+
     # Sprint 5: Router LLM — evaluate complexity (non-blocking, never changes model)
     # SAFETY: evaluate_complexity() internally extracts ONLY the last user message.
     # The full message array is passed for structural context, but the prompt
@@ -200,6 +226,7 @@ async def process_chat_request(
         images_described=images_described,
         images_described_by=images_described_by,
         router_suggestion=router_suggestion,
+        context_alert=context_alert,
     ))
 
 
@@ -625,6 +652,7 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
         images_described=ctx.images_described,
         images_described_by=ctx.images_described_by,
         router_suggestion=ctx.router_suggestion,
+        context_alert=ctx.context_alert,
     )
 
 

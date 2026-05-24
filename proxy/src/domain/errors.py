@@ -72,6 +72,23 @@ class CompactorNotFound:
     pseudo_model: str
 
 
+@dataclass(frozen=True, slots=True)
+class ContextUnusable:
+    """History exceeds all available model windows."""
+
+    total_tokens: int
+    max_context_window: int
+    conversation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryTooLargeForCompactor:
+    """No compactor model can handle this history size."""
+
+    total_tokens: int
+    max_compactor_window: int
+
+
 type DomainError = (
     PseudoModelNotFound
     | PhysicalModelNotInList
@@ -82,4 +99,6 @@ type DomainError = (
     | ContentNotSupported
     | CompactorFailed
     | CompactorNotFound
+    | ContextUnusable
+    | HistoryTooLargeForCompactor
 )

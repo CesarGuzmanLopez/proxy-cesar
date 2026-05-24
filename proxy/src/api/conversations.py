@@ -1,8 +1,9 @@
-"""Conversation state, compatibility, and tool normalization endpoints.
+"""Conversation state, compatibility, compact, audit, and tool normalization endpoints.
 
 Sprint 2 §6: GET /conversations/{id}, GET /compatible-models, GET /tools-compatibility.
 Sprint 3 §4.3: POST /conversations/{id}/normalize-tools.
 Sprint 5 §6: POST /conversations/{id}/degrade-images.
+Sprint 6 §3: POST /conversations/{id}/compact, GET /conversations/{id}/audit-log.
 """
 
 import uuid
@@ -12,11 +13,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.adapters.db.models import Conversation, ConversationTurn
+from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
 from src.config.pseudo_models import ProxyConfigSchema
 from src.schemas.tools import NormalizeToolsRequest, NormalizeToolsResponse
 from src.service.capability_detector import load_session_capabilities
 from src.service.compatibility import validate_switch
+from src.service.compactor.explicit import compact_conversation
 from src.service.multimedia.image_describer import auto_describe_images
 from src.service.tools_normalizer import generate_preview, normalize_history
 
@@ -379,6 +381,175 @@ async def normalize_tools(
                 "error": "NORMALIZATION_FAILED",
                 "message": f"Failed to normalize tools: {e}",
             },
+        ) from e
+    finally:
+        await db.close()
+
+
+# ── Sprint 6: POST /conversations/{id}/compact ──────────────────────────────
+
+
+@router.post(
+    "/conversations/{conversation_id}/compact",
+    responses={
+        400: {"description": "Empty conversation or history too large for compactor"},
+        404: {"description": "Conversation not found"},
+        502: {"description": "Compactor model failed"},
+    },
+)
+async def compact_conversation_endpoint(
+    conversation_id: str,
+    fastapi_request: Request,
+) -> dict:
+    """Explicitly compact a conversation into a structured Markdown snapshot.
+
+    POST /conversations/{id}/compact
+    plan-proxy.md §11: Compactación explícita de conversaciones.
+    For histories >500K tokens, dispatches to arq background worker.
+
+    Returns:
+        Dict with snapshot_id, tokens_before/after, preview, status.
+    """
+    db: AsyncSession = fastapi_request.app.state.db_session_factory()
+    config = fastapi_request.app.state.config
+    arq_pool = getattr(fastapi_request.app.state, "arq_pool", None)
+
+    try:
+        return await compact_conversation(
+            conversation_id=conversation_id,
+            db=db,
+            config=config,
+            arq_pool=arq_pool,
+        )
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "COMPACTION_FAILED", "message": str(e)},
+        ) from e
+    finally:
+        await db.close()
+
+
+# ── Sprint 6: GET /conversations/{id}/audit-log ─────────────────────────────
+
+
+@router.get(
+    "/conversations/{conversation_id}/audit-log",
+    responses={404: {"description": "Conversation not found"}},
+)
+async def audit_log(
+    conversation_id: str,
+    fastapi_request: Request,
+) -> dict:
+    """Return chronological event log for a conversation.
+
+    GET /conversations/{id}/audit-log
+    Constructed by scanning conversation_turns + conversation_snapshots.
+    No separate audit table needed — Sprint 6 §5.
+
+    Events include: conversation_created, pseudo_model_switched,
+    fallback_applied, compaction_explicit, compaction_continuous,
+    normalization_event, degradation_event.
+
+    Returns:
+        Dict with conversation_id and ordered events list.
+    """
+    db: AsyncSession = fastapi_request.app.state.db_session_factory()
+
+    try:
+        conv_uuid = _parse_uuid(conversation_id)
+        conv = await db.get(Conversation, conv_uuid)
+        if not conv:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "CONVERSATION_NOT_FOUND"},
+            )
+
+        events: list[dict] = []
+
+        # Conversation created
+        events.append({
+            "timestamp": conv.created_at.isoformat(),
+            "event_type": "conversation_created",
+            "details": {
+                "pseudo_model": conv.pseudo_model,
+                "physical_model": conv.physical_model,
+            },
+        })
+
+        # Turns: detect pseudo-model switches, fallbacks, event types
+        turns_result = await db.execute(
+            select(ConversationTurn)
+            .where(ConversationTurn.conversation_id == conv_uuid)
+            .order_by(ConversationTurn.turn_number)
+        )
+        prev_pseudo = conv.pseudo_model
+        for turn in turns_result.scalars().all():
+            # Pseudo-model switch detection
+            if turn.turn_type == "normal" and turn.pseudo_model != prev_pseudo:
+                events.append({
+                    "timestamp": turn.created_at.isoformat(),
+                    "event_type": "pseudo_model_switched",
+                    "details": {
+                        "from": prev_pseudo,
+                        "to": turn.pseudo_model,
+                        "turn": turn.turn_number,
+                    },
+                })
+                prev_pseudo = turn.pseudo_model
+
+            # Fallback
+            if turn.fallback_applied:
+                events.append({
+                    "timestamp": turn.created_at.isoformat(),
+                    "event_type": "fallback_applied",
+                    "details": {
+                        "turn": turn.turn_number,
+                        "reason": turn.fallback_reason,
+                    },
+                })
+
+            # Non-normal event turns
+            if turn.turn_type != "normal":
+                events.append({
+                    "timestamp": turn.created_at.isoformat(),
+                    "event_type": turn.turn_type,
+                    "details": {"turn": turn.turn_number},
+                })
+
+        # Snapshots (explicit + continuous + external)
+        snap_result = await db.execute(
+            select(ConversationSnapshot)
+            .where(ConversationSnapshot.conversation_id == conv_uuid)
+            .order_by(ConversationSnapshot.created_at)
+        )
+        for snap in snap_result.scalars().all():
+            events.append({
+                "timestamp": snap.created_at.isoformat(),
+                "event_type": f"compaction_{snap.snapshot_type}",
+                "details": {
+                    "tokens_before": snap.tokens_before,
+                    "tokens_after": snap.tokens_after,
+                    "compactor": snap.compactor_model,
+                },
+            })
+
+        events.sort(key=lambda e: e["timestamp"])
+
+        return {"conversation_id": conversation_id, "events": events}
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "AUDIT_LOG_FAILED", "message": str(e)},
         ) from e
     finally:
         await db.close()

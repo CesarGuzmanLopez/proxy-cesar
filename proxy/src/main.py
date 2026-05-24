@@ -66,6 +66,15 @@ async def lifespan(app: FastAPI):
     # LiteLLM
     setup_litellm(settings)
 
+    # Sprint 6: Optional arq pool for async compaction
+    from src.tasks.arq_app import create_arq_pool
+    arq_pool = await create_arq_pool()
+    app.state.arq_pool = arq_pool
+    if arq_pool:
+        print("arq pool created — async compaction available")
+    else:
+        print("arq pool not available — compaction runs synchronously")
+
     # Sprint 5: Optional BERT router classifier (loaded at startup, fast local eval)
     from src.service.router_llm.suggester import load_bert_classifier
     bert_loaded = load_bert_classifier()
@@ -79,6 +88,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── SHUTDOWN ─────────────────────────────────────────────────────────
+    if hasattr(app.state, "arq_pool") and app.state.arq_pool:
+        await app.state.arq_pool.close()
     await valkey_client.close()
     await engine.dispose()
     print("Proxy shut down")

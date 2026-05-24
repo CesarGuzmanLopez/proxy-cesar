@@ -19,6 +19,7 @@ from src.service.chat_models import (
     StreamContext,
     build_proxy_metadata,
 )
+from src.service.context_alert import get_context_alert
 from src.service.chat_service import (
     call_with_fallback,
     evaluate_router_suggestion,
@@ -207,6 +208,7 @@ async def _handle_non_streaming(
         images_described_by=result.images_described_by,
         images_degraded_manually=result.images_degraded_manually,
         router_suggestion=result.router_suggestion,
+        context_alert=result.context_alert,
     ))
 
     if not request.conversation_id:
@@ -528,6 +530,31 @@ async def _handle_streaming_with_db(
     )
     active_messages = comp_state["active_messages"]
 
+    # ── Sprint 6: Context alerts ──────────────────────────────────────────
+    context_alert = get_context_alert(
+        total_tokens=conv.total_tokens if conv else 0,
+        context_window=pm_schema.context_window,
+        conversation_id=conversation_id,
+    )
+    if context_alert.alert_level == "unusable":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "CONTEXT_UNUSABLE",
+                "message": context_alert.warning,
+                "context_tokens": conv.total_tokens if conv else 0,
+                "context_window": pm_schema.context_window,
+                "remediation": {
+                    "action": "compact",
+                    "endpoint": f"POST /conversations/{conversation_id}/compact",
+                    "description": (
+                        "Compact the conversation history into a snapshot. "
+                        "Original history is preserved."
+                    ),
+                },
+            },
+        )
+
     # ── Sprint 5: Router LLM ──────────────────────────────────────────────
     # Shared with non-streaming path via evaluate_router_suggestion().
     router_suggestion: dict | None = await evaluate_router_suggestion(
@@ -575,6 +602,7 @@ async def _handle_streaming_with_db(
             images_described=images_described,
             images_described_by=images_described_by,
             router_suggestion=router_suggestion,
+            context_alert=context_alert,
             db=db,
             conv=conv,
             conv_uuid=conv_uuid,
@@ -722,6 +750,7 @@ def _build_final_metadata_chunk(ctx: StreamContext, conv, session_caps, input_to
         external_compaction_detected=ctx.external_compaction_detected, external_compaction_metadata=ctx.external_compaction_metadata,
         images_described=ctx.images_described, images_described_by=ctx.images_described_by,
         router_suggestion=ctx.router_suggestion,
+        context_alert=ctx.context_alert,
     ))
     return {
         "id": f"chatcmpl-{ctx.conversation_id[:12]}",

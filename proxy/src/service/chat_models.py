@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.domain.capabilities import SessionCapabilities
+from src.service.context_alert import ContextAlert
 
 
 @dataclass
@@ -42,6 +43,7 @@ class StreamContext:
     images_described: int = 0
     images_described_by: str | None = None
     router_suggestion: dict | None = None
+    context_alert: ContextAlert | None = None
     db: Any = None
     conv: Any = None
     conv_uuid: Any = None
@@ -80,6 +82,7 @@ class SaveContext:
     images_described: int = 0
     images_described_by: str | None = None
     router_suggestion: dict | None = None
+    context_alert: ContextAlert | None = None
 
 
 @dataclass
@@ -107,6 +110,7 @@ class MetadataContext:
     images_described_by: str | None = None
     images_degraded_manually: bool = False
     router_suggestion: dict | None = None
+    context_alert: ContextAlert | None = None
 
 
 @dataclass
@@ -147,6 +151,9 @@ class ChatResult:
     images_described_by: str | None = None
     images_degraded_manually: bool = False
     router_suggestion: dict | None = None
+
+    # Sprint 6 fields
+    context_alert: ContextAlert | None = None
 
 
 def build_proxy_metadata(ctx: MetadataContext) -> dict:
@@ -225,6 +232,20 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
     metadata["images_degraded_manually"] = ctx.images_degraded_manually
 
     metadata["router_suggestion"] = ctx.router_suggestion
+
+    # Sprint 6: context alerts
+    if ctx.context_alert:
+        alert_dict: dict = {
+            "alert_level": ctx.context_alert.alert_level,
+            "context_usage_pct": ctx.context_alert.context_usage_pct,
+        }
+        if ctx.context_alert.warning:
+            alert_dict["warning"] = ctx.context_alert.warning
+        if ctx.context_alert.compaction_endpoint:
+            alert_dict["compaction_endpoint"] = ctx.context_alert.compaction_endpoint
+        if ctx.context_alert.error_code:
+            alert_dict["error_code"] = ctx.context_alert.error_code
+        metadata["context_alert"] = alert_dict
 
     return metadata
 
