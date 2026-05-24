@@ -31,19 +31,7 @@ proxy-cesar/
 
 Runs on server `plata` (74.208.235.42) via systemd service `proxy-cesar`. Nginx reverse-proxies with HTTPS/SSL.
 
-### Auto-deploy
-
-On every push to `main`, GitHub Actions runs `.github/workflows/deploy.yml`:
-
-1. Connects via SSH as user `proxy`
-2. Pulls latest code to `/opt/proxy-cesar`
-3. Sets up Python 3.14 venv and installs dependencies
-4. Writes `.env` from repository secrets
-5. Restarts `proxy-cesar.service`
-
-Secrets configured in GitHub: `PLATA_HOST`, `PLATA_SSH_KEY`, `PLATA_USER`, and all provider API keys.
-
-### Manual deploy
+### Deploy
 
 ```bash
 ssh proxy@plata
