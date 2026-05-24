@@ -9,8 +9,14 @@ Usage:
     arq src.tasks.arq_app.WorkerSettings
 """
 
-from arq import create_pool
-from arq.connections import RedisSettings
+try:
+    from arq import create_pool
+    from arq.connections import RedisSettings
+    HAS_ARQ = True
+except ImportError:
+    HAS_ARQ = False
+    create_pool = None  # type: ignore[assignment]
+    RedisSettings = None  # type: ignore[assignment]
 
 
 # ── Worker function (discovered by name) ──────────────────────────────────
@@ -66,11 +72,13 @@ class WorkerSettings:
 
 
 async def create_arq_pool():
-    """Create arq pool if Valkey is available.
+    """Create arq pool if arq and Valkey are available.
 
     Returns:
-        ArqRedis pool or None if Valkey is unavailable (compaction runs synchronously).
+        ArqRedis pool or None if arq/Valkey unavailable (compaction runs synchronously).
     """
+    if not HAS_ARQ:
+        return None
     try:
         pool = await create_pool(RedisSettings.from_dsn("valkey://localhost:6379"))
         return pool

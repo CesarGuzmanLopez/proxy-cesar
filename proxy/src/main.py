@@ -67,13 +67,17 @@ async def lifespan(app: FastAPI):
     setup_litellm(settings)
 
     # Sprint 6: Optional arq pool for async compaction
-    from src.tasks.arq_app import create_arq_pool
-    arq_pool = await create_arq_pool()
+    arq_pool = None
+    try:
+        from src.tasks.arq_app import create_arq_pool as _create_arq_pool
+        arq_pool = await _create_arq_pool()
+        if arq_pool:
+            print("arq pool created — async compaction available")
+        else:
+            print("arq pool not available — compaction runs synchronously")
+    except Exception:
+        print("arq not available — compaction runs synchronously")
     app.state.arq_pool = arq_pool
-    if arq_pool:
-        print("arq pool created — async compaction available")
-    else:
-        print("arq pool not available — compaction runs synchronously")
 
     # Sprint 5: Optional BERT router classifier (loaded at startup, fast local eval)
     from src.service.router_llm.suggester import load_bert_classifier
