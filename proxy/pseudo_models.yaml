@@ -21,7 +21,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
     - provider: zhipu
-      model: openrouter/glm-5.1
+      model: zai/glm-5
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
@@ -139,7 +139,7 @@ pseudo_models:
       on_downgrade: block
     physical_models:
     - provider: zhipu
-      model: openrouter/glm-4.5-flash
+      model: zai/glm-4.5-flash
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
@@ -172,7 +172,7 @@ pseudo_models:
       on_downgrade: block
     physical_models:
     - provider: zhipu
-      model: openrouter/glm-4.5-flash
+      model: zai/glm-4.5-flash
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
@@ -242,7 +242,7 @@ pseudo_models:
       openai_tools_compatible: true
       vision: false
     - provider: zhipu
-      model: openrouter/glm-4.5-flash
+      model: zai/glm-4.5-flash
       context_window: 128000
       openai_tools_compatible: true
       vision: false

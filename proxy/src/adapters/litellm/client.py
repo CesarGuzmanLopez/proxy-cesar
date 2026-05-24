@@ -26,6 +26,7 @@ def setup_litellm(settings: Settings) -> None:
     os.environ.setdefault("DEEPSEEK_API_KEY", settings.deepseek_api_key)
     os.environ.setdefault("GROQ_API_KEY", settings.groq_api_key)
     os.environ.setdefault("ZHIPUAI_API_KEY", settings.zhipuai_api_key)
+    os.environ.setdefault("ZAI_API_KEY", settings.zai_api_key)
 
     litellm.suppress_debug_info = True
     litellm.set_verbose = False

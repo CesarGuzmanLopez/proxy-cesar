@@ -72,7 +72,7 @@ def test_deep_flash_with_parallel_only_deepseek():
     result = get_eligible_models(pm.physical_models, _make_caps(has_parallel_tools=True))
     models = [m.model for m in result]
     assert "openrouter/deepseek-v4-flash" in models
-    assert "openrouter/glm-4.5-flash" not in models
+    assert "zai/glm-4.5-flash" not in models
 
 
 def test_is_pinned_model_eligible():

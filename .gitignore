@@ -9,6 +9,7 @@ build/
 venv/
 .env
 *.env
+*.whl
 
 # IDE
 .vscode/

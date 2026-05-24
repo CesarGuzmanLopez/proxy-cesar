@@ -7,7 +7,7 @@ packages = [{ include = "src", from = "." }]
 dependencies = [
     "fastapi>=0.115,<0.116",
     "uvicorn[standard]>=0.34,<0.35",
-    "litellm>=1.55,<1.56",
+    "litellm>=1.83.7,<1.83.8",
     "pydantic>=2.11,<3.0",
     "pydantic-settings>=2.7,<2.8",
     "sqlmodel>=0.0.38,<0.1",
