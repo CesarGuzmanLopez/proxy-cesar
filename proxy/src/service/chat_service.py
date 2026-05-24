@@ -96,23 +96,27 @@ async def process_chat_request(
 
     # Sprint 5: Auto-describe images on pseudo-model switch
     auto_describe_meta: dict | None = None
+    messages_for_llm: list[dict] = messages  # May be replaced by described version
     if conv is not None and not is_new and pseudo_model_name != conv.pseudo_model:
-        auto_describe_meta = await handle_auto_describe(
+        desc_in_flight, auto_describe_meta = await handle_auto_describe(
             conv=conv,
             current_pseudo_name=conv.pseudo_model,
             new_pm_schema=pm_schema,
             config=config,
             db=db,
             pinned_physical_model=physical_model,
+            in_flight_messages=messages,
         )
+        if desc_in_flight is not None:
+            messages_for_llm = desc_in_flight
 
     # Step 12: Check input threshold
-    est_input = estimate_tokens(messages)
+    est_input = estimate_tokens(messages_for_llm)
     _raise_if_exceeds_threshold(est_input, pm_schema, pseudo_model_name, config)
 
     # Sprint 4: Pre-compaction, external detection, continuous compaction
     prep = await _apply_compaction(
-        conv, is_new, messages, pm_schema, config, db, est_input,
+        conv, is_new, messages_for_llm, pm_schema, config, db, est_input,
     )
     active_messages = prep["active_messages"]
 
@@ -331,6 +335,48 @@ def _raise_if_exceeds_threshold(
         )
 
 
+def _resolve_auto_describe_params(
+    config,
+    current_pseudo_name: str,
+    new_pm_schema: object,
+    pinned_physical_model: str,
+) -> tuple[str | None, str | None]:
+    """Check if auto-describe should run and resolve the vision model.
+
+    Returns (vision_model, current_pseudo_name) or (None, None) if
+    auto-describe should be skipped.
+    """
+    if new_pm_schema.image_handling.on_downgrade != "auto_describe":
+        return (None, None)
+    if _any_vision_comp(new_pm_schema.physical_models):
+        return (None, None)
+
+    current_pm = config.pseudo_models.get(current_pseudo_name)
+    if current_pm is None:
+        return (None, None)
+
+    vision_models = [m for m in current_pm.physical_models if m.vision]
+    if not vision_models:
+        return (None, None)
+
+    vision_model: str = (
+        pinned_physical_model
+        if any(m.model == pinned_physical_model and m.vision for m in current_pm.physical_models)
+        else vision_models[0].model
+    )
+    return (vision_model, current_pseudo_name)
+
+
+def _load_messages_from_turns(conv: Conversation) -> list[dict]:
+    """Load all messages from conversation turns in order."""
+    all_messages: list[dict] = []
+    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
+        turn_msgs = turn.messages
+        if isinstance(turn_msgs, list):
+            all_messages.extend(turn_msgs)
+    return all_messages
+
+
 async def handle_auto_describe(
     conv: Conversation,
     current_pseudo_name: str,
@@ -338,76 +384,28 @@ async def handle_auto_describe(
     config,
     db: AsyncSession,
     pinned_physical_model: str,
-) -> dict | None:
-    """Execute auto-describe when switching from vision to non-vision model.
-
-    Shared between streaming (``api/chat.py``) and non-streaming
-    (``chat_service.py``) paths to eliminate code duplication.
-
-    Runs after ``validate_switch()`` returns WARNING with
-    ``IMAGES_WILL_BE_DESCRIBED``. Describes all images in the conversation
-    history using the current vision model and stores a degradation_event turn.
-
-    Args:
-        conv: Current conversation (with turns loaded).
-        current_pseudo_name: Current pseudo-model name (vision-capable).
-        new_pm_schema: Target pseudo-model schema.
-        config: Proxy config with all pseudo-models.
-        db: DB session.
-        pinned_physical_model: Currently pinned physical model.
-
-    Returns:
-        Metadata dict with ``images_described``, ``described_by``, etc.
-        ``None`` if auto-describe is not needed or not possible.
-    """
-    # Check destination has auto_describe enabled
-    if new_pm_schema.image_handling.on_downgrade != "auto_describe":
-        return None
-
-    # Check destination lacks vision (that's why we're describing)
-    if _any_vision_comp(new_pm_schema.physical_models):
-        return None  # Destination has vision — no describe needed
-
-    # Find vision model in current pseudo-model
-    current_pm = config.pseudo_models.get(current_pseudo_name)
-    if current_pm is None:
-        return None
-
-    vision_models = [m for m in current_pm.physical_models if m.vision]
-    if not vision_models:
-        return None  # Current model has no vision — can't describe
-
-    # Determine which model to use for describing
-    vision_model: str = (
-        pinned_physical_model
-        if any(m.model == pinned_physical_model and m.vision for m in current_pm.physical_models)
-        else vision_models[0].model
+    in_flight_messages: list[dict] | None = None,
+) -> tuple[list[dict] | None, dict | None]:
+    """Execute auto-describe when switching from vision to non-vision model."""
+    # Resolve vision model (also validates auto-describe is needed)
+    vision_model, current_pseudo_name = _resolve_auto_describe_params(
+        config, current_pseudo_name, new_pm_schema, pinned_physical_model,
     )
+    if vision_model is None:
+        return (None, None)
 
-    # Load all conversation messages from turns
-    all_messages: list[dict] = []
-    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
-        turn_msgs = turn.messages
-        if isinstance(turn_msgs, list):
-            all_messages.extend(turn_msgs)
-
+    # Load and describe messages from DB history
+    all_messages = _load_messages_from_turns(conv)
     if not all_messages:
-        return None
+        return (None, None)
 
-    # Auto-describe images
-    described_messages, desc_meta = await auto_describe_images(
-        all_messages, vision_model,
-    )
-
+    described_history, desc_meta = await auto_describe_images(all_messages, vision_model)
     described_count = desc_meta.get("images_described", 0)
     if described_count == 0:
-        return desc_meta  # No images found
+        return (None, desc_meta)
 
     # Store degradation_event turn
-    turn_number: int = 1
-    if conv.turns:
-        turn_number = max(t.turn_number for t in conv.turns) + 1
-
+    turn_number = max(t.turn_number for t in conv.turns) + 1 if conv.turns else 1
     deg_turn = ConversationTurn(
         conversation_id=conv.id,
         turn_number=turn_number,
@@ -415,22 +413,24 @@ async def handle_auto_describe(
         physical_model=vision_model,
         input_tokens=0,
         output_tokens=desc_meta.get("total_description_tokens", 0),
-        messages=described_messages,
+        messages=described_history,
         response={"metadata": desc_meta},
         turn_type="degradation_event",
-        had_images=False,
-        had_tools=False,
-        had_parallel_tools=False,
+        had_images=False, had_tools=False, had_parallel_tools=False,
     )
     db.add(deg_turn)
-
-    # Update conversation tracking
     conv.images_described = max(conv.images_described or 0, 0) + described_count
 
-    return desc_meta
+    # Describe in-flight messages if present
+    described_in_flight: list[dict] | None = None
+    if in_flight_messages:
+        desc_in_flight, _ = await auto_describe_images(in_flight_messages, vision_model)
+        described_in_flight = desc_in_flight
+
+    return (described_in_flight, desc_meta)
 
 
-async async def _assemble_snapshot_context(
+async def _assemble_snapshot_context(
     conv: Conversation,
     db: AsyncSession,
     active_messages: list[dict],

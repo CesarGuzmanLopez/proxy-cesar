@@ -320,7 +320,7 @@ async def continuous_compact(
         return {
             "applied": False,
             "reason": error_reason,
-            "warning": f"Continuous compaction cannot run: compactor not available.",
+            "warning": "Continuous compaction cannot run: compactor not available.",
         }
 
     # Call compactor
