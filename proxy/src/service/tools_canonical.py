@@ -105,7 +105,7 @@ def validate_arguments_json(arguments: str) -> bool:
     try:
         json.loads(arguments)
         return True
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         return False
 
 

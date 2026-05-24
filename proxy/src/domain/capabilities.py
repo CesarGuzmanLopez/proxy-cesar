@@ -32,6 +32,11 @@ class TurnCapabilities:
     thinking_blocks: dict | None = None
     tools_level_used: int = 0  # ToolLevel as int (0=NONE, 1=BASIC, 2=STANDARD, 3=PARALLEL_STRICT)
 
+    # Sprint 5: image description tracking per turn
+    images_described_count: int = 0
+    images_described_by: str | None = None
+    images_degraded_manually: bool = False
+
 
 @dataclass
 class SessionCapabilities:
@@ -55,6 +60,10 @@ class SessionCapabilities:
     # Sprint 3: highest tool level ever used in this conversation
     max_tools_level: int = 0
 
+    # Sprint 5: image degradation tracking (cumulative, never reset)
+    images_described: int = 0
+    images_degraded_manually: bool = False
+
     def merge(self, turn_caps: TurnCapabilities) -> "SessionCapabilities":
         """Merge new turn capabilities into session (additive only)."""
         self.has_images = self.has_images or turn_caps.has_images
@@ -66,6 +75,11 @@ class SessionCapabilities:
             self.has_parallel_tools or turn_caps.has_parallel_tools
         )
         self.max_tools_level = max(self.max_tools_level, turn_caps.tools_level_used)
+        # Sprint 5: images_described is additive (count of described images)
+        self.images_described += turn_caps.images_described_count
+        self.images_degraded_manually = (
+            self.images_degraded_manually or turn_caps.images_degraded_manually
+        )
         return self
 
 
@@ -92,3 +106,8 @@ class CompatibilityResult:
     reason: str
     remediation: list[str] = field(default_factory=list)
     details: dict = field(default_factory=dict)
+
+    # Sprint 5: carries auto-described messages from validate_switch → caller
+    # Avoids re-scanning the full conversation history for images.
+    auto_described_messages: list[dict] | None = None
+    auto_describe_metadata: dict | None = None

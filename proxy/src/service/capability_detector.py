@@ -119,6 +119,9 @@ async def load_session_capabilities(
         has_parallel_tools=conv.capability_has_parallel_tools,
         total_tokens=conv.total_tokens,
         max_tools_level=getattr(conv, "max_tools_level", 0),
+        # Sprint 5
+        images_described=getattr(conv, "images_described", 0),
+        images_degraded_manually=getattr(conv, "images_degraded_manually", False),
     )
 
 
@@ -146,6 +149,9 @@ async def accumulate_capabilities(
             capability_has_tools=updated.has_tools,
             capability_has_parallel_tools=updated.has_parallel_tools,
             max_tools_level=updated.max_tools_level,
+            # Sprint 5
+            images_described=updated.images_described,
+            images_degraded_manually=updated.images_degraded_manually,
         )
     )
 

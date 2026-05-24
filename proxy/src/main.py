@@ -54,6 +54,14 @@ async def lifespan(app: FastAPI):
     # LiteLLM
     setup_litellm(settings)
 
+    # Sprint 5: Optional BERT router classifier (loaded at startup, fast local eval)
+    from src.service.router_llm.suggester import load_bert_classifier
+    bert_loaded = load_bert_classifier()
+    if bert_loaded:
+        print("BERT router classifier loaded — fast local routing enabled")
+    else:
+        print("BERT router classifier not loaded — using LLM-based routing (slower)")
+
     print(f"Proxy ready on port {settings.proxy_port}")
 
     yield
@@ -81,7 +89,7 @@ def main() -> None:
     """Entry point for `uvicorn src.main:app` or `python -m src.main`."""
     uvicorn.run(
         "src.main:app",
-        host="0.0.0.0",
+        host=settings.proxy_host,
         port=settings.proxy_port,
         reload=True,
     )

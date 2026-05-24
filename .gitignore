@@ -32,3 +32,7 @@ htmlcov/
 *.pkl
 *.log
 tmp/
+
+# SonarQube
+.scannerwork/
+proxy/coverage.xml

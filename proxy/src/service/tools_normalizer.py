@@ -131,7 +131,6 @@ def generate_preview(messages: list[dict], meta: NormalizationMetadata) -> str:
         return "No parallel tool calls found. Nothing to normalize."
 
     preview_parts: list[str] = []
-    turn_idx = 0
     for i, msg in enumerate(messages):
         if msg.get("role") == "assistant" and len(msg.get("tool_calls", [])) > 1:
             turn_num = i + 1
@@ -140,6 +139,5 @@ def generate_preview(messages: list[dict], meta: NormalizationMetadata) -> str:
                 f"Turn {turn_num}: {n_calls} parallel calls "
                 f"→ {n_calls} sequential calls."
             )
-            turn_idx += 1
 
     return " ".join(preview_parts)

@@ -1,8 +1,10 @@
 # Sprint 4 — Pre-compaction & Continuous Compaction
 
 > **Duration:** 2 weeks
+> **Status:** ✅ COMPLETE — 216 tests passing (178 Sprint 1-3 + 38 Sprint 4)
 > **Goal:** Expensive models never receive enormous inputs or saturated contexts. Pre-compaction summarizes long inputs with a cheap model before the expensive one sees them. Continuous compaction keeps long-running conversations within budget by snapshotting old turns.
 > **Success criterion:** 80K tokens of logs to `pensamiento-profundo-caro` → pre-compacted with `deep-flash` to ~8K → user sees exact savings. 30 turns → compaction triggers at 70% → context stays below limit.
+> **Completed:** 2026-05-24
 
 ---
 
@@ -733,16 +735,26 @@ After "Call LiteLLM" (step 7):
 
 ## 6. Acceptance Criteria
 
-- [ ] 80K tokens input to `pensamiento-profundo-caro` → pre-compacted with `deep-flash` → expensive model receives ~8K tokens
-- [ ] `proxy_metadata.pre_compaction_applied: true` with before/after token counts
-- [ ] Pre-compaction only activates when configured
-- [ ] 30-turn conversation with `pensamiento-profundo-caro` triggers continuous compaction at 70%
-- [ ] Snapshot stored in DB with correct metadata
-- [ ] Subsequent turns use snapshot + recent turns, not full history
-- [ ] Multiple continuous compactions chain correctly
-- [ ] Original messages in DB NEVER modified by compaction
-- [ ] All 25+ tests pass
-- [ ] No regression on Sprint 1-3 tests
+- [x] 80K tokens input to `pensamiento-profundo-caro` → pre-compacted with `deep-flash` → expensive model receives ~8K tokens (unit tested)
+- [x] `proxy_metadata.pre_compaction_applied: true` with before/after token counts
+- [x] Pre-compaction only activates when configured
+- [x] 30-turn conversation with `pensamiento-profundo-caro` triggers continuous compaction at 70% (unit tested)
+- [x] Snapshot stored in DB with correct metadata
+- [x] Subsequent turns use snapshot + recent turns, not full history
+- [x] Multiple continuous compactions chain correctly
+- [x] Original messages in DB NEVER modified by compaction
+- [x] All 38 Sprint 4 tests pass (216 total)
+- [x] No regression on Sprint 1-3 tests (all 178 original tests still pass)
+
+### Known doc path deviation
+
+The Sprint 4 spec originally placed files in `src/compactor/` but the project convention places all service modules in `src/service/`. Files were implemented in `src/service/compactor/` to maintain consistency:
+
+| Spec path | Actual path |
+|---|---|
+| `src/compactor/pre_compactor.py` | `src/service/compactor/pre_compactor.py` |
+| `src/compactor/continuous.py` | `src/service/compactor/continuous.py` |
+| `src/compactor/prompts.py` | `src/service/compactor/prompts.py` |
 
 ---
 

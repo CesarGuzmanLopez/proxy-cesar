@@ -10,12 +10,15 @@ Sprint 4: +conversation_snapshots table, +active_snapshot_id on conversations.
 
 import uuid
 from datetime import datetime
-from typing import Optional, Union
+
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, func
 from sqlalchemy import Uuid as SA_Uuid
 from sqlalchemy import JSON as SA_JSON
 from sqlmodel import Field, Relationship, SQLModel
+
+# Reusable SQL default expressions
+_SERVER_NOW = "now()"
 
 
 class ConversationBase(SQLModel):
@@ -34,6 +37,10 @@ class ConversationBase(SQLModel):
     # Sprint 3: max tool complexity level used in this conversation
     max_tools_level: int = Field(default=0, ge=0)
 
+    # Sprint 5: image degradation tracking
+    images_described: int = Field(default=0, ge=0)
+    images_degraded_manually: bool = Field(default=False)
+
 
 class Conversation(ConversationBase, table=True):
     __tablename__ = "conversations"
@@ -43,7 +50,7 @@ class Conversation(ConversationBase, table=True):
     )
     created_at: datetime = Field(
         default_factory=datetime.now,
-        sa_column=Column(DateTime(), server_default="now()"),
+        sa_column=Column(DateTime(), server_default=_SERVER_NOW),
     )
     updated_at: datetime = Field(
         default_factory=datetime.now,
@@ -76,10 +83,10 @@ class ConversationTurnBase(SQLModel):
     physical_model: str = Field(max_length=256)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
-    messages: Union[list, dict] = Field(default_factory=list, sa_type=SA_JSON)
-    response: Optional[dict] = Field(default=None, sa_type=SA_JSON)
+    messages: list | dict = Field(default_factory=list, sa_type=SA_JSON)
+    response: dict | None = Field(default=None, sa_type=SA_JSON)
     fallback_applied: bool = False
-    fallback_reason: Optional[str] = Field(default=None, max_length=256)
+    fallback_reason: str | None = Field(default=None, max_length=256)
 
     # Sprint 2: Turn type and capability flags
     turn_type: str = Field(default="normal", max_length=32)
@@ -88,8 +95,8 @@ class ConversationTurnBase(SQLModel):
     had_parallel_tools: bool = Field(default=False)
 
     # Sprint 3: Tool canonical storage columns
-    tool_definitions: Optional[dict] = Field(default=None, sa_type=SA_JSON)
-    thinking_blocks: Optional[dict] = Field(default=None, sa_type=SA_JSON)
+    tool_definitions: dict | None = Field(default=None, sa_type=SA_JSON)
+    thinking_blocks: dict | None = Field(default=None, sa_type=SA_JSON)
     tools_incomplete: bool = Field(default=False)
     tools_level_used: int = Field(default=0, ge=0)
 

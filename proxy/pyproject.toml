@@ -32,6 +32,7 @@ dev = [
     "pytest>=8.3,<9.1",
     "pytest-asyncio>=0.24,<1.4",
     "pytest-mock>=3.14,<3.16",
+    "pytest-cov>=5.0,<7.0",
     "httpx>=0.23,<0.29",
     "fakeredis[lua]>=2.26,<2.36",
 ]
@@ -41,4 +42,23 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "integration: Integration tests that require API keys and real provider calls.",
+]
+addopts = [
+    "--cov=src",
+    "--cov-report=xml:coverage.xml",
+    "--cov-report=term-missing",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/adapters/db/migrations/*",
+    "src/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
 ]

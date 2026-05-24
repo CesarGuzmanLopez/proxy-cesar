@@ -30,7 +30,11 @@ from src.service.capability_detector import (
     estimate_tokens,
     load_session_capabilities,
 )
-from src.service.compatibility import validate_incoming_content, validate_switch
+from src.service.compatibility import (
+    validate_incoming_content,
+    validate_switch,
+)
+from src.service.compatibility import _any_vision as _any_vision_comp
 from src.service.threshold_guard import check_input_threshold
 from src.service.tool_filter import get_eligible_models, is_pinned_model_eligible
 from src.service.tools_canonical import (
@@ -50,7 +54,9 @@ from src.service.compactor.continuous import (
     detect_external_compaction,
     handle_external_compaction,
 )
-from src.service.chat_models import ChatResult, FallbackInfo
+from src.service.multimedia.image_describer import auto_describe_images
+from src.service.router_llm.suggester import evaluate_complexity, is_downgrade
+from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -88,6 +94,18 @@ async def process_chat_request(
     )
     await affinity.set(conv_id, physical_model)
 
+    # Sprint 5: Auto-describe images on pseudo-model switch
+    auto_describe_meta: dict | None = None
+    if conv is not None and not is_new and pseudo_model_name != conv.pseudo_model:
+        auto_describe_meta = await handle_auto_describe(
+            conv=conv,
+            current_pseudo_name=conv.pseudo_model,
+            new_pm_schema=pm_schema,
+            config=config,
+            db=db,
+            pinned_physical_model=physical_model,
+        )
+
     # Step 12: Check input threshold
     est_input = estimate_tokens(messages)
     _raise_if_exceeds_threshold(est_input, pm_schema, pseudo_model_name, config)
@@ -97,6 +115,17 @@ async def process_chat_request(
         conv, is_new, messages, pm_schema, config, db, est_input,
     )
     active_messages = prep["active_messages"]
+
+    # Sprint 5: Router LLM — evaluate complexity (non-blocking, never changes model)
+    # SAFETY: evaluate_complexity() internally extracts ONLY the last user message.
+    # The full message array is passed for structural context, but the prompt
+    # sent to the evaluator contains only the last user text (MAX_TASK_CHARS=2000).
+    router_suggestion: dict | None = await evaluate_router_suggestion(
+        pm_schema=pm_schema,
+        messages=active_messages,
+        current_pseudo_name=pseudo_model_name,
+        config=config,
+    )
 
     # Step 13: Call LiteLLM with fallback
     response, fallback_info = await call_with_fallback(
@@ -109,8 +138,14 @@ async def process_chat_request(
         tool_choice=tool_choice,
     )
 
-    # Step 14-20: Save turn, update conversation, build result
-    return await _save_and_return(
+    # Compute Sprint 5 metadata
+    images_described = 0
+    images_described_by: str | None = None
+    if auto_describe_meta:
+        images_described = auto_describe_meta.get("images_described", 0)
+        images_described_by = auto_describe_meta.get("described_by")
+
+    return await _save_and_return(SaveContext(
         db=db,
         conv=conv,
         conv_uuid=conv_uuid,
@@ -131,7 +166,10 @@ async def process_chat_request(
         prep=prep,
         compatibility=compatibility,
         tools_filter=tools_filter,
-    )
+        images_described=images_described,
+        images_described_by=images_described_by,
+        router_suggestion=router_suggestion,
+    ))
 
 
 # ── Step helpers ──────────────────────────────────────────────────────────────
@@ -277,7 +315,7 @@ def _raise_if_exceeds_threshold(
         estimated_tokens=estimated_input,
         pre_compaction_enabled=pm_schema.pre_compaction.enabled,
     )
-    if not check.ok:
+    if not check.success:
         error = check.error
         raise HTTPException(
             status_code=400,
@@ -291,6 +329,105 @@ def _raise_if_exceeds_threshold(
                 "suggestions": _suggest_higher_threshold_models(config, error.estimated),
             },
         )
+
+
+async def handle_auto_describe(
+    conv: Conversation,
+    current_pseudo_name: str,
+    new_pm_schema: object,
+    config,
+    db: AsyncSession,
+    pinned_physical_model: str,
+) -> dict | None:
+    """Execute auto-describe when switching from vision to non-vision model.
+
+    Shared between streaming (``api/chat.py``) and non-streaming
+    (``chat_service.py``) paths to eliminate code duplication.
+
+    Runs after ``validate_switch()`` returns WARNING with
+    ``IMAGES_WILL_BE_DESCRIBED``. Describes all images in the conversation
+    history using the current vision model and stores a degradation_event turn.
+
+    Args:
+        conv: Current conversation (with turns loaded).
+        current_pseudo_name: Current pseudo-model name (vision-capable).
+        new_pm_schema: Target pseudo-model schema.
+        config: Proxy config with all pseudo-models.
+        db: DB session.
+        pinned_physical_model: Currently pinned physical model.
+
+    Returns:
+        Metadata dict with ``images_described``, ``described_by``, etc.
+        ``None`` if auto-describe is not needed or not possible.
+    """
+    # Check destination has auto_describe enabled
+    if new_pm_schema.image_handling.on_downgrade != "auto_describe":
+        return None
+
+    # Check destination lacks vision (that's why we're describing)
+    if _any_vision_comp(new_pm_schema.physical_models):
+        return None  # Destination has vision — no describe needed
+
+    # Find vision model in current pseudo-model
+    current_pm = config.pseudo_models.get(current_pseudo_name)
+    if current_pm is None:
+        return None
+
+    vision_models = [m for m in current_pm.physical_models if m.vision]
+    if not vision_models:
+        return None  # Current model has no vision — can't describe
+
+    # Determine which model to use for describing
+    vision_model: str = (
+        pinned_physical_model
+        if any(m.model == pinned_physical_model and m.vision for m in current_pm.physical_models)
+        else vision_models[0].model
+    )
+
+    # Load all conversation messages from turns
+    all_messages: list[dict] = []
+    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
+        turn_msgs = turn.messages
+        if isinstance(turn_msgs, list):
+            all_messages.extend(turn_msgs)
+
+    if not all_messages:
+        return None
+
+    # Auto-describe images
+    described_messages, desc_meta = await auto_describe_images(
+        all_messages, vision_model,
+    )
+
+    described_count = desc_meta.get("images_described", 0)
+    if described_count == 0:
+        return desc_meta  # No images found
+
+    # Store degradation_event turn
+    turn_number: int = 1
+    if conv.turns:
+        turn_number = max(t.turn_number for t in conv.turns) + 1
+
+    deg_turn = ConversationTurn(
+        conversation_id=conv.id,
+        turn_number=turn_number,
+        pseudo_model=current_pseudo_name,
+        physical_model=vision_model,
+        input_tokens=0,
+        output_tokens=desc_meta.get("total_description_tokens", 0),
+        messages=described_messages,
+        response={"metadata": desc_meta},
+        turn_type="degradation_event",
+        had_images=False,
+        had_tools=False,
+        had_parallel_tools=False,
+    )
+    db.add(deg_turn)
+
+    # Update conversation tracking
+    conv.images_described = max(conv.images_described or 0, 0) + described_count
+
+    return desc_meta
 
 
 async def _apply_compaction(
@@ -361,35 +498,10 @@ async def _apply_compaction(
     return state
 
 
-async def _save_and_return(
-    db: AsyncSession,
-    conv: Conversation,
-    conv_uuid: uuid.UUID,
-    conv_id: str,
-    pseudo_model_name: str,
-    physical_model: str,
-    provider: str | None,
-    turn_caps: SessionCapabilities,
-    messages: list[dict],
-    response: object,
-    fallback_info: FallbackInfo,
-    is_new_conversation: bool,
-    existing_affinity: str | None,
-    pm_schema: object,
-    session_caps: SessionCapabilities,
-    tools: list[dict] | None,
-    tool_choice: str | dict | None,
-    prep: dict,
-    compatibility: dict,
-    tools_filter: dict,
-) -> ChatResult:
-    """Steps 14-20: Build turn, save to DB, accumulate capabilities, return result.
+async def _save_and_return(ctx: SaveContext) -> ChatResult:
+    """Steps 14-20: Build turn, save to DB, accumulate capabilities, return result."""
+    response_dict = ctx.response.model_dump() if hasattr(ctx.response, "model_dump") else ctx.response
 
-    Extracted to keep process_chat_request under 30 lines.
-    """
-    response_dict = response.model_dump() if hasattr(response, "model_dump") else response
-
-    # Parse usage
     input_tokens = 0
     output_tokens = 0
     if isinstance(response_dict, dict):
@@ -398,21 +510,20 @@ async def _save_and_return(
             input_tokens = usage.get("prompt_tokens", 0) or 0
             output_tokens = usage.get("completion_tokens", 0) or 0
 
-    # Sprint 3: tool metadata
-    tool_defs: list[dict] | None = tools
+    tool_defs: list[dict] | None = ctx.tools
     tool_calls = extract_tool_calls_from_response(response_dict) if tool_defs else []
     if tool_calls:
         try:
             validate_tool_call_ids(tool_calls)
         except ValueError:
-            turn_caps.tools_incomplete = True
+            ctx.turn_caps.tools_incomplete = True
 
-    if tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, tool_choice):
-        turn_caps.tools_incomplete = True
+    if ctx.tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, ctx.tool_choice):
+        ctx.turn_caps.tools_incomplete = True
 
-    thinking_content = extract_thinking_content(response_dict, provider)
+    thinking_content = extract_thinking_content(response_dict, ctx.provider)
 
-    tools_incomplete = turn_caps.tools_incomplete
+    tools_incomplete = ctx.turn_caps.tools_incomplete
     tools_level = determine_tool_level_for_turn(
         tool_calls=tool_calls,
         tool_definitions=tool_defs,
@@ -420,7 +531,7 @@ async def _save_and_return(
     )
 
     tool_result_truncated = False
-    for msg in messages:
+    for msg in ctx.messages:
         if msg.get("role") == "tool":
             content = msg.get("content", "")
             truncated = truncate_tool_result(content)
@@ -429,65 +540,68 @@ async def _save_and_return(
                 msg["content"] = truncated
 
     turn_number = 1
-    if conv.turns:
-        turn_number = max(t.turn_number for t in conv.turns) + 1
+    if ctx.conv.turns:
+        turn_number = max(t.turn_number for t in ctx.conv.turns) + 1
 
     turn = ConversationTurn(
-        conversation_id=conv_uuid,
+        conversation_id=ctx.conv_uuid,
         turn_number=turn_number,
-        pseudo_model=pseudo_model_name,
-        physical_model=physical_model,
+        pseudo_model=ctx.pseudo_model_name,
+        physical_model=ctx.physical_model,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        messages=messages,
+        messages=ctx.messages,
         response=response_dict,
-        fallback_applied=fallback_info.applied,
-        fallback_reason=fallback_info.reason,
+        fallback_applied=ctx.fallback_info.applied,
+        fallback_reason=ctx.fallback_info.reason,
         turn_type="normal",
-        had_images=turn_caps.has_images,
-        had_tools=turn_caps.has_tools,
-        had_parallel_tools=turn_caps.has_parallel_tools,
+        had_images=ctx.turn_caps.has_images,
+        had_tools=ctx.turn_caps.has_tools,
+        had_parallel_tools=ctx.turn_caps.has_parallel_tools,
         tool_definitions=tool_defs,
         thinking_blocks={"content": thinking_content} if thinking_content else None,
         tools_incomplete=tools_incomplete,
         tools_level_used=tools_level,
     )
-    db.add(turn)
+    ctx.db.add(turn)
 
-    conv.physical_model = physical_model
-    conv.total_tokens += input_tokens + output_tokens
-    conv.updated_at = func.now()
-    await db.commit()
+    ctx.conv.physical_model = ctx.physical_model
+    ctx.conv.total_tokens += input_tokens + output_tokens
+    ctx.conv.updated_at = func.now()
+    await ctx.db.commit()
 
-    session_caps = await accumulate_capabilities(db, conv_uuid, turn_caps, session_caps)
+    updated_caps = await accumulate_capabilities(ctx.db, ctx.conv_uuid, ctx.turn_caps, ctx.session_caps)
 
-    affinity_maintained = not is_new_conversation and existing_affinity == physical_model
+    affinity_maintained = not ctx.is_new_conversation and ctx.existing_affinity == ctx.physical_model
 
     return ChatResult(
-        conversation_id=conv_id,
-        pseudo_model=pseudo_model_name,
-        physical_model=physical_model,
+        conversation_id=ctx.conv_id,
+        pseudo_model=ctx.pseudo_model_name,
+        physical_model=ctx.physical_model,
         response=response_dict,
-        fallback_info=fallback_info,
-        is_new_conversation=is_new_conversation,
+        fallback_info=ctx.fallback_info,
+        is_new_conversation=ctx.is_new_conversation,
         affinity_maintained=affinity_maintained,
-        total_tokens=conv.total_tokens,
-        context_window=pm_schema.context_window,
-        session_caps=session_caps,
-        compatibility_warning=compatibility["warning"],
-        compatibility_details=compatibility["details"],
-        tools_filter_applied=tools_filter["applied"],
-        tools_filter_reason=tools_filter["reason"],
+        total_tokens=ctx.conv.total_tokens,
+        context_window=ctx.pm_schema.context_window,
+        session_caps=updated_caps,
+        compatibility_warning=ctx.compatibility["warning"],
+        compatibility_details=ctx.compatibility["details"],
+        tools_filter_applied=ctx.tools_filter["applied"],
+        tools_filter_reason=ctx.tools_filter["reason"],
         tools_level_used=tools_level,
         tools_incomplete=tools_incomplete,
         thinking_content=thinking_content,
         tool_result_truncated=tool_result_truncated,
-        pre_compaction_applied=prep["pre_compaction_applied"],
-        pre_compaction_metadata=prep["pre_compaction_metadata"],
-        continuous_compaction_applied=prep["continuous_compaction_applied"],
-        continuous_compaction_metadata=prep["continuous_compaction_metadata"],
-        external_compaction_detected=prep["external_compaction_detected"],
-        external_compaction_metadata=prep["external_compaction_metadata"],
+        pre_compaction_applied=ctx.prep["pre_compaction_applied"],
+        pre_compaction_metadata=ctx.prep["pre_compaction_metadata"],
+        continuous_compaction_applied=ctx.prep["continuous_compaction_applied"],
+        continuous_compaction_metadata=ctx.prep["continuous_compaction_metadata"],
+        external_compaction_detected=ctx.prep["external_compaction_detected"],
+        external_compaction_metadata=ctx.prep["external_compaction_metadata"],
+        images_described=ctx.images_described,
+        images_described_by=ctx.images_described_by,
+        router_suggestion=ctx.router_suggestion,
     )
 
 
@@ -520,8 +634,7 @@ async def call_with_fallback(
             fallback_info.applied = True
             fallback_info.reason = f"{type(e).__name__}: {phys.model}"
             continue
-        except Exception:
-            raise
+
 
     all_attempted = tuple(fallback_info.attempted_models)
     raise HTTPException(
@@ -536,6 +649,59 @@ async def call_with_fallback(
             "last_error": str(last_error),
         },
     )
+
+
+# ── Shared helpers (exported for streaming path) ──────────────────────────────
+
+
+async def evaluate_router_suggestion(
+    pm_schema,
+    messages: list[dict],
+    current_pseudo_name: str,
+    config,
+) -> dict | None:
+    """Evaluate task complexity via Router LLM — shared between paths.
+
+    Non-blocking: if the feature is disabled or evaluation fails, returns
+    ``None`` and the request continues unchanged.
+    Only evaluates the **last user message** (never the full conversation).
+
+    Args:
+        pm_schema: Current pseudo-model schema.
+        messages: Full message list (only last user evaluated internally).
+        current_pseudo_name: Current pseudo-model name.
+        config: Proxy config.
+
+    Returns:
+        Suggestion dict with ``complexity``, ``suggested``, ``reason``.
+        ``None`` if disabled or evaluation fails.
+    """
+    if not pm_schema.router_llm.enabled:
+        return None
+
+    suggester_pm = config.pseudo_models.get(pm_schema.router_llm.suggester)
+    if not suggester_pm or not suggester_pm.physical_models:
+        return None
+
+    suggester_model = suggester_pm.physical_models[0].model
+    suggestion = await evaluate_complexity(
+        messages=messages,
+        suggester_model=suggester_model,
+    )
+
+    if not suggestion or not suggestion.get("suggested"):
+        return None
+
+    if pm_schema.router_llm.suggest_on_downgrade_only:
+        if is_downgrade(
+            suggestion["suggested"],
+            current_pseudo_name,
+            config,
+        ):
+            return suggestion
+        return None
+
+    return suggestion
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

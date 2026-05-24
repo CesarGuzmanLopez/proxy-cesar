@@ -5,6 +5,7 @@ OpenAI-compatible format. Supports streaming SSE and non-streaming.
 
 import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -13,9 +14,15 @@ from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
 from src.adapters.db.models import Conversation, ConversationTurn
-from src.service.chat_models import build_proxy_metadata
+from src.service.chat_models import (
+    MetadataContext,
+    StreamContext,
+    build_proxy_metadata,
+)
 from src.service.chat_service import (
     call_with_fallback,
+    evaluate_router_suggestion,
+    handle_auto_describe,
     process_chat_request,
 )
 from src.service.capability_detector import (
@@ -45,6 +52,7 @@ from src.service.compactor.continuous import (
     detect_external_compaction,
     handle_external_compaction,
 )
+
 
 router = APIRouter()
 
@@ -168,7 +176,7 @@ async def _handle_non_streaming(
 
     # Build response with Sprint 2 + Sprint 4 proxy_metadata
     response_dict = result.response
-    response_dict["proxy_metadata"] = build_proxy_metadata(
+    response_dict["proxy_metadata"] = build_proxy_metadata(MetadataContext(
         pseudo_model=result.pseudo_model,
         physical_model=result.physical_model,
         conversation_id=result.conversation_id,
@@ -181,14 +189,13 @@ async def _handle_non_streaming(
         compatibility_details=result.compatibility_details,
         tools_filter_applied=result.tools_filter_applied,
         tools_filter_reason=result.tools_filter_reason,
-        # Sprint 4
         pre_compaction_applied=result.pre_compaction_applied,
         pre_compaction_metadata=result.pre_compaction_metadata,
         continuous_compaction_applied=result.continuous_compaction_applied,
         continuous_compaction_metadata=result.continuous_compaction_metadata,
         external_compaction_detected=result.external_compaction_detected,
         external_compaction_metadata=result.external_compaction_metadata,
-    )
+    ))
 
     if not request.conversation_id:
         response_dict["conversation_id"] = result.conversation_id
@@ -235,6 +242,29 @@ async def _handle_streaming(
             status_code=502,
             detail={"error": "PROXY_ERROR", "message": str(e)},
         ) from e
+
+
+def _resolve_physical_model(
+    existing_affinity: str | None,
+    session_caps,
+    eligible_models: list,
+    pm_schema,
+) -> tuple[str, str | None]:
+    """Resolve physical model + provider based on affinity, caps, and eligibility."""
+    pinned_model = existing_affinity
+    if pinned_model and session_caps.has_parallel_tools:
+        if not is_pinned_model_eligible(pinned_model, eligible_models):
+            pinned_model = None
+    if pinned_model:
+        selected_phys = next(
+            (p for p in pm_schema.physical_models if p.model == pinned_model),
+            pm_schema.physical_models[0],
+        )
+    elif eligible_models:
+        selected_phys = eligible_models[0]
+    else:
+        selected_phys = pm_schema.physical_models[0]
+    return selected_phys.model, selected_phys.provider
 
 
 async def _handle_streaming_with_db(
@@ -329,7 +359,7 @@ async def _handle_streaming_with_db(
         estimated_tokens=estimated_input,
         pre_compaction_enabled=pm_schema.pre_compaction.enabled,
     )
-    if not threshold_check.ok:
+    if not threshold_check.success:
         error = threshold_check.error
         raise HTTPException(
             status_code=400,
@@ -346,22 +376,9 @@ async def _handle_streaming_with_db(
     # Create or get existing conversation
     existing_affinity = await affinity.get(conversation_id)
 
-    # Resolve physical model + extract provider
-    pinned_model = existing_affinity
-    if pinned_model and session_caps.has_parallel_tools:
-        if not is_pinned_model_eligible(pinned_model, eligible_models):
-            pinned_model = None
-    if pinned_model:
-        selected_phys = next(
-            (p for p in pm_schema.physical_models if p.model == pinned_model),
-            pm_schema.physical_models[0],
-        )
-    elif eligible_models:
-        selected_phys = eligible_models[0]
-    else:
-        selected_phys = pm_schema.physical_models[0]
-    physical_model = selected_phys.model
-    provider = selected_phys.provider
+    physical_model, provider = _resolve_physical_model(
+        existing_affinity, session_caps, eligible_models, pm_schema,
+    )
 
     if is_new:
         conv = Conversation(
@@ -375,6 +392,19 @@ async def _handle_streaming_with_db(
         await db.flush()
 
     await affinity.set(conversation_id, physical_model)
+
+    # ── Sprint 5: Auto-describe images on pseudo-model switch ─────────────
+    auto_describe_meta: dict | None = None
+    if conv is not None and not is_new and resolved_model != conv.pseudo_model:
+        auto_describe_meta = await handle_auto_describe(
+            conv=conv,
+            current_pseudo_name=conv.pseudo_model,
+            new_pseudo_name=resolved_model,
+            new_pm_schema=pm_schema,
+            config=config,
+            db=db,
+            pinned_physical_model=physical_model,
+        )
 
     # ── Pre-compaction ────────────────────────────────────────────────────
     pre_compaction_applied = False
@@ -426,6 +456,15 @@ async def _handle_streaming_with_db(
             context.append(last_user)
         active_messages = context
 
+    # ── Sprint 5: Router LLM ──────────────────────────────────────────────
+    # Shared with non-streaming path via evaluate_router_suggestion().
+    router_suggestion: dict | None = await evaluate_router_suggestion(
+        pm_schema=pm_schema,
+        messages=active_messages,
+        current_pseudo_name=resolved_model,
+        config=config,
+    )
+
     # Call LiteLLM (streaming) with active_messages
     litellm_response, fallback_info = await call_with_fallback(
         pseudo_model_schema=pm_schema,
@@ -437,8 +476,12 @@ async def _handle_streaming_with_db(
         tool_choice=tool_choice,
     )
 
+    # Sprint 5 metadata
+    images_described: int = auto_describe_meta.get("images_described", 0) if auto_describe_meta else 0
+    images_described_by: str | None = auto_describe_meta.get("described_by") if auto_describe_meta else None
+
     _streaming_response = StreamingResponse(
-        _stream_response_generator(
+        _stream_response_generator(StreamContext(
             litellm_response=litellm_response,
             conversation_id=conversation_id,
             pseudo_model=resolved_model,
@@ -457,7 +500,9 @@ async def _handle_streaming_with_db(
             continuous_compaction_metadata=continuous_compaction_metadata,
             external_compaction_detected=external_compaction_detected,
             external_compaction_metadata=external_compaction_metadata,
-            # Persistence context
+            images_described=images_described,
+            images_described_by=images_described_by,
+            router_suggestion=router_suggestion,
             db=db,
             conv=conv,
             conv_uuid=conv_uuid,
@@ -468,87 +513,98 @@ async def _handle_streaming_with_db(
             tool_choice=tool_choice,
             resolved_model=resolved_model,
             is_new=is_new,
-        ),
+        )),
         media_type="text/event-stream",
     )
     return _streaming_response
 
 
-async def _stream_response_generator(
-    litellm_response,
-    conversation_id: str,
-    pseudo_model: str,
-    physical_model: str,
-    fallback_info,
-    affinity_maintained: bool,
-    context_window: int | None,
-    *,
-    session_caps=None,
-    compatibility_warning: str | None = None,
-    compatibility_details: dict | None = None,
-    tools_filter_applied: bool = False,
-    tools_filter_reason: str | None = None,
-    pre_compaction_applied: bool = False,
-    pre_compaction_metadata: dict | None = None,
-    continuous_compaction_applied: bool = False,
-    continuous_compaction_metadata: dict | None = None,
-    external_compaction_detected: bool = False,
-    external_compaction_metadata: dict | None = None,
-    # Persistence context (for saving turn after stream completes)
-    db=None,
-    conv=None,
-    conv_uuid=None,
-    turn_caps=None,
-    provider=None,
-    messages=None,
-    tools=None,
-    tool_choice=None,
-    resolved_model=None,
-    is_new=None,
-):
-    """SSE streaming: forward chunks, persist turn on success, append metadata.
+async def _persist_stream_turn(
+    ctx: StreamContext,
+    response_dict: dict,
+    input_tokens: int,
+    output_tokens: int,
+) -> tuple[Any, Any, Any]:
+    """Persist turn after successful stream — extracted for cognitive complexity."""
+    db = ctx.db
+    conv = ctx.conv
+    if not (db and conv is not None and ctx.conv_uuid is not None and ctx.turn_caps is not None):
+        return db, conv, ctx.session_caps
+    try:
+        tool_defs: list[dict] | None = ctx.tools
+        tool_calls = extract_tool_calls_from_response(response_dict) if tool_defs else []
+        if tool_calls:
+            try:
+                validate_tool_call_ids(tool_calls)
+            except ValueError:
+                ctx.turn_caps.tools_incomplete = True
+        if ctx.tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, ctx.tool_choice):
+            ctx.turn_caps.tools_incomplete = True
+        thinking_content = extract_thinking_content(response_dict, ctx.provider)
+        tools_incomplete = ctx.turn_caps.tools_incomplete
+        tools_level = determine_tool_level_for_turn(
+            tool_calls=tool_calls, tool_definitions=tool_defs, tools_incomplete=tools_incomplete,
+        )
+        for msg in ctx.messages or []:
+            if msg.get("role") == "tool":
+                content = msg.get("content", "")
+                truncated = truncate_tool_result(content)
+                if truncated != content:
+                    msg["content"] = truncated
+        turn_number = 1
+        if conv.turns:
+            turn_number = max(t.turn_number for t in conv.turns) + 1
+        turn = ConversationTurn(
+            conversation_id=ctx.conv_uuid, turn_number=turn_number,
+            pseudo_model=ctx.pseudo_model, physical_model=ctx.physical_model,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            messages=ctx.messages or [], response=response_dict,
+            fallback_applied=ctx.fallback_info.applied if ctx.fallback_info else False,
+            fallback_reason=ctx.fallback_info.reason if ctx.fallback_info else None,
+            turn_type="normal", had_images=ctx.turn_caps.has_images,
+            had_tools=ctx.turn_caps.has_tools, had_parallel_tools=ctx.turn_caps.has_parallel_tools,
+            tool_definitions=tool_defs,
+            thinking_blocks={"content": thinking_content} if thinking_content else None,
+            tools_incomplete=tools_incomplete, tools_level_used=tools_level,
+        )
+        db.add(turn)
+        conv.physical_model = ctx.physical_model
+        conv.total_tokens += input_tokens + output_tokens
+        conv.updated_at = func.now()
+        await db.commit()
+        updated_caps = await accumulate_capabilities(db, ctx.conv_uuid, ctx.turn_caps, ctx.session_caps)
+        return db, conv, updated_caps
+    except Exception:
+        await db.rollback()
+        return db, conv, ctx.session_caps
 
-    On success: saves the ConversationTurn to DB, updates conversation
-    total_tokens and capabilities, then yields [DONE].
-    On error: yields PROXY_STREAM_ERROR chunk + [DONE] without persisting.
-    """
+
+async def _stream_response_generator(ctx: StreamContext):
+    """SSE streaming: forward chunks, persist turn on success, append metadata."""
     chunks: list = []
     try:
-        async for chunk in litellm_response:
+        async for chunk in ctx.litellm_response:
             chunks.append(chunk)
-            chunk_json = chunk.model_dump_json()
-            yield f"data: {chunk_json}\n\n"
+            yield f"data: {chunk.model_dump_json()}\n\n"
     except Exception as e:
-        # Yield error chunk instead of crashing the stream
         try:
-            await db.rollback()
+            await ctx.db.rollback()
         except Exception:
             pass
         error_payload = {
-            "error": "PROXY_STREAM_ERROR",
-            "message": str(e),
-            "physical_model": physical_model,
-            "pseudo_model": pseudo_model,
+            "error": "PROXY_STREAM_ERROR", "message": str(e),
+            "physical_model": ctx.physical_model, "pseudo_model": ctx.pseudo_model,
         }
-        error_chunk = {
-            "id": f"chatcmpl-{conversation_id[:12]}",
-            "object": "chat.completion.chunk",
-            "choices": [{"delta": {}, "finish_reason": "error"}],
-            "proxy_metadata": error_payload,
-        }
-        yield f"data: {json.dumps(error_chunk)}\n\n"
+        yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'error'}], 'proxy_metadata': error_payload})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
-    # ── Persist turn after successful stream ──────────────────────────
     input_tokens = 0
     output_tokens = 0
     response_dict: dict = {}
 
     if chunks:
         last_chunk = chunks[-1]
-
-        # Extract usage — guard against MagicMock in tests
         try:
             usage = getattr(last_chunk, "usage", None)
             if usage is not None:
@@ -557,114 +613,31 @@ async def _stream_response_generator(
                 input_tokens = int(pt) if isinstance(pt, (int, float)) else 0
                 output_tokens = int(ct) if isinstance(ct, (int, float)) else 0
         except (TypeError, ValueError):
-            input_tokens = 0
-            output_tokens = 0
-
-        # Build a coarse response dict from chunks (for tools metadata)
+            pass
         try:
             raw = last_chunk.model_dump() if hasattr(last_chunk, "model_dump") else {}
             if isinstance(raw, dict):
                 response_dict = raw
         except Exception:
-            response_dict = {}
+            pass
 
-    if db and conv is not None and conv_uuid is not None and turn_caps is not None:
-        try:
-            # Tool metadata
-            tool_defs: list[dict] | None = tools
-            tool_calls = extract_tool_calls_from_response(response_dict) if tool_defs else []
-            if tool_calls:
-                try:
-                    validate_tool_call_ids(tool_calls)
-                except ValueError:
-                    turn_caps.tools_incomplete = True
+    db, conv, session_caps = await _persist_stream_turn(ctx, response_dict, input_tokens, output_tokens)
 
-            if tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, tool_choice):
-                turn_caps.tools_incomplete = True
-
-            thinking_content = extract_thinking_content(response_dict, provider)
-            tools_incomplete = turn_caps.tools_incomplete
-            tools_level = determine_tool_level_for_turn(
-                tool_calls=tool_calls,
-                tool_definitions=tool_defs,
-                tools_incomplete=tools_incomplete,
-            )
-
-            tool_result_truncated = False
-            for msg in messages or []:
-                if msg.get("role") == "tool":
-                    content = msg.get("content", "")
-                    truncated = truncate_tool_result(content)
-                    if truncated != content:
-                        tool_result_truncated = True
-                        msg["content"] = truncated
-
-            turn_number = 1
-            if conv.turns:
-                turn_number = max(t.turn_number for t in conv.turns) + 1
-
-            turn = ConversationTurn(
-                conversation_id=conv_uuid,
-                turn_number=turn_number,
-                pseudo_model=pseudo_model,
-                physical_model=physical_model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                messages=messages or [],
-                response=response_dict,
-                fallback_applied=fallback_info.applied if fallback_info else False,
-                fallback_reason=fallback_info.reason if fallback_info else None,
-                turn_type="normal",
-                had_images=turn_caps.has_images,
-                had_tools=turn_caps.has_tools,
-                had_parallel_tools=turn_caps.has_parallel_tools,
-                tool_definitions=tool_defs,
-                thinking_blocks={"content": thinking_content} if thinking_content else None,
-                tools_incomplete=tools_incomplete,
-                tools_level_used=tools_level,
-            )
-            db.add(turn)
-
-            conv.physical_model = physical_model
-            conv.total_tokens += input_tokens + output_tokens
-            conv.updated_at = func.now()
-            await db.commit()
-
-            session_caps = await accumulate_capabilities(db, conv_uuid, turn_caps, session_caps)
-
-        except Exception:
-            await db.rollback()
-            # Non-fatal: stream already sent, just log
-
-    # ── Final metadata chunk ──────────────────────────────────────────────
     final_context_tokens = conv.total_tokens if conv is not None else (input_tokens + output_tokens)
-    metadata = build_proxy_metadata(
-        pseudo_model=pseudo_model,
-        physical_model=physical_model,
-        conversation_id=conversation_id,
-        context_tokens=final_context_tokens,
-        context_window=context_window,
-        fallback_info=fallback_info,
-        affinity_maintained=affinity_maintained,
-        session_caps=session_caps,
-        compatibility_warning=compatibility_warning,
-        compatibility_details=compatibility_details,
-        tools_filter_applied=tools_filter_applied,
-        tools_filter_reason=tools_filter_reason,
-        pre_compaction_applied=pre_compaction_applied,
-        pre_compaction_metadata=pre_compaction_metadata,
-        continuous_compaction_applied=continuous_compaction_applied,
-        continuous_compaction_metadata=continuous_compaction_metadata,
-        external_compaction_detected=external_compaction_detected,
-        external_compaction_metadata=external_compaction_metadata,
-    )
-    final_chunk = {
-        "id": f"chatcmpl-{conversation_id[:12]}",
-        "object": "chat.completion.chunk",
-        "choices": [{"delta": {}, "finish_reason": "stop"}],
-        "proxy_metadata": metadata,
-    }
-    yield f"data: {json.dumps(final_chunk)}\n\n"
+    metadata = build_proxy_metadata(MetadataContext(
+        pseudo_model=ctx.pseudo_model, physical_model=ctx.physical_model,
+        conversation_id=ctx.conversation_id, context_tokens=final_context_tokens,
+        context_window=ctx.context_window, fallback_info=ctx.fallback_info,
+        affinity_maintained=ctx.affinity_maintained, session_caps=session_caps,
+        compatibility_warning=ctx.compatibility_warning, compatibility_details=ctx.compatibility_details,
+        tools_filter_applied=ctx.tools_filter_applied, tools_filter_reason=ctx.tools_filter_reason,
+        pre_compaction_applied=ctx.pre_compaction_applied, pre_compaction_metadata=ctx.pre_compaction_metadata,
+        continuous_compaction_applied=ctx.continuous_compaction_applied, continuous_compaction_metadata=ctx.continuous_compaction_metadata,
+        external_compaction_detected=ctx.external_compaction_detected, external_compaction_metadata=ctx.external_compaction_metadata,
+        images_described=ctx.images_described, images_described_by=ctx.images_described_by,
+        router_suggestion=ctx.router_suggestion,
+    ))
+    yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'stop'}], 'proxy_metadata': metadata})}\n\n"
     yield "data: [DONE]\n\n"
     if db is not None:
         try:

@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
+    proxy_host: str = "127.0.0.1"
+    """Host to bind the server. Use '0.0.0.0' behind Nginx/Caddy reverse proxy."""
     proxy_port: int = 9110
     database_url: str = "sqlite+aiosqlite:///./proxy.db"
     valkey_url: str = "valkey://localhost:6379"
