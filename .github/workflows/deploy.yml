@@ -73,14 +73,14 @@ jobs:
             # ── 2. Python virtual environment ─────────────────────
             if [ ! -d ".venv" ]; then
               echo "[deploy] Creating virtual environment..."
-              python3 -m venv .venv
+              python3.14 -m venv .venv
             fi
 
             source .venv/bin/activate
 
             echo "[deploy] Installing/updating dependencies..."
             pip install --quiet --upgrade pip setuptools wheel
-            pip install --quiet ".[dev]"
+            pip install --quiet --no-cache-dir ".[dev]"
 
             # ── 3. Write .env ─────────────────────────────────────
             echo "[deploy] Writing .env..."

@@ -39,7 +39,7 @@ cd "$REPO_DIR/proxy"
 # ── 2. Python virtual environment ─────────────────────────────────────
 if [ ! -d ".venv" ]; then
     echo "[deploy] Creating virtual environment..."
-    python3 -m venv .venv
+    python3.14 -m venv .venv --clear
 fi
 
 source .venv/bin/activate
