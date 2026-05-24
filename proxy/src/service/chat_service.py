@@ -632,7 +632,6 @@ async def call_with_fallback(
             continue
 
 
-    all_attempted = tuple(fallback_info.attempted_models)
     raise HTTPException(
         status_code=503,
         detail={
@@ -641,7 +640,7 @@ async def call_with_fallback(
                 f"All models for pseudo-model "
                 f"'{pseudo_model_schema.display_name}' failed."
             ),
-            "attempted": list(all_attempted),
+            "attempted": fallback_info.attempted_models,
             "last_error": str(last_error),
         },
     )
