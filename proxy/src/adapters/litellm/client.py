@@ -12,7 +12,33 @@ from litellm.exceptions import RateLimitError, ServiceUnavailableError
 from src.config.settings import Settings
 
 # Re-export for fallback detection
-__all__ = ["setup_litellm", "call_litellm", "ServiceUnavailableError", "RateLimitError"]
+__all__ = ["setup_litellm", "call_litellm", "ServiceUnavailableError", "RateLimitError", "normalise_stream_chunk"]
+
+
+def normalise_stream_chunk(chunk) -> None:
+    """Normalise a streaming chunk in-place so that ``content`` is always populated.
+
+    Some providers (GLM via OpenRouter, DeepSeek in chain-of-thought mode)
+    emit the assistant response in ``delta.reasoning_content`` instead of
+    ``delta.content``, leaving ``delta.content`` as ``None`` for every chunk.
+    This confuses downstream consumers (the chunk's ``content`` appears empty).
+
+    When a chunk has ``reasoning_content`` but no ``content``, this function
+    copies the reasoning text into ``content`` so the caller always receives
+    a usable payload.
+
+    The function is a no-op for chunks that already have ``content`` or that
+    lack the ``reasoning_content`` attribute entirely.
+    """
+    try:
+        for choice in chunk.choices:
+            delta = choice.delta
+            if delta is None:
+                continue
+            if delta.content is None and getattr(delta, "reasoning_content", None) is not None:
+                delta.content = delta.reasoning_content
+    except (AttributeError, TypeError, IndexError):
+        pass  # Non-standard chunk format — leave untouched
 
 
 def setup_litellm(settings: Settings) -> None:
@@ -42,6 +68,12 @@ async def call_litellm(
 
     The model string is used verbatim — no prefix, no transformation.
     analisis.md §4.0: 'Sin prefijos, sin transformación, sin concatenación.'
+
+    Post-processing: some providers (e.g. GLM via OpenRouter) put the response
+    in ``reasoning_content`` instead of ``content`` when they run out of token
+    budget (the model "thinks" long and leaves no tokens for the final answer).
+    This normalisation copies ``reasoning_content`` into ``content`` so the
+    caller never sees an empty assistant reply.
     """
     response = await litellm.acompletion(
         model=model,
@@ -49,4 +81,26 @@ async def call_litellm(
         stream=stream,
         **kwargs,
     )
+
+    # ── Normalise empty content (non-streaming) ────────────────────────────
+    if not stream and response is not None:
+        try:
+            for choice in response.choices:
+                msg = choice.message
+                if msg and not msg.content and getattr(msg, "reasoning_content", None):
+                    msg.content = msg.reasoning_content
+        except (AttributeError, TypeError):
+            pass  # Non-standard response format — leave as-is
+
+    # ── Normalise streaming chunks (wrap generator) ───────────────────────
+    if stream:
+        # Returning the original generator wrapped so every chunk is
+        # normalised on the fly.  The caller iterates over the returned
+        # value transparently.
+        async def _normalised_stream():
+            async for chunk in response:
+                normalise_stream_chunk(chunk)
+                yield chunk
+        return _normalised_stream()
+
     return response

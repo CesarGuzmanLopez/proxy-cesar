@@ -5,24 +5,29 @@ Pure unit tests (no DB, no API). Tests the suggester module:
 - is_downgrade() — 3 tests
 - _compute_tier() — 1 test
 - _extract_last_user_content() — 2 tests
-Total: 12 tests
+- evaluate_router_suggestion() — 2 tests
+Total: 14 tests
 
 python.md §4: Pure functions tested deterministically.
 python.md §3: Result monad — errors returned, not raised.
 """
 
+import builtins
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.service.chat_service import evaluate_router_suggestion
 from src.service.router_llm.suggester import (
     ALLOWED_SUGGESTIONS,
     MAX_TASK_CHARS,
+    _classify_with_bert,
     _compute_tier,
     _extract_last_user_content,
     evaluate_complexity,
     is_downgrade,
+    load_bert_classifier,
 )
 from src.config.pseudo_models import load_config
 
@@ -171,7 +176,7 @@ class TestIsDowngrade:
 
 
 class TestComputeTier:
-    """1 test for _compute_tier()."""
+    """2 tests for _compute_tier()."""
 
     def test_ranks_correctly(self):
         """pensamiento-profundo-caro > normal > flash-lowcost."""
@@ -189,6 +194,10 @@ class TestComputeTier:
         assert deep_v4_tier >= normal_tier or deep_v4_tier < flash_tier, (
             f"deep-flash ({deep_v4_tier}) tier check"
         )
+
+    def test_unknown_model_returns_zero(self):
+        """Non-existent model name → returns 0."""
+        assert _compute_tier("non_existent_model", _CONFIG) == 0
 
 
 # ── _extract_last_user_content tests ──────────────────────────────────────────
@@ -233,3 +242,104 @@ class TestAllowedSuggestions:
             assert name in _CONFIG.pseudo_models, (
                 f"ALLOWED_SUGGESTIONS contains '{name}' which is not in pseudo_models.yaml"
             )
+
+
+# ── load_bert_classifier tests ────────────────────────────────────────────────
+
+
+class TestLoadBertClassifier:
+    """3 tests for load_bert_classifier()."""
+
+    @patch("src.service.router_llm.suggester.Path")
+    def test_file_not_found(self, mock_path):
+        """Model file missing → returns False."""
+        mock_path.return_value.exists.return_value = False
+        result = load_bert_classifier()
+        assert result is False
+
+    @patch("src.service.router_llm.suggester.Path")
+    def test_onnx_not_installed(self, mock_path):
+        """onnxruntime not installed → returns False gracefully."""
+        mock_path.return_value.exists.return_value = True
+        real_import = builtins.__import__
+        def mock_import(name, *args, **kwargs):
+            if name == "onnxruntime":
+                raise ImportError(f"No module named {name}")
+            return real_import(name, *args, **kwargs)
+        with patch("builtins.__import__", mock_import):
+            result = load_bert_classifier()
+        assert result is False
+
+    @patch("src.service.router_llm.suggester.Path")
+    def test_success(self, mock_path):
+        """Model loads successfully → returns True."""
+        mock_path.return_value.exists.return_value = True
+        real_import = builtins.__import__
+        mock_session = MagicMock()
+        def mock_import(name, *args, **kwargs):
+            if name == "onnxruntime":
+                mock_ort = MagicMock()
+                mock_ort.InferenceSession.return_value = mock_session
+                return mock_ort
+            return real_import(name, *args, **kwargs)
+        with patch("builtins.__import__", mock_import):
+            result = load_bert_classifier()
+        assert result is True
+        import src.service.router_llm.suggester as _s
+        _s._bert_session = None
+
+
+# ── evaluate_router_suggestion tests ───────────────────────────────────────────
+
+
+class TestEvaluateRouterSuggestion:
+    """2 tests for evaluate_router_suggestion()."""
+
+    @pytest.mark.asyncio
+    async def test_evaluate_router_suggestion_disabled(self):
+        """router_llm disabled → returns None."""
+        pm_schema = MagicMock()
+        pm_schema.router_llm.enabled = False
+
+        result = await evaluate_router_suggestion(
+            pm_schema=pm_schema,
+            messages=[{"role": "user", "content": "Hello"}],
+            current_pseudo_name="normal",
+            config=MagicMock(),
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_evaluate_router_suggestion_no_suggester(self):
+        """Suggester model not found → returns None."""
+        pm_schema = MagicMock()
+        pm_schema.router_llm.enabled = True
+        pm_schema.router_llm.suggester = "nonexistent-suggester"
+
+        config = MagicMock()
+        config.pseudo_models.get.return_value = None
+
+        result = await evaluate_router_suggestion(
+            pm_schema=pm_schema,
+            messages=[{"role": "user", "content": "Hello"}],
+            current_pseudo_name="normal",
+            config=config,
+        )
+
+        assert result is None
+        config.pseudo_models.get.assert_called_once_with("nonexistent-suggester")
+
+
+# ── _classify_with_bert tests ──────────────────────────────────────────────────
+
+
+class TestClassifyWithBert:
+    """1 test for _classify_with_bert()."""
+
+    def test_not_loaded(self):
+        """_bert_session is None → returns None."""
+        import src.service.router_llm.suggester as _s
+        _s._bert_session = None
+        result = _classify_with_bert("some text")
+        assert result is None

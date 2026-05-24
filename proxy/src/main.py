@@ -3,11 +3,23 @@
 sprint §12 — Lifespan manages startup/shutdown of all services.
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
+
+# ── Logging configuration ─────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)-36s | %(levelname)-5s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+# Reduce noisy third-party logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 from fastapi import FastAPI
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession

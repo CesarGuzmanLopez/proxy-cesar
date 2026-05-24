@@ -67,8 +67,8 @@ class ImageHandlingConfig(BaseModel, extra="forbid"):
 class PseudoModelSchema(BaseModel, extra="forbid"):
     display_name: str
     description: str
-    input_token_threshold: int | None
-    context_window: int | None
+    input_token_threshold: int | None = None
+    context_window: int | None = None
     continuous_compaction: ContinuousCompactionConfig = Field(
         default_factory=ContinuousCompactionConfig
     )

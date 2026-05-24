@@ -507,19 +507,23 @@ async def _handle_streaming_with_db(
 
     # ── Sprint 5: Auto-describe images on pseudo-model switch ─────────────
     auto_describe_meta: dict | None = None
+    messages_for_llm: list[dict] = messages  # May be replaced by described version
     if conv is not None and not is_new and resolved_model != conv.pseudo_model:
-        auto_describe_meta = await handle_auto_describe(
+        desc_in_flight, auto_describe_meta = await handle_auto_describe(
             conv=conv,
             current_pseudo_name=conv.pseudo_model,
             new_pm_schema=pm_schema,
             config=config,
             db=db,
             pinned_physical_model=physical_model,
+            in_flight_messages=messages,
         )
+        if desc_in_flight is not None:
+            messages_for_llm = desc_in_flight
 
     # ── Sprint 4: Compaction pipeline ─────────────────────────────────────
     comp_state = await _run_compaction_pipeline(
-        conv=conv, is_new=is_new, messages=messages, pm_schema=pm_schema,
+        conv=conv, is_new=is_new, messages=messages_for_llm, pm_schema=pm_schema,
         config=config, db=db, estimated_input=estimated_input,
     )
     active_messages = comp_state["active_messages"]

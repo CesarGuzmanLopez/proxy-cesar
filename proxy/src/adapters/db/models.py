@@ -55,7 +55,7 @@ class Conversation(ConversationBase, table=True):
     updated_at: datetime = Field(
         default_factory=datetime.now,
         sa_column=Column(
-            DateTime(), server_default=func.now(), onupdate=func.now()
+            DateTime(), server_default=_SERVER_NOW, onupdate=func.now()
         ),
     )
 
@@ -109,7 +109,7 @@ class ConversationTurn(ConversationTurnBase, table=True):
     )
     created_at: datetime = Field(
         default_factory=datetime.now,
-        sa_column=Column(DateTime(), server_default="now()"),
+        sa_column=Column(DateTime(), server_default=_SERVER_NOW),
     )
 
     conversation: Conversation = Relationship(back_populates="turns")
@@ -154,7 +154,7 @@ class ConversationSnapshot(ConversationSnapshotBase, table=True):
     )
     created_at: datetime = Field(
         default_factory=datetime.now,
-        sa_column=Column(DateTime(), server_default="now()"),
+        sa_column=Column(DateTime(), server_default=_SERVER_NOW),
     )
 
     superseded_by: uuid.UUID | None = Field(

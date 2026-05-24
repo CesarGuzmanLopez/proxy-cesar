@@ -3,8 +3,9 @@
 sprint §13.3 — minimum 12 test cases.
 """
 
+import uuid
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -233,3 +234,72 @@ def test_10_model_normalization(async_client: AsyncClient):
     assert normalize_model_name("local/normal", config) == "normal"
     assert normalize_model_name("cesar-proxy/normal", config) == "normal"
     assert normalize_model_name("local/pensamiento-profundo-caro", config) == "pensamiento-profundo-caro"
+
+
+@pytest.mark.asyncio
+async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_litellm):
+    """Switch from vision to non-vision model → images_described in proxy_metadata."""
+    from src.main import app
+    from src.adapters.db.models import Conversation
+    from src.domain.capabilities import SessionCapabilities
+
+    mock_session = app.state.db_session_factory()
+
+    conv_id = uuid.uuid5(uuid.NAMESPACE_DNS, "conv-auto-desc")
+    conv = Conversation(
+        id=conv_id,
+        pseudo_model="avanzada-vision",
+        physical_model="openrouter/gemini-3.5-flash",
+        total_tokens=100,
+    )
+    turn = MagicMock()
+    turn.turn_number = 1
+    turn.messages = [{"role": "user", "content": "hello"}]
+    conv.turns = [turn]
+
+    mock_session.get = AsyncMock(return_value=conv)
+
+    # Mock db.execute so compaction code doesn't get coroutines from .scalar()
+    exec_result = MagicMock()
+    exec_result.scalar.return_value = 0
+    exec_result.scalars.return_value.all.return_value = []
+    mock_session.execute = AsyncMock(return_value=exec_result)
+
+    session_caps = SessionCapabilities(
+        conversation_id=str(conv_id),
+        has_images=True,
+        has_tools=False,
+        has_parallel_tools=False,
+        total_tokens=100,
+    )
+
+    with (
+        patch("src.service.chat_service.load_session_capabilities", new_callable=AsyncMock) as mock_load_caps,
+        patch("src.service.chat_service.auto_describe_images", new_callable=AsyncMock) as mock_auto,
+    ):
+        mock_load_caps.return_value = session_caps
+        mock_auto.return_value = (
+            [{"role": "user", "content": "described text"}],
+            {
+                "ok": True,
+                "images_described": 2,
+                "described_by": "openrouter/gemini-3.5-flash",
+                "total_description_tokens": 30,
+                "status": "completed",
+            },
+        )
+
+        response = await async_client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "pensamiento-profundo-caro",
+                "messages": [{"role": "user", "content": "Tell me about this image"}],
+                "conversation_id": "conv-auto-desc",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        meta = data["proxy_metadata"]
+        assert meta["images_described"] == 2
+        assert meta["images_described_by"] == "openrouter/gemini-3.5-flash"

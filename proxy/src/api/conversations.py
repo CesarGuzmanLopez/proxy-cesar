@@ -23,7 +23,10 @@ from src.service.tools_normalizer import generate_preview, normalize_history
 router = APIRouter()
 
 
-@router.get("/conversations/{conversation_id}")
+@router.get(
+    "/conversations/{conversation_id}",
+    responses={404: {"description": "Conversation not found"}},
+)
 async def get_conversation(
     conversation_id: str,
     fastapi_request: Request,
@@ -88,7 +91,10 @@ async def get_conversation(
         await db.close()
 
 
-@router.get("/conversations/{conversation_id}/compatible-models")
+@router.get(
+    "/conversations/{conversation_id}/compatible-models",
+    responses={404: {"description": "Conversation not found"}},
+)
 async def get_compatible_models(
     conversation_id: str,
     fastapi_request: Request,
@@ -163,7 +169,10 @@ async def get_compatible_models(
         await db.close()
 
 
-@router.get("/conversations/{conversation_id}/tools-compatibility")
+@router.get(
+    "/conversations/{conversation_id}/tools-compatibility",
+    responses={404: {"description": "Conversation not found"}},
+)
 async def get_tools_compatibility(
     conversation_id: str,
     fastapi_request: Request,
@@ -226,7 +235,14 @@ async def get_tools_compatibility(
         await db.close()
 
 
-@router.post("/conversations/{conversation_id}/normalize-tools")
+@router.post(
+    "/conversations/{conversation_id}/normalize-tools",
+    responses={
+        400: {"description": "No parallel tools to normalize"},
+        404: {"description": "Conversation not found"},
+        500: {"description": "Normalization failed"},
+    },
+)
 async def normalize_tools(
     conversation_id: str,
     request: NormalizeToolsRequest,
@@ -371,7 +387,14 @@ async def normalize_tools(
 # ── Sprint 5: POST /conversations/{id}/degrade-images ─────────────────────────
 
 
-@router.post("/conversations/{conversation_id}/degrade-images")
+@router.post(
+    "/conversations/{conversation_id}/degrade-images",
+    responses={
+        404: {"description": "Conversation not found"},
+        400: {"description": "No images to degrade or no vision model available"},
+        502: {"description": "Image degradation failed"},
+    },
+)
 async def degrade_images(
     conversation_id: str,
     fastapi_request: Request,

@@ -166,13 +166,10 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
         "fallback_reason": ctx.fallback_info.reason if ctx.fallback_info else None,
     }
 
+    metadata["context_tokens_total"] = ctx.context_tokens
     if ctx.context_window:
-        metadata["context_tokens_total"] = ctx.context_tokens
-        metadata["context_usage_pct"] = (
-            round((ctx.context_tokens / ctx.context_window) * 100, 1) if ctx.context_window else None
-        )
+        metadata["context_usage_pct"] = round((ctx.context_tokens / ctx.context_window) * 100, 1)
     else:
-        metadata["context_tokens_total"] = ctx.context_tokens
         metadata["context_usage_pct"] = None
 
     # Sprint 2: capabilities detected

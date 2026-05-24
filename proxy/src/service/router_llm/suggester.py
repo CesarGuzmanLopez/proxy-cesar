@@ -314,46 +314,61 @@ def _extract_last_user_content(messages: list[dict]) -> str | None:
         Truncated text content (max ``MAX_TASK_CHARS`` chars).
         ``None`` if no user message or no text content found.
     """
-    for msg in reversed(messages):
-        if msg.get("role") != "user":
-            continue
-
-        content = msg.get("content")
-
-        if isinstance(content, str):
-            text = content.strip()
-            if not text:
-                return None
-            return text[:MAX_TASK_CHARS]
-
-        if isinstance(content, list):
-            # Extract text parts only — skip image_url, input_audio, etc.
-            text_parts: list[str] = []
-            image_only = True
-
-            for p in content:
-                if not isinstance(p, dict):
-                    continue
-                if p.get("type") == "text":
-                    text = str(p.get("text", "")).strip()
-                    if text:
-                        text_parts.append(text)
-                        image_only = False
-
-            if image_only:
-                # SAFETY: Message contains only images, no text.
-                # Non-vision evaluator models cannot process this.
-                return None
-
-            combined = " ".join(text_parts)
-            return combined[:MAX_TASK_CHARS]
-
-        if content is not None:
-            return str(content)[:MAX_TASK_CHARS]
-
+    last_user_msg = _find_last_user_message(messages)
+    if last_user_msg is None:
         return None
 
+    content = last_user_msg.get("content")
+
+    if isinstance(content, str):
+        return _extract_text_from_string(content)
+
+    if isinstance(content, list):
+        return _extract_text_from_multimodal(content)
+
+    if content is not None:
+        return str(content)[:MAX_TASK_CHARS]
+
     return None
+
+
+def _find_last_user_message(messages: list[dict]) -> dict | None:
+    """Find the last message with role='user'."""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            return msg
+    return None
+
+
+def _extract_text_from_string(content: str) -> str | None:
+    """Extract text from a plain string content."""
+    text = content.strip()
+    if not text:
+        return None
+    return text[:MAX_TASK_CHARS]
+
+
+def _extract_text_from_multimodal(content: list) -> str | None:
+    """Extract text parts from a multimodal content list.
+
+    Returns ``None`` if the message contains only images (no text).
+    """
+    text_parts: list[str] = []
+
+    for p in content:
+        if not isinstance(p, dict):
+            continue
+        if p.get("type") == "text":
+            text = str(p.get("text", "")).strip()
+            if text:
+                text_parts.append(text)
+
+    if not text_parts:
+        # SAFETY: Message contains only images, no text.
+        # Non-vision evaluator models cannot process this.
+        return None
+
+    return " ".join(text_parts)[:MAX_TASK_CHARS]
 
 
 def _parse_evaluation_response(content: str) -> dict | None:

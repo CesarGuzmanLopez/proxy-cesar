@@ -131,8 +131,9 @@ async def test_5_non_retryable_error(async_client: AsyncClient, mock_litellm):
             "conversation_id": "conv-fb-5",
         },
     )
-    # Should be a 502 proxy error wrapping the BadRequestError
-    assert response.status_code == 502
+    # BadRequestError is now retryable (invalid model IDs should skip to next model).
+    # When ALL models fail, returns 503 ALL_MODELS_FAILED.
+    assert response.status_code == 503
 
 
 @pytest.mark.asyncio

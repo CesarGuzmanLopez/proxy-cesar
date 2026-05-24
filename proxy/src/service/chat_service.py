@@ -10,10 +10,20 @@ Sprint 3: +canonical tool storage, tiktoken, thinking blocks, tool edge cases.
 Sprint 4: +pre-compaction, continuous compaction, external compaction detection.
 """
 
+import logging
+import time
 import uuid
 
 from fastapi import HTTPException
-from litellm.exceptions import RateLimitError, ServiceUnavailableError
+
+logger = logging.getLogger(__name__)
+from litellm.exceptions import (
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
@@ -79,6 +89,14 @@ async def process_chat_request(
 
     Each logical step is delegated to a focused helper function.
     """
+    _req_id = str(uuid.uuid4())[:8]
+    _t0 = time.monotonic()
+    logger.info(
+        "req_start | trace=%s model=%s conv=%s messages=%d tools=%s stream=%s",
+        _req_id, model, conversation_id or "new",
+        len(messages), bool(tools), stream,
+    )
+
     # Step 1-3: Resolve model + detect capabilities + validate content
     pseudo_model_name, pm_schema, turn_caps = _resolve_and_validate(
         model, messages, tools, config,
@@ -140,6 +158,15 @@ async def process_chat_request(
         max_tokens=max_tokens,
         tools=tools,
         tool_choice=tool_choice,
+    )
+    _elapsed = time.monotonic() - _t0
+    logger.info(
+        "req_end   | trace=%s conv=%s pseudo=%s physical=%s "
+        "stream=%s fallback=%s tokens_in=%s elapsed=%.1fs",
+        _req_id, conv_id[:12], pseudo_model_name, physical_model,
+        stream,
+        fallback_info.reason if fallback_info.applied else "none",
+        est_input, _elapsed,
     )
 
     # Compute Sprint 5 metadata
@@ -610,12 +637,34 @@ async def call_with_fallback(
     stream: bool = False,
     **kwargs,
 ) -> tuple:
-    """Try each physical model in order. On 503/429, move to next."""
+    """Try each physical model in order. On retryable errors, move to next.
+
+    Retryable errors: ServiceUnavailableError (503), RateLimitError (429),
+    NotFoundError (404 — e.g. model not available via provider), and
+    AuthenticationError (401 — expired / invalid key for a given provider).
+    Any other exception propagates immediately (the request fails fast).
+    """
     fallback_info = FallbackInfo()
     last_error: Exception | None = None
+    _trace_id = str(uuid.uuid4())[:8]
+    _start = time.monotonic()
 
-    for phys in pseudo_model_schema.physical_models:
+    _RETRYABLE = (
+        ServiceUnavailableError,
+        RateLimitError,
+        NotFoundError,
+        AuthenticationError,
+        BadRequestError,  # e.g. invalid model ID, model not found via provider
+    )
+
+    for idx, phys in enumerate(pseudo_model_schema.physical_models):
         try:
+            logger.info(
+                "llm_call  | trace=%s attempt=%d/%d model=%s stream=%s",
+                _trace_id, idx + 1,
+                len(pseudo_model_schema.physical_models),
+                phys.model, stream,
+            )
             response = await call_litellm(
                 model=phys.model,
                 messages=messages,
@@ -623,22 +672,52 @@ async def call_with_fallback(
                 **{k: v for k, v in kwargs.items() if v is not None},
             )
             fallback_info.attempted_models.append(phys.model)
+            elapsed = time.monotonic() - _start
+            # Log response summary for non-streaming
+            if not stream:
+                try:
+                    c = response.choices[0].message.content or ""
+                    logger.info(
+                        "llm_ok    | trace=%s model=%s elapsed=%.1fs "
+                        "content_len=%d finish=%s",
+                        _trace_id, phys.model, elapsed, len(c),
+                        response.choices[0].finish_reason,
+                    )
+                except (AttributeError, IndexError):
+                    logger.warning(
+                        "llm_ok    | trace=%s model=%s (unexpected format)",
+                        _trace_id, phys.model,
+                    )
+            else:
+                logger.info(
+                    "llm_ok    | trace=%s model=%s elapsed=%.1fs (streaming)",
+                    _trace_id, phys.model, elapsed,
+                )
             return response, fallback_info
-        except (ServiceUnavailableError, RateLimitError) as e:
+        except _RETRYABLE as e:
             last_error = e
             fallback_info.attempted_models.append(phys.model)
             fallback_info.applied = True
             fallback_info.reason = f"{type(e).__name__}: {phys.model}"
+            logger.warning(
+                "llm_fallback | trace=%s model=%s error=%s elapsed=%.1fs",
+                _trace_id, phys.model, type(e).__name__,
+                time.monotonic() - _start,
+            )
             continue
 
-
+    elapsed = time.monotonic() - _start
+    logger.error(
+        "llm_fail   | trace=%s elapsed=%.1fs models=%s last_error=%s",
+        _trace_id, elapsed, fallback_info.attempted_models, last_error,
+    )
     raise HTTPException(
         status_code=503,
         detail={
             "error": "ALL_MODELS_FAILED",
             "message": (
-                f"All models for pseudo-model "
-                f"'{pseudo_model_schema.display_name}' failed."
+                f"All {len(fallback_info.attempted_models)} model(s) for "
+                f"pseudo-model '{pseudo_model_schema.display_name}' failed."
             ),
             "attempted": fallback_info.attempted_models,
             "last_error": str(last_error),

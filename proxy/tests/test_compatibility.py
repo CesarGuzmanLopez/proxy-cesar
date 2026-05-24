@@ -3,7 +3,10 @@
 Sprint 2 §9.2 — minimum 30 tests covering the full compatibility matrix.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+from src.service.chat_service import handle_auto_describe
 
 from src.config.pseudo_models import load_config
 from src.domain.capabilities import (
@@ -352,3 +355,97 @@ def test_blocked_with_remediation():
     # Each remediation should be a non-empty string
     for r in result.remediation:
         assert isinstance(r, str) and len(r) > 0
+
+
+# ── handle_auto_describe tests ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("src.service.chat_service._any_vision_comp", return_value=False)
+@patch("src.service.chat_service.auto_describe_images", new_callable=AsyncMock)
+async def test_handle_auto_describe_no_images(mock_auto_describe, mock_any_vision):
+    """No images in conversation → returns metadata with images_described=0."""
+    new_pm = MagicMock()
+    new_pm.image_handling.on_downgrade = "auto_describe"
+    new_pm.physical_models = [MagicMock(vision=False)]
+
+    config = MagicMock()
+    phys_model = MagicMock()
+    phys_model.model = "gpt-4-vision"
+    phys_model.vision = True
+    current_pm = MagicMock()
+    current_pm.physical_models = [phys_model]
+    config.pseudo_models.get.return_value = current_pm
+
+    turn = MagicMock()
+    turn.turn_number = 1
+    turn.messages = [{"role": "user", "content": "hello"}]
+    conv = MagicMock()
+    conv.turns = [turn]
+    conv.id = "00000000-0000-0000-0000-000000000001"
+
+    mock_auto_describe.return_value = (
+        [{"role": "user", "content": "hello"}],
+        {
+            "ok": True,
+            "images_described": 0,
+            "reason": "no_images_found",
+            "status": "no_images_found",
+        },
+    )
+
+    result = await handle_auto_describe(
+        conv=conv,
+        current_pseudo_name="normal",
+        new_pm_schema=new_pm,
+        config=config,
+        db=MagicMock(),
+        pinned_physical_model="some-other-model",
+    )
+
+    desc_in_flight, desc_meta = result
+    assert desc_in_flight is None  # No images to describe → no in-flight replacement
+    assert desc_meta is not None
+    assert desc_meta["images_described"] == 0
+    assert desc_meta["status"] == "no_images_found"
+
+
+@pytest.mark.asyncio
+async def test_handle_auto_describe_auto_describe_disabled():
+    """on_downgrade != 'auto_describe' → returns None."""
+    new_pm = MagicMock()
+    new_pm.image_handling.on_downgrade = "block"
+    new_pm.physical_models = [MagicMock(vision=False)]
+
+    conv = MagicMock()
+    conv.pseudo_model = "avanzada-vision"
+
+    result = await handle_auto_describe(
+        conv=conv,
+        current_pseudo_name="avanzada-vision",
+        new_pm_schema=new_pm,
+        config=MagicMock(),
+        db=MagicMock(),
+        pinned_physical_model="some-model",
+    )
+
+    assert result == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_handle_auto_describe_destination_has_vision():
+    """Destination has vision models → returns (None, None)."""
+    new_pm = MagicMock()
+    new_pm.image_handling.on_downgrade = "auto_describe"
+    new_pm.physical_models = [MagicMock(vision=True)]
+
+    result = await handle_auto_describe(
+        conv=MagicMock(),
+        current_pseudo_name="avanzada-vision",
+        new_pm_schema=new_pm,
+        config=MagicMock(),
+        db=MagicMock(),
+        pinned_physical_model="some-model",
+    )
+
+    assert result == (None, None)
