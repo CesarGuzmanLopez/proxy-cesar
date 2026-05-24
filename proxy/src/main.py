@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter, setup_valkey
 from src.adapters.litellm.client import setup_litellm
+from sqlalchemy import text as sa_text
 from src.api.chat import router as chat_router
 from src.api.conversations import router as conversations_router
 from src.api.health import router as health_router
@@ -51,9 +52,20 @@ async def lifespan(app: FastAPI):
     engine = create_async_engine(
         settings.database_url, echo=False,
     )
-    # Create all tables (SQLite-friendly, no Alembic needed)
+    # Create all tables (SQLite-friendly) + migrate existing DB
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        # Migrate existing SQLite DB: add columns that may be missing
+        # This is idempotent — each ALTER TABLE is skipped if column exists
+        _MIGRATIONS_SQLITE = [
+            "ALTER TABLE conversations ADD COLUMN images_described INTEGER DEFAULT 0",
+            "ALTER TABLE conversations ADD COLUMN images_degraded_manually INTEGER DEFAULT 0",
+        ]
+        for stmt in _MIGRATIONS_SQLITE:
+            try:
+                await conn.execute(sa_text(stmt))
+            except Exception:
+                pass  # column already exists — ignore
     app.state.db_session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
