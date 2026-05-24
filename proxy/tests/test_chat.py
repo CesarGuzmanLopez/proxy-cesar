@@ -249,7 +249,7 @@ async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_li
     conv = Conversation(
         id=conv_id,
         pseudo_model="avanzada-vision",
-        physical_model="openrouter/gemini-3.5-flash",
+        physical_model="gemini/gemini-3.5-flash",
         total_tokens=100,
     )
     turn = MagicMock()
@@ -283,7 +283,7 @@ async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_li
             {
                 "ok": True,
                 "images_described": 2,
-                "described_by": "openrouter/gemini-3.5-flash",
+                "described_by": "gemini/gemini-3.5-flash",
                 "total_description_tokens": 30,
                 "status": "completed",
             },
@@ -302,4 +302,4 @@ async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_li
         data = response.json()
         meta = data["proxy_metadata"]
         assert meta["images_described"] == 2
-        assert meta["images_described_by"] == "openrouter/gemini-3.5-flash"
+        assert meta["images_described_by"] == "gemini/gemini-3.5-flash"

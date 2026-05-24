@@ -114,11 +114,11 @@ class TestDescribeImage:
         desc, tokens = await describe_image(
             image_url="https://example.com/img.png",
             detail="high",
-            vision_model="openrouter/gemini-3.5-flash",
+            vision_model="gemini/gemini-3.5-flash",
         )
         mock_call.assert_awaited_once()
         args, kwargs = mock_call.await_args
-        assert kwargs["model"] == "openrouter/gemini-3.5-flash"
+        assert kwargs["model"] == "gemini/gemini-3.5-flash"
         assert kwargs["max_tokens"] == MAX_TOKENS_PER_IMAGE
         assert kwargs["temperature"] == 0.0
         # Check the image_url is in the messages
@@ -139,7 +139,7 @@ class TestDescribeImage:
         desc, tokens = await describe_image(
             image_url="https://example.com/diag.png",
             detail="auto",
-            vision_model="openrouter/gemini-3.5-flash",
+            vision_model="gemini/gemini-3.5-flash",
         )
         assert desc == "A diagram of architecture."
         assert tokens == 15
@@ -151,7 +151,7 @@ class TestDescribeImage:
         desc, tokens = await describe_image(
             image_url="https://example.com/fail.png",
             detail="auto",
-            vision_model="openrouter/gemini-3.5-flash",
+            vision_model="gemini/gemini-3.5-flash",
         )
         assert TAG_PREFIX in desc
         assert "FAILED" in desc
@@ -169,7 +169,7 @@ class TestAutoDescribeImages:
         """No images → returns original messages unchanged."""
         messages = [_make_text_msg("Hello")]
         modified, meta = await auto_describe_images(
-            messages, "openrouter/gemini-3.5-flash",
+            messages, "gemini/gemini-3.5-flash",
         )
         assert modified == messages
         assert meta["images_described"] == 0
@@ -182,7 +182,7 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("A code screenshot.")
         messages = [_make_image_msg("https://example.com/code.png")]
         modified, meta = await auto_describe_images(
-            messages, "openrouter/gemini-3.5-flash",
+            messages, "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 1
         content = modified[0]["content"]
@@ -200,7 +200,7 @@ class TestAutoDescribeImages:
             _make_image_msg("https://example.com/c.png"),
         ]
         modified, meta = await auto_describe_images(
-            messages, "openrouter/gemini-3.5-flash",
+            messages, "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 3
         assert meta["unique_images_described"] == 3
@@ -223,7 +223,7 @@ class TestAutoDescribeImages:
             _make_image_msg("https://example.com/same.png"),
         ]
         modified, meta = await auto_describe_images(
-            messages, "openrouter/gemini-3.5-flash",
+            messages, "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 2  # Both instances tagged
         assert meta["unique_images_described"] == 1  # Only 1 unique
@@ -236,7 +236,7 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("Description.")
         messages = [_make_image_msg("https://example.com/img.png")]
         modified, meta = await auto_describe_images(
-            messages, "openrouter/gemini-3.5-flash",
+            messages, "gemini/gemini-3.5-flash",
         )
         # The first content part (text) should be unchanged
         first_part = modified[0]["content"][0]
@@ -249,10 +249,10 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("Description text.")
         messages = [_make_image_msg("https://example.com/img.png")]
         modified, meta = await auto_describe_images(
-            messages, "openrouter/gemini-3.5-flash",
+            messages, "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 1
-        assert meta["described_by"] == "openrouter/gemini-3.5-flash"
+        assert meta["described_by"] == "gemini/gemini-3.5-flash"
         assert meta["total_description_tokens"] == 15
         assert meta["ok"] is True
 
@@ -262,7 +262,7 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("Description.")
         messages = [_make_image_msg("https://example.com/img.png", detail="high")]
         modified, meta = await auto_describe_images(
-            messages, "openrouter/gemini-3.5-flash",
+            messages, "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 1
         mock_call.assert_called_once()

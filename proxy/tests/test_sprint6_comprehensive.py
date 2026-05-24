@@ -34,7 +34,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "pseudo_models.yaml"
 
 def _make_chat_response(
     content: str = "Hello!",
-    model: str = "openrouter/deepseek-v4-flash",
+    model: str = "deepseek/deepseek-v4-flash",
     prompt_tokens: int = 50,
     completion_tokens: int = 100,
     finish_reason: str = "stop",
@@ -574,7 +574,7 @@ async def test_audit_log_tracks_switches_and_fallbacks(client):
     turn3.turn_type = "normal"
     turn3.pseudo_model = "tareas-avanzadas"
     turn3.fallback_applied = True
-    turn3.fallback_reason = "ServiceUnavailableError: openrouter/deepseek-v4-pro"
+    turn3.fallback_reason = "ServiceUnavailableError: deepseek/deepseek-v4-pro"
     turn3.turn_number = 3
     turn3.created_at = datetime(2026, 5, 24, 10, 15, 0)
 
@@ -633,7 +633,7 @@ async def test_audit_log_includes_compaction(client):
     snap.snapshot_type = "explicit"
     snap.tokens_before = 120000
     snap.tokens_after = 350
-    snap.compactor_model = "openrouter/gemini-3.5-flash"
+    snap.compactor_model = "gemini/gemini-3.5-flash"
 
     # mock_db.get needs to return conv for the audit log endpoint
     mock_db.get = AsyncMock(return_value=conv)

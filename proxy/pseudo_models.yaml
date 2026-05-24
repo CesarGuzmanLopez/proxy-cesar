@@ -27,7 +27,7 @@ pseudo_models:
       parallel_tools: false
       vision: false
     - provider: deepseek
-      model: openrouter/deepseek-v4-pro
+      model: deepseek/deepseek-v4-pro
       openai_tools_compatible: true
       tools_strict: true
       parallel_tools: true
@@ -50,13 +50,13 @@ pseudo_models:
       on_downgrade: block
     physical_models:
     - provider: deepseek
-      model: openrouter/deepseek-v4-pro
+      model: deepseek/deepseek-v4-pro
       openai_tools_compatible: true
       tools_strict: true
       parallel_tools: true
       vision: false
     - provider: deepseek
-      model: openrouter/deepseek-v4-flash
+      model: deepseek/deepseek-v4-flash
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: true
@@ -83,13 +83,13 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
     - provider: google
-      model: openrouter/gemini-3.5-flash
+      model: gemini/gemini-3.5-flash
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
       vision: true
     - provider: groq
-      model: openrouter/meta-llama/llama-4-scout-17b-16e-instruct
+      model: groq/meta-llama/llama-4-scout-17b-16e-instruct
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
@@ -118,7 +118,7 @@ pseudo_models:
       parallel_tools: false
       vision: false
     - provider: deepseek
-      model: openrouter/deepseek-v4-flash
+      model: deepseek/deepseek-v4-flash
       openai_tools_compatible: true
       tools_strict: true
       parallel_tools: true
@@ -145,13 +145,13 @@ pseudo_models:
       parallel_tools: false
       vision: false
     - provider: groq
-      model: openrouter/gpt-oss-20b
+      model: groq/gpt-oss-20b
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
       vision: false
     - provider: deepseek
-      model: openrouter/deepseek-v4-flash
+      model: deepseek/deepseek-v4-flash
       openai_tools_compatible: true
       tools_strict: true
       parallel_tools: true
@@ -184,7 +184,7 @@ pseudo_models:
       parallel_tools: false
       vision: false
     - provider: ollama
-      model: openrouter/llama3.2
+      model: ollama/llama3.2
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
@@ -205,13 +205,13 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
     - provider: google
-      model: openrouter/gemini-3.5-flash
+      model: gemini/gemini-3.5-flash
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
       vision: true
     - provider: ollama
-      model: openrouter/llava
+      model: ollama/llava
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
@@ -232,12 +232,12 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
     - provider: google
-      model: openrouter/gemini-3.5-flash
+      model: gemini/gemini-3.5-flash
       context_window: 1000000
       openai_tools_compatible: true
       vision: true
     - provider: anthropic
-      model: openrouter/claude-haiku-4-5-20251001
+      model: anthropic/claude-haiku-4-5-20251001
       context_window: 200000
       openai_tools_compatible: true
       vision: false

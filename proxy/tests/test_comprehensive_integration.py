@@ -30,7 +30,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "pseudo_models.yaml"
 
 def _make_chat_response(
     content: str = "Hello, I am a helpful AI!",
-    model: str = "openrouter/deepseek-v4-flash",
+    model: str = "deepseek/deepseek-v4-flash",
     prompt_tokens: int = 50,
     completion_tokens: int = 100,
     finish_reason: str = "stop",
@@ -93,7 +93,7 @@ def _make_image_desc_response(description: str = "A screenshot of a code editor 
     """Create a mock LiteLLM response for image description."""
     return _make_chat_response(
         content=description,
-        model="openrouter/gemini-3.5-flash",
+        model="gemini/gemini-3.5-flash",
         prompt_tokens=50,
         completion_tokens=15,
     )
@@ -304,7 +304,7 @@ class TestCompatibility:
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000001",
                 pseudo_model="avanzada-vision",
-                physical_model="openrouter/gemini-3.5-flash",
+                physical_model="gemini/gemini-3.5-flash",
                 capability_has_images=True,
             )
             conv.turns = []
@@ -343,7 +343,7 @@ class TestCompatibility:
             mock_ad.side_effect = lambda msgs, model: (
                 msgs,
                 {"ok": True, "images_described": 1, "unique_images_described": 1,
-                 "duplicate_images_skipped": 0, "described_by": "openrouter/gemini-3.5-flash",
+                 "duplicate_images_skipped": 0, "described_by": "gemini/gemini-3.5-flash",
                  "total_description_tokens": 15, "status": "completed"},
             )
 
@@ -358,7 +358,7 @@ class TestCompatibility:
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000002",
                 pseudo_model="avanzada-vision",
-                physical_model="openrouter/gemini-3.5-flash",
+                physical_model="gemini/gemini-3.5-flash",
                 capability_has_images=True,
             )
             conv.turns = [MagicMock(turn_number=1, messages=[
@@ -388,7 +388,7 @@ class TestCompatibility:
                 meta = data.get("proxy_metadata", {})
                 # Images should have been described
                 assert meta.get("images_described") == 1
-                assert meta["images_described_by"] == "openrouter/gemini-3.5-flash"
+                assert meta["images_described_by"] == "gemini/gemini-3.5-flash"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -416,9 +416,9 @@ class TestAutoDescribe:
                     {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR", "detail": "auto"}},
                 ]},
             ]
-            modified, meta = await auto_describe_images(messages, "openrouter/gemini-3.5-flash")
+            modified, meta = await auto_describe_images(messages, "gemini/gemini-3.5-flash")
             assert meta["images_described"] == 1
-            assert meta["described_by"] == "openrouter/gemini-3.5-flash"
+            assert meta["described_by"] == "gemini/gemini-3.5-flash"
             # The image_url part should be replaced with text
             content = modified[0]["content"]
             image_part = content[1]
@@ -430,7 +430,7 @@ class TestAutoDescribe:
         from src.service.multimedia.image_describer import auto_describe_images
 
         messages = [{"role": "user", "content": "Just text, no images."}]
-        modified, meta = await auto_describe_images(messages, "openrouter/gemini-3.5-flash")
+        modified, meta = await auto_describe_images(messages, "gemini/gemini-3.5-flash")
         assert modified == messages
         assert meta["images_described"] == 0
         assert meta["status"] == "no_images_found"
@@ -497,7 +497,7 @@ class TestManualDegradation:
         mock_ad.return_value = (
             [{"role": "user", "content": "[IMAGE_DESCRIBED #1 — described by test] Screenshot."}],
             {"ok": True, "images_described": 1, "unique_images_described": 1,
-             "duplicate_images_skipped": 0, "described_by": "openrouter/gemini-3.5-flash",
+             "duplicate_images_skipped": 0, "described_by": "gemini/gemini-3.5-flash",
              "total_description_tokens": 15, "status": "completed"},
         )
 
@@ -515,7 +515,7 @@ class TestManualDegradation:
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000003",
                 pseudo_model="avanzada-vision",
-                physical_model="openrouter/gemini-3.5-flash",
+                physical_model="gemini/gemini-3.5-flash",
                 capability_has_images=True,
                 images_described=0,
                 images_degraded_manually=False,
@@ -553,7 +553,7 @@ class TestManualDegradation:
                     )
                     data = resp.json()
                     assert data["images_described"] == 1
-                    assert data["described_by"] == "openrouter/gemini-3.5-flash"
+                    assert data["described_by"] == "gemini/gemini-3.5-flash"
                     assert "can_now_switch_to" in data
                     # Should list non-vision models
                     assert "normal" in data["can_now_switch_to"]
@@ -575,7 +575,7 @@ class TestManualDegradation:
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000004",
                 pseudo_model="normal",
-                physical_model="openrouter/deepseek-v4-flash",
+                physical_model="deepseek/deepseek-v4-flash",
                 capability_has_images=False,
             )
             conv.turns = [MagicMock(turn_number=1, messages=[{"role": "user", "content": "No images here."}])]
@@ -674,7 +674,7 @@ class TestAPIEndpoints:
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000005",
                 pseudo_model="normal",
-                physical_model="openrouter/deepseek-v4-flash",
+                physical_model="deepseek/deepseek-v4-flash",
                 total_tokens=150,
                 capability_has_images=False,
                 capability_has_tools=True,
