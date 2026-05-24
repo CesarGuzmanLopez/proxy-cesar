@@ -21,7 +21,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
     - provider: zhipu
-      model: zhipu/glm-5.1
+      model: zai/glm-5
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
