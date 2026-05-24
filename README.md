@@ -1,6 +1,6 @@
 # proxy-cesar
 
-**Deterministic multi-model LLM proxy.** Transparent HTTP proxy between LLM clients (Continue, LibreChat, OpenCode) and multiple providers. Exposes abstract pseudo-models that map to concrete physical models with automatic fallback, content compatibility validation, tool normalization, and context compaction.
+**Deterministic multi-model LLM proxy.** Transparent HTTP proxy between LLM clients (Continue, LibreChat, OpenCode) and multiple providers. Exposes abstract pseudo-models that map to concrete physical models with automatic fallback, content compatibility validation, tool normalization, context compaction, context alerts, explicit compaction, and audit logging.
 
 Standard OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`).
 
@@ -10,17 +10,28 @@ Standard OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`).
 
 ```
 proxy-cesar/
-├── proxy/                  # Python application (FastAPI + LiteLLM)
-│   ├── src/                # Source code
-│   ├── tests/              # Test suite (178+ tests)
-│   ├── pseudo_models.yaml  # Model definitions
-│   ├── pyproject.toml      # Dependencies and build config
-│   └── README.md           # Full technical documentation
-├── .github/workflows/      # CI/CD: auto-deploy to production
-│   └── deploy.yml          # Deploy on push to main
+├── proxy/                     # Python application (FastAPI + LiteLLM)
+│   ├── src/
+│   │   ├── main.py           # FastAPI entry point
+│   │   ├── api/              # HTTP endpoints (chat, conversations, health, models)
+│   │   ├── service/          # Business logic (chat, compaction, alerts, router)
+│   │   │   ├── compactor/    # Pre, continuous, and explicit compaction
+│   │   │   ├── multimedia/   # Image description for vision→text migration
+│   │   │   └── router_llm/   # Optional task complexity evaluation
+│   │   ├── domain/           # Pure types (Result monad, errors, capabilities)
+│   │   ├── adapters/         # DB (SQLModel), cache (Valkey), LiteLLM client
+│   │   ├── config/           # Pydantic YAML loader for pseudo-models
+│   │   ├── schemas/          # Pydantic request/response schemas
+│   │   └── tasks/            # arq worker for async compaction
+│   ├── tests/                # Test suite (331+ tests)
+│   ├── pseudo_models.yaml    # 8 pseudo-model definitions
+│   ├── pyproject.toml        # Dependencies and build config
+│   └── README.md             # Full technical documentation
+├── .github/workflows/
+│   └── deploy.yml            # CI/CD: auto-deploy to production on push
 ├── scripts/
-│   └── deploy.sh           # Idempotent deployment script
-└── sprints/                # Design docs and sprint plans
+│   └── deploy.sh             # Idempotent deployment script
+└── sprints/                  # Design docs and sprint plans
 ```
 
 ---
@@ -109,9 +120,11 @@ Managed via `pyproject.toml`. Key packages:
 | Python | >=3.12,<3.15 | Server runs 3.14 |
 | FastAPI | >=0.115,<0.137 | HTTP framework |
 | LiteLLM | >=1.83.7,<1.83.8 | Multi-provider LLM client (pinned due to Python 3.14) |
-| SQLModel | >=0.0.38 | ORM |
-| Valkey | >=5.0,<7.0 | Cache + affinity store |
+| SQLModel | >=0.0.38 | ORM (SQLAlchemy 2.0 + Pydantic) |
+| Valkey | >=5.0,<7.0 | Cache + affinity store + arq broker |
 | Pydantic | >=2.11,<3.0 | Validation (pinned at 2.12.5 by LiteLLM) |
+| arq | >=0.28,<0.30 | Async task queue for large compaction jobs |
+| tiktoken | >=0.9,<0.14 | Token counting before API calls |
 
 ---
 
