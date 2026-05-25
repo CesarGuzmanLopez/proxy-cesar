@@ -31,6 +31,7 @@ from src.service.chat_service import (
     handle_auto_describe,
     process_chat_request,
 )
+from src.service.inline_commands import handle_inline_command
 from src.service.capability_detector import (
     accumulate_capabilities,
     detect_turn_capabilities,
@@ -128,6 +129,39 @@ async def chat_completions(
 
     # Prepare messages as dicts
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
+
+    # Sprint 9: Check for inline commands early — if detected, respond
+    # with the command output instead of calling the LLM.
+    cmd_result = await handle_inline_command(
+        messages=messages,
+        conversation_id=request.conversation_id,
+        config=config,
+        db=db,
+    )
+    if cmd_result.handled and cmd_result.skip_llm:
+        proxy_meta = {
+            "command": cmd_result.response_metadata,
+            "handled": True,
+            "physical_model": "(command)",
+            "pseudo_model": request.model,
+            "conversation_id": conversation_id,
+        }
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion",
+            "model": request.model,
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": cmd_result.response_text,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "proxy_metadata": proxy_meta,
+        }
 
     if request.stream:
         # Streaming path: session lifecycle is managed inside _handle_streaming

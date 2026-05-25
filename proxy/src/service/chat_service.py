@@ -61,7 +61,8 @@ from src.service.compatibility import (
     validate_switch,
 )
 from src.service.compatibility import _any_vision as _any_vision_comp
-from src.service.context_alert import get_context_alert
+from src.service.context_alert import ContextAlert, get_context_alert
+from src.service.inline_commands import handle_inline_command, InlineCommandResult
 from src.service.model_resolver import normalize_model_name
 from src.service.multimedia.image_describer import auto_describe_images
 from src.service.router_llm.suggester import evaluate_complexity, is_downgrade
@@ -124,6 +125,71 @@ async def process_chat_request(
     metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())
     conv_uuid = _parse_uuid(conv_id)
+
+    # Sprint 9: Check for inline commands BEFORE any LLM processing.
+    # If the user typed @compact, @degrade, @status, or @help, handle
+    # it here and return immediately without calling the LLM.
+    cmd_result = await handle_inline_command(
+        messages=messages,
+        conversation_id=conversation_id,
+        config=config,
+        db=db,
+        arq_pool=getattr(db, "_arq_pool", None),
+    )
+    if cmd_result.handled and cmd_result.skip_llm:
+        logger.info(
+            "inline_cmd | trace=%s conv=%s cmd=%s",
+            _req_id,
+            conv_id[:12],
+            _extract_cmd_name(messages),
+        )
+        # Build a minimal ChatResult with the command output
+        return ChatResult(
+            conversation_id=conv_id,
+            pseudo_model=pseudo_model_name,
+            physical_model="(command)",
+            response={
+                "id": f"chatcmpl-{_req_id}",
+                "object": "chat.completion",
+                "model": pseudo_model_name,
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": cmd_result.response_text,
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                "proxy_metadata": cmd_result.response_metadata,
+            },
+            fallback_info=FallbackInfo(),
+            is_new_conversation=False,
+            affinity_maintained=False,
+            total_tokens=0,
+            context_window=pm_schema.context_window if hasattr(pm_schema, 'context_window') else None,
+            session_caps=SessionCapabilities(conversation_id=conv_id),
+            compatibility_warning=None,
+            compatibility_details=None,
+            tools_filter_applied=False,
+            tools_filter_reason=None,
+            tools_level_used=0,
+            tools_incomplete=False,
+            thinking_content=None,
+            tool_result_truncated=False,
+            pre_compaction_applied=False,
+            pre_compaction_metadata=None,
+            continuous_compaction_applied=False,
+            continuous_compaction_metadata=None,
+            external_compaction_detected=False,
+            external_compaction_metadata=None,
+            images_described=0,
+            images_described_by=None,
+            router_suggestion=None,
+            context_alert=ContextAlert(alert_level="none", context_usage_pct=None),
+            cache_metadata={},
+        )
 
     # Step 4-11: Load session, check switch, load/create conversation, resolve model, set affinity
     (
@@ -1083,3 +1149,13 @@ def _extract_cache_metadata(
         meta["fallback_cache_destruction"] = destruction
 
     return meta
+
+
+def _extract_cmd_name(messages: list[dict]) -> str:
+    """Extract the command name from the last user message for logging."""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, str) and content.startswith("@"):
+                return content.split()[0][1:]  # "@compact foo" → "compact"
+    return "?"
