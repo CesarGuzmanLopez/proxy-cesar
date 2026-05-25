@@ -4,14 +4,14 @@ Commands the user types directly in the chat message to perform operations
 without leaving the conversation or using curl.
 
 Commands:
-  @compact      — Normalize tools + degrade multimedia + compact history.
+  /compact      — Normalize tools + degrade multimedia + compact history.
                   One-shot prep for switching pseudo-models.
-  @degrade      — Describe all multimedia (images, PDFs, video frames) as text.
-  @status       — Show conversation state (tokens, model, capabilities).
-  @help         — List all commands.
+  /degrade      — Describe all multimedia (images, PDFs, video frames) as text.
+  /status       — Show conversation state (tokens, model, capabilities).
+  /help         — List all commands.
 
 Design:
-  - Commands start with "@" (easy to type, unlikely as LLM content).
+  - Commands start with "/" (or "@" for backward compat).
   - The proxy checks for commands BEFORE any LLM processing.
   - If a command is detected, it's handled inline and a text response
     is returned instead of forwarding to the LLM.
@@ -34,7 +34,7 @@ from src.service.tools_normalizer import generate_preview, normalize_history
 
 # ── Command regex ───────────────────────────────────────────────────────────
 
-_COMMAND_RE = re.compile(r"^@(\w[\w-]*)\s*(.*)", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^[/@](\w[\w-]*)\s*(.*)", re.IGNORECASE)
 
 _VALID_COMMANDS = frozenset({"compact", "degrade", "status", "help"})
 
@@ -100,9 +100,9 @@ async def handle_inline_command(
             response_text=(
                 "⚠️ **No active conversation.**\n\n"
                 "Start a conversation first, then use:\n"
-                "- `@compact` — prepare conversation for model switch\n"
-                "- `@degrade` — describe multimedia as text\n"
-                "- `@status` — show conversation state"
+                "- `/compact` — prepare conversation for model switch\n"
+                "- `/degrade` — describe multimedia as text\n"
+                "- `/status` — show conversation state"
             ),
             skip_llm=True,
         )
@@ -176,7 +176,7 @@ async def _handle_compact(
             steps.append(f"⚠️ Degradation skipped: {e}")
 
     # ── Step 3: Compact history ──────────────────────────────────────────
-    dry_run = "--dry" in args
+    dry_run = "`--dry`" in args
     if not dry_run:
         try:
             comp_result = await compact_conversation(
@@ -351,7 +351,7 @@ async def _handle_status(
     if not conversation_id:
         return InlineCommandResult(
             handled=True,
-            response_text="📊 **No active conversation.**\n\nStart a chat first, then use `@status`.",
+            response_text="📊 **No active conversation.**\n\nStart a chat first, then use `/status`.",
             skip_llm=True,
         )
 
@@ -407,9 +407,9 @@ async def _handle_status(
     status_lines.extend([
         "",
         "**Commands:**",
-        "- `@compact` — prepare for model switch (normalize + degrade + compact)",
-        "- `@degrade` — describe multimedia as text",
-        "- `@status` — this screen",
+        "- `/compact` — prepare for model switch (normalize + degrade + compact)",
+        "- `/degrade` — describe multimedia as text",
+        "- `/status` — this screen",
     ])
 
     return InlineCommandResult(
@@ -434,16 +434,16 @@ def _handle_help() -> InlineCommandResult:
         response_text=(
             "📚 **Inline Commands — Help**\n\n"
             "Type any of these as your chat message:\n\n"
-            "### `@compact`\n"
+            "### `/compact`\n"
             "**One-shot prep for switching models.** Runs three steps:\n"
             "1. Normalize parallel tools → sequential\n"
             "2. Describe multimedia (images, PDFs) as text\n"
             "3. Compact conversation history into a snapshot\n\n"
-            "After `@compact`, the conversation is maximally portable.\n\n"
-            "### `@degrade`\n"
+            "After `/compact`, the conversation is maximally portable.\n\n"
+            "### `/degrade`\n"
             "Describe all multimedia items as text.\n"
             "Use before switching to a non-vision pseudo-model.\n\n"
-            "### `@status`\n"
+            "### `/status`\n"
             "Show current conversation state: model, tokens, capabilities.\n\n"
             "---\n"
             "*Commands work on the current conversation only.*"
