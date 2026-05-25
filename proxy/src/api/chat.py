@@ -85,6 +85,8 @@ class ChatRequest(BaseModel, extra="forbid"):
     max_tokens: int | None = None
     tools: list[dict] | None = None
     tool_choice: str | dict | None = None
+    stream_options: dict | None = None
+    """OpenAI-compatible stream options (e.g. {"include_usage": true})."""
 
 
 # ── Endpoint ────────────────────────────────────────────────────────────────
@@ -179,6 +181,7 @@ async def chat_completions(
             max_tokens=request.max_tokens,
             tools=request.tools,
             tool_choice=request.tool_choice,
+            stream_options=request.stream_options,
         )
 
     # Non-streaming path: session lifecycle managed here with try/finally
@@ -276,6 +279,7 @@ async def _handle_streaming(
     max_tokens: int | None = None,
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
+    stream_options: dict | None = None,
 ):
     """Streaming request: return SSE StreamingResponse.
 
@@ -300,6 +304,7 @@ async def _handle_streaming(
             max_tokens=max_tokens,
             tools=tools,
             tool_choice=tool_choice,
+            stream_options=stream_options,
         )
     except HTTPException:
         await db.close()
@@ -486,6 +491,7 @@ async def _handle_streaming_with_db(
     max_tokens: int | None = None,
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
+    stream_options: dict | None = None,
 ):
     """Pre-stream logic (runs synchronously before SSE starts)."""
     # Resolve model
@@ -655,6 +661,7 @@ async def _handle_streaming_with_db(
         max_tokens=max_tokens,
         tools=tools,
         tool_choice=tool_choice,
+        stream_options=stream_options,
     )
 
     # Sprint 5 metadata
