@@ -1,0 +1,17 @@
+[Unit]
+Description=Proxy Determinista Multi-Modelo
+After=network.target postgresql.service valkey.service
+
+[Service]
+Type=simple
+User=proxy
+WorkingDirectory=/opt/proxy-cesar
+EnvironmentFile=/opt/proxy-cesar/.env
+ExecStart=/opt/proxy-cesar/.venv/bin/uvicorn src.main:app --host 127.0.0.1 --port 9110
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

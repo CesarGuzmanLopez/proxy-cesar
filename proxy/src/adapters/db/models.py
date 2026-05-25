@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, Text, func
 from sqlalchemy import Uuid as SA_Uuid
 from sqlalchemy import JSON as SA_JSON
 from sqlmodel import Field, Relationship, SQLModel
@@ -54,9 +54,7 @@ class Conversation(ConversationBase, table=True):
     )
     updated_at: datetime = Field(
         default_factory=datetime.now,
-        sa_column=Column(
-            DateTime(), server_default=_SERVER_NOW, onupdate=func.now()
-        ),
+        sa_column=Column(DateTime(), server_default=_SERVER_NOW, onupdate=func.now()),
     )
 
     # Sprint 4: active snapshot for compacted conversations

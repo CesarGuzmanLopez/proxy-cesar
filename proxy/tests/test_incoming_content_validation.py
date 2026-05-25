@@ -32,7 +32,9 @@ def test_image_sent_to_avanzada_vision_proceeds():
     """Image sent to 'avanzada-vision' (has vision models) → no exception."""
     turn_caps = TurnCapabilities(has_images=True)
     # Should not raise
-    result = validate_incoming_content(turn_caps, _get_pm("avanzada-vision"), "avanzada-vision", CONFIG)
+    result = validate_incoming_content(
+        turn_caps, _get_pm("avanzada-vision"), "avanzada-vision", CONFIG
+    )
     assert result is None
 
 
@@ -50,7 +52,9 @@ def test_pdf_sent_to_deep_flash_returns_400():
     """PDF sent to 'deep-flash' (no vision) → 400 PDF_NOT_SUPPORTED."""
     turn_caps = TurnCapabilities(has_pdf=True)
     with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(turn_caps, _get_pm("deep-flash"), "deep-flash", CONFIG)
+        validate_incoming_content(
+            turn_caps, _get_pm("deep-flash"), "deep-flash", CONFIG
+        )
     assert exc.value.status_code == 400
     assert "PDF_NOT_SUPPORTED" in str(exc.value.detail["error"])
 
@@ -58,7 +62,9 @@ def test_pdf_sent_to_deep_flash_returns_400():
 def test_pdf_sent_to_avanzada_vision_proceeds():
     """PDF sent to 'avanzada-vision' (has vision) → proceeds (PDFs treated as images)."""
     turn_caps = TurnCapabilities(has_pdf=True)
-    result = validate_incoming_content(turn_caps, _get_pm("avanzada-vision"), "avanzada-vision", CONFIG)
+    result = validate_incoming_content(
+        turn_caps, _get_pm("avanzada-vision"), "avanzada-vision", CONFIG
+    )
     assert result is None
 
 
@@ -76,9 +82,13 @@ def test_parallel_tools_sent_to_flash_lowcost_returns_400():
     """Parallel tools sent to 'flash-lowcost' (no parallel models) → 400."""
     turn_caps = TurnCapabilities(has_parallel_tools=True)
     with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(turn_caps, _get_pm("flash-lowcost"), "flash-lowcost", CONFIG)
+        validate_incoming_content(
+            turn_caps, _get_pm("flash-lowcost"), "flash-lowcost", CONFIG
+        )
     assert exc.value.status_code == 400
-    assert "PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL" in str(exc.value.detail["error"])
+    assert "PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL" in str(
+        exc.value.detail["error"]
+    )
 
 
 def test_error_responses_include_remediation():

@@ -6,13 +6,14 @@ Uses SQLModel (python.md §6.2) which combines SQLAlchemy + Pydantic.
 
 from collections.abc import AsyncGenerator
 
-from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from src.config.settings import settings
 
-engine = create_async_engine(settings.database_url, echo=False, pool_size=5, max_overflow=10)
+engine = create_async_engine(
+    settings.database_url, echo=False, pool_size=5, max_overflow=10
+)
 session_factory = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )

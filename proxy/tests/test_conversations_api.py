@@ -26,7 +26,6 @@ def valid_config():
 @pytest.fixture
 async def client_with_conversation(mock_valkey):
     """Test client with a mock conversation in DB."""
-    from src.main import app
 
     config = load_config()
     app.state.config = config
@@ -70,7 +69,6 @@ async def client_with_conversation(mock_valkey):
 @pytest.fixture
 async def client_no_conversation(mock_valkey):
     """Test client where conversation does not exist."""
-    from src.main import app
 
     config = load_config()
     app.state.config = config
@@ -134,8 +132,12 @@ async def test_compatible_models_determinism(client_with_conversation):
     assert resp1.status_code == 200
     assert resp2.status_code == 200
     # Same pseudo-model statuses
-    models1 = {m["pseudo_model"]: m["status"] for m in resp1.json()["compatible_models"]}
-    models2 = {m["pseudo_model"]: m["status"] for m in resp2.json()["compatible_models"]}
+    models1 = {
+        m["pseudo_model"]: m["status"] for m in resp1.json()["compatible_models"]
+    }
+    models2 = {
+        m["pseudo_model"]: m["status"] for m in resp2.json()["compatible_models"]
+    }
     assert models1 == models2
 
 

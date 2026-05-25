@@ -43,9 +43,7 @@ def _scan_multimodal_content(content: list, caps: TurnCapabilities) -> None:
             mime_lower = mime.lower()
             if "pdf" in mime_lower:
                 caps.has_pdf = True
-            elif any(
-                v in mime_lower for v in ("video/", "mp4", "webm", "avi")
-            ):
+            elif any(v in mime_lower for v in ("video/", "mp4", "webm", "avi")):
                 caps.has_video = True
         elif part_type in ("video_url", "video"):
             caps.has_video = True

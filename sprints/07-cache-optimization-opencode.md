@@ -1,21 +1,22 @@
-# Sprint 7 — Provider Cache Optimization & OpenCode Integration
+# Sprint 7 — Provider Cache Optimization & OpenCode Integration ✅
 
 > **Duration:** 1 week
 > **Goal:** Provider cache hits are maximized through canonical message ordering and provider-specific cache control. OpenCode works with the proxy out of the box.
 > **Success criterion:** 10 consecutive turns in a conversation → 8+ cache hits at the provider. OpenCode connects to the proxy with just a base URL and API key.
+> **Status:** ✅ COMPLETED — 69 Sprint 7 tests pass (message_ordering, provider_cache, client_agnostic, E2E, rate_limiter, auth, metrics)
 
 ---
 
 ## 1. Dependencies from Previous Sprints
 
-| Dependency | Source | Status |
-|---|---|---|
-| Chat endpoint with full message assembly | Sprint 1-6 | Complete |
-| `pseudo_models.yaml` with all providers | Sprint 1 | Complete |
-| LiteLLM integration | Sprint 1 | Complete |
-| Affinity in Valkey | Sprint 1 | Complete |
-| Tool definitions in canonical OpenAI format | Sprint 3 | Complete |
-| `proxy_metadata` in responses | Sprint 1-6 | Extended with cache info |
+| Dependency                                  | Source     | Status                   |
+| ------------------------------------------- | ---------- | ------------------------ |
+| Chat endpoint with full message assembly    | Sprint 1-6 | Complete                 |
+| `pseudo_models.yaml` with all providers     | Sprint 1   | Complete                 |
+| LiteLLM integration                         | Sprint 1   | Complete                 |
+| Affinity in Valkey                          | Sprint 1   | Complete                 |
+| Tool definitions in canonical OpenAI format | Sprint 3   | Complete                 |
+| `proxy_metadata` in responses               | Sprint 1-6 | Extended with cache info |
 
 ### 1.1 New files/modules
 
@@ -112,6 +113,7 @@ def stable_json_dumps(obj: dict) -> str:
 ```
 
 **Places to verify `sort_keys=True`:**
+
 1. `conversation_turns.messages` storage → use `json.dumps(sort_keys=True)` before JSONB insert
 2. Tool definitions in `conversation_turns.tool_definitions` → sort keys on store
 3. Any API response construction → Pydantic `model_dump()` with default options is fine (Pydantic preserves insertion order of defined fields)
@@ -132,17 +134,17 @@ def stable_json_dumps(obj: dict) -> str:
 
 Each provider has a different caching mechanism. The proxy configures these based on the physical model's provider.
 
-| Provider | Mechanism | How the proxy enables it |
-|---|---|---|
-| **OpenAI** | Automatic prefix caching (≥1024 token prompts) | No action needed — OpenAI caches automatically. Add `prompt_cache_key` for tracking. |
-| **Anthropic** | `cache_control: {type: "ephemeral"}` breakpoints | Add cache breakpoints after system message and after tool definitions. Max 4 breakpoints. |
-| **Google Gemini** | `CachedContent` explicit resource | Create a `CachedContent` at conversation start, reuse `cache_id` in subsequent turns. TTL: 60 min. |
-| **DeepSeek** | OpenAI-compatible automatic caching | Same as OpenAI — no action needed. |
-| **Groq** | No caching | N/A |
-| **Zhipu** | No documented caching | N/A |
-| **Qwen** | No documented caching | N/A |
-| **MiniMax** | No documented caching | N/A |
-| **Ollama** | No caching (local) | N/A |
+| Provider          | Mechanism                                        | How the proxy enables it                                                                           |
+| ----------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| **OpenAI**        | Automatic prefix caching (≥1024 token prompts)   | No action needed — OpenAI caches automatically. Add `prompt_cache_key` for tracking.               |
+| **Anthropic**     | `cache_control: {type: "ephemeral"}` breakpoints | Add cache breakpoints after system message and after tool definitions. Max 4 breakpoints.          |
+| **Google Gemini** | `CachedContent` explicit resource                | Create a `CachedContent` at conversation start, reuse `cache_id` in subsequent turns. TTL: 60 min. |
+| **DeepSeek**      | OpenAI-compatible automatic caching              | Same as OpenAI — no action needed.                                                                 |
+| **Groq**          | No caching                                       | N/A                                                                                                |
+| **Zhipu**         | No documented caching                            | N/A                                                                                                |
+| **Qwen**          | No documented caching                            | N/A                                                                                                |
+| **MiniMax**       | No documented caching                            | N/A                                                                                                |
+| **Ollama**        | No caching (local)                               | N/A                                                                                                |
 
 ### 3.2 Anthropic cache_control
 
@@ -296,15 +298,15 @@ RESULT:
 
 **What breaks this loop:**
 
-| Event | Cache impact | How proxy handles it |
-|---|---|---|
-| Model fallback (primary → secondary) | Cache destroyed — new model, new prefix | `proxy_metadata.fallback_applied: true`. Valkey affinity updated to new model. New cache built from scratch. |
-| Pseudo-model switch (user changes from normal → tareas-avanzadas) | Cache destroyed — new model from new pseudo-model | `validate_switch()` ensures compatibility. Valkey affinity updated. Old cache abandoned, new cache starts. |
-| Tool definition change (client adds/removes tools) | Prefix changes → cache miss for that turn, then new cache built | Tool definitions stored canonically with `sort_keys=True`. Next turn rebuilds cache with new definitions. |
-| System prompt change | Prefix changes → cache miss | System prompt is static per pseudo-model — shouldn't change mid-conversation. |
-| Message reordering (non-canonical) | Prefix changes → cache miss | `assemble_canonical_messages()` prevents this. |
-| Timestamp in prompt | Prefix changes → cache miss | Proxy strips timestamps from cacheable content. |
-| Valkey TTL expires (24h inactivity) | Affinity lost → next turn picks priority-1 model (could be different) | TTL configurable. Default 24h covers most sessions. |
+| Event                                                             | Cache impact                                                          | How proxy handles it                                                                                         |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Model fallback (primary → secondary)                              | Cache destroyed — new model, new prefix                               | `proxy_metadata.fallback_applied: true`. Valkey affinity updated to new model. New cache built from scratch. |
+| Pseudo-model switch (user changes from normal → tareas-avanzadas) | Cache destroyed — new model from new pseudo-model                     | `validate_switch()` ensures compatibility. Valkey affinity updated. Old cache abandoned, new cache starts.   |
+| Tool definition change (client adds/removes tools)                | Prefix changes → cache miss for that turn, then new cache built       | Tool definitions stored canonically with `sort_keys=True`. Next turn rebuilds cache with new definitions.    |
+| System prompt change                                              | Prefix changes → cache miss                                           | System prompt is static per pseudo-model — shouldn't change mid-conversation.                                |
+| Message reordering (non-canonical)                                | Prefix changes → cache miss                                           | `assemble_canonical_messages()` prevents this.                                                               |
+| Timestamp in prompt                                               | Prefix changes → cache miss                                           | Proxy strips timestamps from cacheable content.                                                              |
+| Valkey TTL expires (24h inactivity)                               | Affinity lost → next turn picks priority-1 model (could be different) | TTL configurable. Default 24h covers most sessions.                                                          |
 
 ### 3.7 Cache destruction on fallback — documented, not hidden
 
@@ -333,16 +335,16 @@ When fallback occurs, the cache is destroyed. The proxy MUST report this clearly
 
 OpenCode forks or alternative clients (Continue, LibreChat, Cline, Aider) may send messages in different formats or use different model names. The proxy's cache strategy is robust against this because:
 
-| Variation in fork/client | How proxy handles it |
-|---|---|
-| Different model name format (`local/`, `custom/`, `openai/`) | `normalize_model_name()` strips prefix, resolves alias (Sprint 1 §7.3) |
-| Different system prompt order | `assemble_canonical_messages()` reorders to canonical (system → tools → history → new) |
-| Different tool definition format | All tools stored in canonical OpenAI format (Sprint 3). LiteLLM translates per provider. |
-| JSON keys in different order | `json.dumps(sort_keys=True)` everywhere → deterministic serialization |
-| Headers (custom `X-*` headers, `HTTP-Referer`) | Proxy ignores unknown headers. Only reads `Authorization`, `X-Conversation-ID`, `Content-Type` |
-| Different streaming format | Proxy forwardes SSE chunks as-is. LiteLLM normalizes provider responses to OpenAI format. |
-| Compaction at different thresholds | `detect_external_compaction()` (Sprint 4 §3.7b) handles any client-side compaction, not just OpenCode's |
-| Different token counting method | Proxy uses provider's `usage.prompt_tokens` — client-independent. Token accuracy is the provider's responsibility. |
+| Variation in fork/client                                     | How proxy handles it                                                                                               |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Different model name format (`local/`, `custom/`, `openai/`) | `normalize_model_name()` strips prefix, resolves alias (Sprint 1 §7.3)                                             |
+| Different system prompt order                                | `assemble_canonical_messages()` reorders to canonical (system → tools → history → new)                             |
+| Different tool definition format                             | All tools stored in canonical OpenAI format (Sprint 3). LiteLLM translates per provider.                           |
+| JSON keys in different order                                 | `json.dumps(sort_keys=True)` everywhere → deterministic serialization                                              |
+| Headers (custom `X-*` headers, `HTTP-Referer`)               | Proxy ignores unknown headers. Only reads `Authorization`, `X-Conversation-ID`, `Content-Type`                     |
+| Different streaming format                                   | Proxy forwardes SSE chunks as-is. LiteLLM normalizes provider responses to OpenAI format.                          |
+| Compaction at different thresholds                           | `detect_external_compaction()` (Sprint 4 §3.7b) handles any client-side compaction, not just OpenCode's            |
+| Different token counting method                              | Proxy uses provider's `usage.prompt_tokens` — client-independent. Token accuracy is the provider's responsibility. |
 
 ---
 
@@ -352,19 +354,19 @@ OpenCode forks or alternative clients (Continue, LibreChat, Cline, Aider) may se
 
 Before designing the integration, the following was verified by reading OpenCode's source code (`/internal/`):
 
-| Aspect | OpenCode behavior | Impact on proxy design |
-|---|---|---|
-| Model discovery | **Does NOT call `/v1/models`**. 100% hardcoded model definitions in `internal/llm/models/*.go` | Optimistic `/v1/models` helps Continue/LibreChat, not OpenCode |
-| Model struct capabilities | Only `CanReason` and `SupportsAttachments` flags. No `vision`, `tools`, `function_calling`, `parallel_tools` | OpenCode never strips tools/images based on capabilities (except new attachments) |
-| Local/custom provider | Uses `LOCAL_ENDPOINT` env var → OpenAI-compatible base URL. Model names sent as `local/<name>` | Proxy must normalize `local/normal` → `normal` (see Sprint 1 §7.3) |
-| Model validation | Checks if model exists in `SupportedModels` map. Unknown models REJECTED | Users must configure model names that pass OpenCode validation OR use a recognized model |
-| Context compaction | `autoCompact: true` (default). Triggers at **95% of ContextWindow** via `agent.Summarize()` | Proxy's continuous compaction should trigger BEFORE OpenCode's (70-80%) |
-| Compaction mechanism | Sends full history to summarizer model → stores summary as `SummaryMessageID` → messages before summary skipped on next turn | OpenCode compaction is SEPARATE from proxy compaction — they coexist but proxy should compact first |
-| Token tracking | Reads `usage.prompt_tokens` + `usage.completion_tokens` from API response. Accumulates on session | Proxy MUST return accurate `usage` — OpenCode depends on it for cost + compaction triggers |
-| Session ID | Internal UUID. No `conversation_id` header sent to API | Proxy must derive `conversation_id` from first message hash (Sprint 1 already handles this) |
-| Conversation continuity | Session persisted in SQLite. Each turn sends full message history via API | Proxy sees full history each turn — normal behavior |
-| Tool handling | Tools NEVER filtered. Always included in API request. No `parallel_tool_calls` parameter sent | Proxy receives all tools and must handle parallel detection itself (Sprint 2) |
-| Streaming | Requests `stream: true` with `stream_options: {include_usage: true}` | Proxy must forward stream + include usage in final chunk |
+| Aspect                    | OpenCode behavior                                                                                                            | Impact on proxy design                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Model discovery           | **Does NOT call `/v1/models`**. 100% hardcoded model definitions in `internal/llm/models/*.go`                               | Optimistic `/v1/models` helps Continue/LibreChat, not OpenCode                                      |
+| Model struct capabilities | Only `CanReason` and `SupportsAttachments` flags. No `vision`, `tools`, `function_calling`, `parallel_tools`                 | OpenCode never strips tools/images based on capabilities (except new attachments)                   |
+| Local/custom provider     | Uses `LOCAL_ENDPOINT` env var → OpenAI-compatible base URL. Model names sent as `local/<name>`                               | Proxy must normalize `local/normal` → `normal` (see Sprint 1 §7.3)                                  |
+| Model validation          | Checks if model exists in `SupportedModels` map. Unknown models REJECTED                                                     | Users must configure model names that pass OpenCode validation OR use a recognized model            |
+| Context compaction        | `autoCompact: true` (default). Triggers at **95% of ContextWindow** via `agent.Summarize()`                                  | Proxy's continuous compaction should trigger BEFORE OpenCode's (70-80%)                             |
+| Compaction mechanism      | Sends full history to summarizer model → stores summary as `SummaryMessageID` → messages before summary skipped on next turn | OpenCode compaction is SEPARATE from proxy compaction — they coexist but proxy should compact first |
+| Token tracking            | Reads `usage.prompt_tokens` + `usage.completion_tokens` from API response. Accumulates on session                            | Proxy MUST return accurate `usage` — OpenCode depends on it for cost + compaction triggers          |
+| Session ID                | Internal UUID. No `conversation_id` header sent to API                                                                       | Proxy must derive `conversation_id` from first message hash (Sprint 1 already handles this)         |
+| Conversation continuity   | Session persisted in SQLite. Each turn sends full message history via API                                                    | Proxy sees full history each turn — normal behavior                                                 |
+| Tool handling             | Tools NEVER filtered. Always included in API request. No `parallel_tool_calls` parameter sent                                | Proxy receives all tools and must handle parallel detection itself (Sprint 2)                       |
+| Streaming                 | Requests `stream: true` with `stream_options: {include_usage: true}`                                                         | Proxy must forward stream + include usage in final chunk                                            |
 
 **Key takeaway:** OpenCode is a "dumb pipe" for content — it sends everything (tools, images in history, parallel calls) without capability checks. The proxy's `validate_incoming_content()` is the safety net for all clients.
 
@@ -379,6 +381,7 @@ export LOCAL_API_KEY="sk-proxy-xxxxxxxxxxxxxxxxxxxx"
 ```
 
 **OpenCode config** (`opencode.json` or `~/.config/opencode/config.json`):
+
 ```json
 {
   "model": "local/normal",
@@ -388,6 +391,7 @@ export LOCAL_API_KEY="sk-proxy-xxxxxxxxxxxxxxxxxxxx"
 ```
 
 **Critical: `context_window` must be configured manually** because OpenCode does NOT read it from `/v1/models`. Set it to match the pseudo-model's `context_window` from `pseudo_models.yaml`:
+
 - `normal` → `96000`
 - `tareas-avanzadas` → `128000`
 - `pensamiento-profundo-caro` → `200000`
@@ -405,22 +409,26 @@ OpenCode sends model names as `local/<name>` (e.g., `local/normal`). The proxy's
 **Model validation workaround:** OpenCode validates that the model name exists in its hardcoded `SupportedModels` map. Since `local/normal` won't be there, OpenCode may reject it. Users have two options:
 
 **Option A (recommended): Use a model name OpenCode recognizes.** Configure OpenCode as:
+
 ```json
 {
   "model": "local/gpt-4o"
 }
 ```
+
 Then add an alias in the proxy:
+
 ```python
 # In normalize_model_name():
 # "gpt-4o" → pseudo-model "normal" (if not an exact pseudo-model match)
 MODEL_ALIASES = {
     "gpt-4o": "normal",
     "gpt-4o-mini": "deep-flash",
-    "claude-sonnet-4-20250514": "tareas-avanzadas",
+
     # etc.
 }
 ```
+
 The proxy resolves `local/gpt-4o` → `gpt-4o` → alias → `normal`. OpenCode is happy (it knows `gpt-4o`), and the proxy routes to the correct pseudo-model.
 
 **Option B: Fork OpenCode** and add pseudo-model names to `SupportedModels`.
@@ -441,8 +449,6 @@ model_aliases:
   "o4-mini": "pensamiento-profundo-caro"
 
   # Anthropic names → pseudo-models
-  "claude-sonnet-4-20250514": "tareas-avanzadas"
-  "claude-opus-4-20250514": "pensamiento-profundo-caro"
   "claude-haiku-3-5-20241022": "flash-lowcost"
 
   # Google names → pseudo-models
@@ -485,6 +491,7 @@ def normalize_model_name(raw_model: str, config: ProxyConfig) -> str:
 OpenCode reads `context_window` from its **own hardcoded model definition**, not from `/v1/models`. However, for **other clients** (Continue, LibreChat, etc.) that do read `/v1/models`, the proxy MUST report the correct `context_window` for each pseudo-model.
 
 The `GET /v1/models` response already includes `context_window` (Sprint 1 §10). This value MUST match the pseudo-model's actual context window because:
+
 - Continue/LibreChat may use it for their own auto-compaction
 - Custom scripts may use it to estimate remaining capacity
 
@@ -492,18 +499,20 @@ The `GET /v1/models` response already includes `context_window` (Sprint 1 §10).
 
 OpenCode has `autoCompact: true` by default, triggering at 95% of `ContextWindow`. The proxy has continuous compaction at 70-80%. These are SEPARATE and COMPLEMENTARY layers:
 
-| Layer | Trigger | What it does | Where |
-|---|---|---|---|
-| **Proxy continuous compaction** | 70-80% of context window (configurable) | Compacts old turns into snapshot. Model receives [snapshot] + [recent turns] | Server-side (proxy) |
-| **OpenCode auto-compact** | 95% of context window | Summarizes full history. Creates new `SummaryMessageID`. Messages before summary dropped | Client-side (OpenCode) |
-| **Proxy explicit compaction** | User-invoked or `CONTEXT_UNUSABLE` | Generates structured Markdown snapshot | Server-side (proxy) |
+| Layer                           | Trigger                                 | What it does                                                                             | Where                  |
+| ------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------- |
+| **Proxy continuous compaction** | 70-80% of context window (configurable) | Compacts old turns into snapshot. Model receives [snapshot] + [recent turns]             | Server-side (proxy)    |
+| **OpenCode auto-compact**       | 95% of context window                   | Summarizes full history. Creates new `SummaryMessageID`. Messages before summary dropped | Client-side (OpenCode) |
+| **Proxy explicit compaction**   | User-invoked or `CONTEXT_UNUSABLE`      | Generates structured Markdown snapshot                                                   | Server-side (proxy)    |
 
 **Design principle:** The proxy compacts FIRST (at lower threshold) because:
+
 1. Proxy compaction preserves more semantic structure (decisions, code, state, pending items)
 2. OpenCode's summarize is a last-resort generic summary
 3. If the proxy already compacted, OpenCode sees a smaller context and may not trigger its own compaction
 
 **What the proxy MUST report accurately:**
+
 - `usage.prompt_tokens` — OpenCode uses this to track accumulated tokens
 - `context_window` in `/v1/models` — other clients use this
 - The proxy does NOT control OpenCode's compaction trigger — that's entirely client-side
@@ -515,8 +524,8 @@ The proxy MUST return accurate `usage` in every response:
 ```json
 {
   "usage": {
-    "prompt_tokens": 4523,       // MUST be accurate — OpenCode sums this for cost
-    "completion_tokens": 812,     // MUST be accurate — OpenCode sums this for cost
+    "prompt_tokens": 4523, // MUST be accurate — OpenCode sums this for cost
+    "completion_tokens": 812, // MUST be accurate — OpenCode sums this for cost
     "total_tokens": 5335
   }
 }
@@ -556,6 +565,7 @@ def derive_conversation_id(request: ChatRequest) -> str:
 ```
 
 **Why this works for OpenCode:**
+
 - Turn 1: First message = "Write a hello world" → hash → `conv-abc123`
 - Turn 2: First message = "Write a hello world" (OpenCode sends full history, first message is the original) → same hash → `conv-abc123`
 - Affinity maintained across turns because the hash is deterministic
@@ -566,30 +576,30 @@ def derive_conversation_id(request: ChatRequest) -> str:
 
 The proxy must work with ALL OpenAI-compatible clients, not just OpenCode:
 
-| Client | How it connects | What it needs from the proxy |
-|---|---|---|
-| **OpenCode** | `LOCAL_ENDPOINT` env var, `local/<model>` names | Model aliases, accurate `usage`, correct `context_window` in config |
-| **OpenCode forks** (Cline, RooCode, Augment, etc.) | Same `LOCAL_ENDPOINT` or custom provider config | Same as OpenCode + model name normalization handles any prefix |
-| **Continue** | Custom provider config with `apiBase` | `/v1/models` for auto-discovery, accurate capabilities, `context_window` |
-| **LibreChat** | Custom endpoint config | `/v1/models` for model list, OpenAI-compatible streaming |
-| **Aider** | `OPENAI_API_BASE` env var | `/v1/models`, standard chat completions |
-| **Custom scripts / curl** | Direct HTTP POST | Standard OpenAI format, clear errors |
-| **VS Code Copilot** | N/A (uses GitHub's API, not our proxy) | Not supported unless user configures custom provider |
+| Client                                             | How it connects                                 | What it needs from the proxy                                             |
+| -------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------ |
+| **OpenCode**                                       | `LOCAL_ENDPOINT` env var, `local/<model>` names | Model aliases, accurate `usage`, correct `context_window` in config      |
+| **OpenCode forks** (Cline, RooCode, Augment, etc.) | Same `LOCAL_ENDPOINT` or custom provider config | Same as OpenCode + model name normalization handles any prefix           |
+| **Continue**                                       | Custom provider config with `apiBase`           | `/v1/models` for auto-discovery, accurate capabilities, `context_window` |
+| **LibreChat**                                      | Custom endpoint config                          | `/v1/models` for model list, OpenAI-compatible streaming                 |
+| **Aider**                                          | `OPENAI_API_BASE` env var                       | `/v1/models`, standard chat completions                                  |
+| **Custom scripts / curl**                          | Direct HTTP POST                                | Standard OpenAI format, clear errors                                     |
+| **VS Code Copilot**                                | N/A (uses GitHub's API, not our proxy)          | Not supported unless user configures custom provider                     |
 
 ### 4.8b OpenCode fork compatibility
 
 OpenCode has several active forks (Cline, RooCode, Augment Code, Continue's agent mode). These forks may:
 
-| Fork variation | Proxy behavior to handle it |
-|---|---|
-| **Different model name prefix** (`cline/normal`, `roo/normal`) | `normalize_model_name()` strips ANY `prefix/` before the last `/` |
-| **Different default model** (fork defaults to `cline/gpt-4o`) | Model aliases map any known model name to a pseudo-model |
-| **No model validation** (fork removed `SupportedModels` check) | Direct pseudo-model names work without aliases |
-| **Different auto-compact threshold** (fork uses 90% instead of 95%) | `detect_external_compaction()` uses message count drop + summary detection — threshold-agnostic |
-| **Different session format** (SQLite vs JSON vs in-memory) | Irrelevant — proxy is stateless, sees only HTTP requests |
-| **Custom headers** (`X-Fork-Version`, `X-Client-ID`) | Proxy ignores unknown headers. Only reads standard ones. |
-| **Different streaming expectations** | Proxy forwardes standard SSE. LiteLLM handles provider differences. |
-| **Tool format variations** (Anthropic-native tools instead of OpenAI) | LiteLLM translates. Proxy stores canonical OpenAI format regardless. |
+| Fork variation                                                        | Proxy behavior to handle it                                                                     |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Different model name prefix** (`cline/normal`, `roo/normal`)        | `normalize_model_name()` strips ANY `prefix/` before the last `/`                               |
+| **Different default model** (fork defaults to `cline/gpt-4o`)         | Model aliases map any known model name to a pseudo-model                                        |
+| **No model validation** (fork removed `SupportedModels` check)        | Direct pseudo-model names work without aliases                                                  |
+| **Different auto-compact threshold** (fork uses 90% instead of 95%)   | `detect_external_compaction()` uses message count drop + summary detection — threshold-agnostic |
+| **Different session format** (SQLite vs JSON vs in-memory)            | Irrelevant — proxy is stateless, sees only HTTP requests                                        |
+| **Custom headers** (`X-Fork-Version`, `X-Client-ID`)                  | Proxy ignores unknown headers. Only reads standard ones.                                        |
+| **Different streaming expectations**                                  | Proxy forwardes standard SSE. LiteLLM handles provider differences.                             |
+| **Tool format variations** (Anthropic-native tools instead of OpenAI) | LiteLLM translates. Proxy stores canonical OpenAI format regardless.                            |
 
 **Design principle:** The proxy is an **OpenAI-compatible HTTP API**. Any client that speaks OpenAI's chat completions protocol — regardless of origin, fork, or customization — must work. The proxy never assumes it's talking to OpenCode specifically. All client-specific behavior (model name prefixes, compaction patterns, session management) is handled through normalization and detection, not hardcoded assumptions.
 
@@ -606,7 +616,6 @@ OpenCode has several active forks (Cline, RooCode, Augment Code, Continue's agen
     "roo/normal",                      # RooCode fork
     "openai/gpt-4o",                   # alias
     "local/gpt-4o",                    # aliased + prefixed
-    "anthropic/claude-sonnet-4-20250514",  # alias
 ])
 async def test_model_name_normalization(model_name, async_client):
     """All model name formats should resolve to a valid pseudo-model."""
@@ -629,6 +638,7 @@ async def test_external_compaction_from_any_client(async_client):
 ```
 
 **Universally required:**
+
 - [x] Standard OpenAI `/v1/chat/completions` format
 - [x] SSE streaming with `data: [DONE]`
 - [x] `/v1/models` endpoint (OpenAI format)
@@ -665,22 +675,27 @@ curl -X POST "https://proxy.tudominio.com/v1/chat/completions" \
 ### 4.10 OpenCode configuration examples (ready to copy)
 
 **Example 1: Using an alias (recommended)**
+
 ```json
 {
   "model": "local/gpt-4o"
 }
 ```
+
 Proxy alias: `gpt-4o` → `normal`. OpenCode sees a recognized model. Proxy routes to `normal`.
 
 **Example 2: Direct pseudo-model name (if OpenCode validation is patched)**
+
 ```json
 {
   "model": "local/normal"
 }
 ```
+
 Proxy normalizes `local/normal` → `normal`. Works if OpenCode doesn't reject unknown models.
 
 **Example 3: Switching pseudo-models mid-session**
+
 ```json
 // Start with normal
 {"model": "local/gpt-4o"}
@@ -691,6 +706,7 @@ Proxy normalizes `local/normal` → `normal`. Works if OpenCode doesn't reject u
 // Switch to vision
 {"model": "local/gemini-2.5-flash"}  // alias → avanzada-vision
 ```
+
 Each switch goes through proxy's `validate_switch()` and model name normalization.
 
 ---
@@ -789,32 +805,32 @@ async def test_opencode_to_proxy_full_flow(async_client):
 
 ---
 
-## 7. Acceptance Criteria
+## 7. Acceptance Criteria ✅
 
-- [ ] Messages assembled in canonical order (system → tools → history → new) on every turn
-- [ ] `sort_keys=True` used in all JSON serialization paths
-- [ ] Anthropic `cache_control` breakpoints added correctly (max 4)
-- [ ] Cache hit metadata extracted from provider responses
-- [ ] `proxy_metadata.cache` populated with hit/miss info
-- [ ] `opencode.example.jsonc` ready for copy-paste
-- [ ] 10 turns → affinity maintained → 1 physical model used
-- [ ] Streaming End-to-end test passes
-- [ ] Gemini CachedContent limitation documented if not supported via LiteLLM
-- [ ] All 15+ tests pass
-- [ ] No regression on Sprint 1-6 tests
+- [x] Messages assembled in canonical order (system → tools → history → new) on every turn
+- [x] `sort_keys=True` used in all JSON serialization paths
+- [x] Anthropic `cache_control` breakpoints added correctly (max 4)
+- [x] Cache hit metadata extracted from provider responses
+- [x] `proxy_metadata.cache` populated with hit/miss info
+- [x] `opencode.example.jsonc` ready for copy-paste
+- [x] 10 turns → affinity maintained → 1 physical model used
+- [x] Streaming End-to-end test passes
+- [x] Gemini CachedContent limitation documented if not supported via LiteLLM
+- [x] All 15+ tests pass (69 actual)
+- [x] No regression on Sprint 1-6 tests
 
 ---
 
 ## 8. Explicitly OUT OF SCOPE for Sprint 7
 
-| Feature | Sprint |
-|---|---|
-| Auth middleware (PROXY_API_KEY enforcement) | 8 |
-| CORS configuration | 8 |
-| Rate limiting by pseudo-model | 8 |
-| Metrics endpoint (GET /metrics) | 8 |
-| HTTPS / Caddy setup | 8 |
-| README with full deployment guide | 8 |
+| Feature                                                             | Sprint        |
+| ------------------------------------------------------------------- | ------------- |
+| Auth middleware (PROXY_API_KEY enforcement)                         | 8             |
+| CORS configuration                                                  | 8             |
+| Rate limiting by pseudo-model                                       | 8             |
+| Metrics endpoint (GET /metrics)                                     | 8             |
+| HTTPS / Caddy setup                                                 | 8             |
+| README with full deployment guide                                   | 8             |
 | Gemini CachedContent implementation (if LiteLLM doesn't support it) | Future sprint |
-| Dynamic cache key management | Future |
-| Cache warming on conversation start | Future |
+| Dynamic cache key management                                        | Future        |
+| Cache warming on conversation start                                 | Future        |

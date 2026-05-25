@@ -30,7 +30,9 @@ def upgrade() -> None:
     # --- conversations ---
     op.add_column(
         "conversations",
-        sa.Column("max_tools_level", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "max_tools_level", sa.Integer(), server_default=sa.text("0"), nullable=False
+        ),
     )
 
     # --- conversation_turns ---
@@ -44,11 +46,21 @@ def upgrade() -> None:
     )
     op.add_column(
         "conversation_turns",
-        sa.Column("tools_incomplete", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column(
+            "tools_incomplete",
+            sa.Boolean(),
+            server_default=sa.text("false"),
+            nullable=False,
+        ),
     )
     op.add_column(
         "conversation_turns",
-        sa.Column("tools_level_used", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column(
+            "tools_level_used",
+            sa.Integer(),
+            server_default=sa.text("0"),
+            nullable=False,
+        ),
     )
 
 

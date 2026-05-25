@@ -8,7 +8,11 @@ python.md §4: pure functions with explicit Result monad.
 
 from fastapi import HTTPException
 
-from src.config.pseudo_models import PhysicalModelSchema, PseudoModelSchema, ProxyConfigSchema
+from src.config.pseudo_models import (
+    PhysicalModelSchema,
+    PseudoModelSchema,
+    ProxyConfigSchema,
+)
 from src.domain.capabilities import (
     CompatibilityResult,
     CompatibilityStatus,
@@ -18,8 +22,10 @@ from src.domain.capabilities import (
 
 
 def _check_images(
-    from_pseudo_name: str, to_pseudo_name: str,
-    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+    from_pseudo_name: str,
+    to_pseudo_name: str,
+    to_pseudo: PseudoModelSchema,
+    caps: SessionCapabilities,
     config: ProxyConfigSchema,
 ) -> CompatibilityResult | None:
     """CHECK 1: Images → vision compatibility."""
@@ -68,15 +74,14 @@ def _check_images(
 
 
 def _check_audio(
-    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+    to_pseudo: PseudoModelSchema,
+    caps: SessionCapabilities,
 ) -> CompatibilityResult | None:
     """CHECK 2: Audio in history → destination must support audio."""
     if not caps.has_audio:
         return None
 
-    to_has_audio = any(
-        getattr(m, "audio", False) for m in to_pseudo.physical_models
-    )
+    to_has_audio = any(getattr(m, "audio", False) for m in to_pseudo.physical_models)
     if not to_has_audio:
         return CompatibilityResult(
             status=CompatibilityStatus.BLOCKED,
@@ -93,7 +98,8 @@ def _check_audio(
 
 
 def _check_pdf(
-    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+    to_pseudo: PseudoModelSchema,
+    caps: SessionCapabilities,
 ) -> CompatibilityResult | None:
     """CHECK 3: PDF in history → model without vision."""
     if caps.has_pdf and not _any_vision(to_pseudo.physical_models):
@@ -125,8 +131,10 @@ def _check_video(
 
 
 def _check_parallel_tools(
-    from_pseudo_name: str, to_pseudo_name: str,
-    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+    from_pseudo_name: str,
+    to_pseudo_name: str,
+    to_pseudo: PseudoModelSchema,
+    caps: SessionCapabilities,
     config: ProxyConfigSchema,
 ) -> CompatibilityResult | None:
     """CHECK 5: Parallel tools → destination must have parallel-capable models."""
@@ -171,7 +179,8 @@ def _check_parallel_tools(
 
 
 def _check_context(
-    to_pseudo: PseudoModelSchema, caps: SessionCapabilities,
+    to_pseudo: PseudoModelSchema,
+    caps: SessionCapabilities,
 ) -> CompatibilityResult | None:
     """CHECK 6: Context too large for destination."""
     if to_pseudo.context_window and caps.total_tokens > to_pseudo.context_window:
@@ -190,8 +199,10 @@ def _check_context(
 
 
 def _check_tools_downgrade(
-    from_pseudo_name: str, to_pseudo: PseudoModelSchema,
-    caps: SessionCapabilities, config: ProxyConfigSchema,
+    from_pseudo_name: str,
+    to_pseudo: PseudoModelSchema,
+    caps: SessionCapabilities,
+    config: ProxyConfigSchema,
 ) -> CompatibilityResult | None:
     """CHECK 7: Tools downgrade warning."""
     if not caps.has_tools:
@@ -218,7 +229,8 @@ def _check_tools_downgrade(
 
 
 def _check_capacity_loss(
-    from_pseudo_name: str, to_pseudo_name: str,
+    from_pseudo_name: str,
+    to_pseudo_name: str,
 ) -> CompatibilityResult | None:
     """CHECK 8: General capacity loss when switching to budget models."""
     _BUDGET_MODELS: set[str] = {"deep-flash", "flash-lowcost"}
@@ -270,7 +282,9 @@ def validate_switch(
         _check_audio(to_pseudo, caps),
         _check_pdf(to_pseudo, caps),
         _check_video(caps),
-        _check_parallel_tools(from_pseudo_name, to_pseudo_name, to_pseudo, caps, config),
+        _check_parallel_tools(
+            from_pseudo_name, to_pseudo_name, to_pseudo, caps, config
+        ),
         _check_context(to_pseudo, caps),
         _check_tools_downgrade(from_pseudo_name, to_pseudo, caps, config),
         _check_capacity_loss(from_pseudo_name, to_pseudo_name),

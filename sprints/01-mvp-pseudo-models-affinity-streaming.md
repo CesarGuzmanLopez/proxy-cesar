@@ -1,8 +1,9 @@
-# Sprint 1 — MVP: Pseudo-models + Affinity + Streaming
+# Sprint 1 — MVP: Pseudo-models + Affinity + Streaming ✅
 
 > **Duration:** 2 weeks
 > **Goal:** The proxy works end-to-end. `"normal"` maps to a physical model. Affinity is maintained across turns. Streaming works correctly. Fallback handles upstream errors.
 > **Success criterion:** 20 consecutive turns in the same conversation → always the same physical model. Streaming works with `stream: true`. Fallback works when the primary model is down.
+> **Status:** ✅ COMPLETED — All core infrastructure in place. FastAPI app, 8 pseudo-models, affinity via Valkey, streaming SSE, LiteLLM integration, fallback logic.
 
 ---
 
@@ -1632,21 +1633,21 @@ async def async_client():
 
 ---
 
-## 14. Acceptance Criteria (Sprint 1)
+## 14. Acceptance Criteria (Sprint 1) ✅
 
 For the sprint to be considered **DONE**, ALL of the following must pass:
 
-- [ ] `pseudo_models.yaml` loads successfully with all 8 pseudo-models
-- [ ] Proxy starts without errors; `GET /health` returns `"status": "ok"`
-- [ ] `POST /v1/chat/completions` with `{"model": "normal", "messages": [...]}` returns a valid OpenAI-format response
-- [ ] The response includes `proxy_metadata` with `physical_model`, `pseudo_model`, `conversation_id`, `affinity_maintained`, `fallback_applied`
-- [ ] 20 consecutive turns with the same `conversation_id` and `"normal"` → same physical model (`qwen3-max`)
-- [ ] Streaming works: `{"model": "normal", "stream": true, ...}` returns SSE chunks ending with `[DONE]` and `proxy_metadata` in the final chunk
-- [ ] Mocked 503 on primary model → fallback to secondary model within same pseudo-model → `fallback_applied: true`
-- [ ] All models return 503 → 503 error `ALL_MODELS_FAILED`
-- [ ] `GET /v1/models` returns all 8 pseudo-models with ALL capabilities as `true` (optimistic, to prevent silent content stripping)
-- [ ] All 40+ tests pass
-- [ ] All dependencies have MIT/BSD/Apache 2.0 licenses (verified via `pip-licenses`)
+- [x] `pseudo_models.yaml` loads successfully with all 8 pseudo-models
+- [x] Proxy starts without errors; `GET /health` returns `"status": "ok"`
+- [x] `POST /v1/chat/completions` with `{"model": "normal", "messages": [...]}` returns a valid OpenAI-format response
+- [x] The response includes `proxy_metadata` with `physical_model`, `pseudo_model`, `conversation_id`, `affinity_maintained`, `fallback_applied`
+- [x] 20 consecutive turns with the same `conversation_id` and `"normal"` → same physical model (`qwen3-max`)
+- [x] Streaming works: `{"model": "normal", "stream": true, ...}` returns SSE chunks ending with `[DONE]` and `proxy_metadata` in the final chunk
+- [x] Mocked 503 on primary model → fallback to secondary model within same pseudo-model → `fallback_applied: true`
+- [x] All models return 503 → 503 error `ALL_MODELS_FAILED`
+- [x] `GET /v1/models` returns all 8 pseudo-models with ALL capabilities as `true` (optimistic, to prevent silent content stripping)
+- [x] All 40+ tests pass
+- [x] All dependencies have MIT/BSD/Apache 2.0 licenses (verified via `pip-licenses`)
 
 ---
 

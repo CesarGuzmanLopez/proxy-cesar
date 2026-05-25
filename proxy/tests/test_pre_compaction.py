@@ -46,11 +46,20 @@ def mock_litellm_success():
     mock_response.model_dump.return_value = {
         "id": "chatcmpl-mock",
         "object": "chat.completion",
-        "choices": [{"message": {"role": "assistant", "content": "Extracted relevant information."}}],
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Extracted relevant information.",
+                }
+            }
+        ],
         "usage": {"prompt_tokens": 100, "completion_tokens": 50},
     }
 
-    with patch("src.service.compactor.pre_compactor.call_litellm", new_callable=AsyncMock) as mock:
+    with patch(
+        "src.service.compactor.pre_compactor.call_litellm", new_callable=AsyncMock
+    ) as mock:
         mock.return_value = mock_response
         yield mock
 
@@ -58,7 +67,9 @@ def mock_litellm_success():
 @pytest.fixture
 def mock_litellm_failure():
     """Mock call_litellm raising an exception."""
-    with patch("src.service.compactor.pre_compactor.call_litellm", new_callable=AsyncMock) as mock:
+    with patch(
+        "src.service.compactor.pre_compactor.call_litellm", new_callable=AsyncMock
+    ) as mock:
         mock.side_effect = RuntimeError("API unavailable")
         yield mock
 
@@ -91,20 +102,28 @@ def pseudo_model_with_pre():
 
 
 @pytest.mark.asyncio
-async def test_input_below_threshold_no_compaction(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_input_below_threshold_no_compaction(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """Input below threshold → no pre-compaction applied."""
     messages = [{"role": "user", "content": CONTENT_BELOW_THRESHOLD}]
-    modified, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    modified, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     assert meta["applied"] is False
     assert meta["reason"] == "below_threshold"
     assert modified is messages  # Same object, no copy
 
 
 @pytest.mark.asyncio
-async def test_input_above_threshold_triggers_compaction(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_input_above_threshold_triggers_compaction(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """Input above threshold → pre-compaction applied."""
     messages = [{"role": "user", "content": CONTENT_ABOVE_THRESHOLD}]
-    modified, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    modified, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     assert meta["applied"] is True
     assert "original_input_tokens" in meta
     assert "compacted_input_tokens" in meta
@@ -114,7 +133,9 @@ async def test_input_above_threshold_triggers_compaction(mock_litellm_success, c
 
 
 @pytest.mark.asyncio
-async def test_last_user_message_replaced_with_summary(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_last_user_message_replaced_with_summary(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """Last user message is replaced with compacted summary."""
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
@@ -122,7 +143,9 @@ async def test_last_user_message_replaced_with_summary(mock_litellm_success, con
         {"role": "assistant", "content": "First answer."},
         {"role": "user", "content": CONTENT_ABOVE_THRESHOLD},
     ]
-    modified, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    modified, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     assert meta["applied"] is True
     assert "[Pre-compacted input" in modified[-1]["content"]
     assert modified[-1]["role"] == "user"
@@ -133,15 +156,23 @@ async def test_last_user_message_replaced_with_summary(mock_litellm_success, con
 
 
 @pytest.mark.asyncio
-async def test_system_and_tool_messages_not_modified(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_system_and_tool_messages_not_modified(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """System messages and tool history are NOT modified."""
     messages = [
         {"role": "system", "content": "Original system prompt."},
         {"role": "user", "content": CONTENT_ABOVE_THRESHOLD},
-        {"role": "assistant", "content": "Response with tool_calls", "tool_calls": [{"id": "call_1"}]},
+        {
+            "role": "assistant",
+            "content": "Response with tool_calls",
+            "tool_calls": [{"id": "call_1"}],
+        },
         {"role": "tool", "tool_call_id": "call_1", "content": "Tool result"},
     ]
-    modified, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    modified, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     assert meta["applied"] is True
     # Only the last user message (index 1) should be modified
     assert modified[0]["role"] == "system"
@@ -152,10 +183,14 @@ async def test_system_and_tool_messages_not_modified(mock_litellm_success, confi
 
 
 @pytest.mark.asyncio
-async def test_compaction_metadata_in_response(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_compaction_metadata_in_response(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """Response includes all compaction metadata fields."""
     messages = [{"role": "user", "content": CONTENT_ABOVE_THRESHOLD}]
-    _, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    _, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     assert meta["applied"] is True
     assert meta["original_input_tokens"] > 0
     assert meta["compacted_input_tokens"] > 0
@@ -165,10 +200,14 @@ async def test_compaction_metadata_in_response(mock_litellm_success, config_with
 
 
 @pytest.mark.asyncio
-async def test_prompt_includes_technical_details(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_prompt_includes_technical_details(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """Pre-compaction prompt includes all technical details from the input."""
     messages = [{"role": "user", "content": CONTENT_ABOVE_THRESHOLD}]
-    with patch("src.service.compactor.pre_compactor.build_pre_compaction_prompt") as mock_build:
+    with patch(
+        "src.service.compactor.pre_compactor.build_pre_compaction_prompt"
+    ) as mock_build:
         mock_build.return_value = "mock prompt"
         await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
         # Verify the prompt was built with the actual user content
@@ -178,10 +217,14 @@ async def test_prompt_includes_technical_details(mock_litellm_success, config_wi
 
 
 @pytest.mark.asyncio
-async def test_compactor_failure_uses_original_input(mock_litellm_failure, config_with_compactor, pseudo_model_with_pre):
+async def test_compactor_failure_uses_original_input(
+    mock_litellm_failure, config_with_compactor, pseudo_model_with_pre
+):
     """Compactor fails → original input used with warning."""
     messages = [{"role": "user", "content": CONTENT_ABOVE_THRESHOLD}]
-    modified, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    modified, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     assert meta["applied"] is False
     assert "compactor_failed" in meta["reason"]
     assert "warning" in meta
@@ -231,23 +274,31 @@ async def test_no_compactor_physical_models(config_with_compactor):
 
 
 @pytest.mark.asyncio
-async def test_no_user_message_no_compaction(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_no_user_message_no_compaction(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """No user message in input → no compaction applied."""
     # threshold is 32000, and we exceed it with a system message (no user role)
     messages = [{"role": "system", "content": CONTENT_SYSTEM_LONG}]
-    modified, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    modified, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     assert meta["applied"] is False
     assert meta["reason"] == "no_user_message"
     assert modified is messages
 
 
 @pytest.mark.asyncio
-async def test_very_large_input_handled(mock_litellm_success, config_with_compactor, pseudo_model_with_pre):
+async def test_very_large_input_handled(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_pre
+):
     """Very large input (200K tokens) → compactor handles it without error."""
     # 2M chars → well beyond any threshold
     very_large = _make_content(2_000_000)
     messages = [{"role": "user", "content": very_large}]
-    modified, meta = await pre_compact_input(messages, pseudo_model_with_pre, config_with_compactor)
+    modified, meta = await pre_compact_input(
+        messages, pseudo_model_with_pre, config_with_compactor
+    )
     # Should either apply compaction or fail gracefully
     assert "applied" in meta
     if meta["applied"]:

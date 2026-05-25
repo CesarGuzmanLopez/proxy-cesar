@@ -1,0 +1,17 @@
+[Unit]
+Description=Proxy Cesar arq Worker (Async Compaction)
+After=network.target valkey.service
+
+[Service]
+Type=simple
+User=proxy
+WorkingDirectory=/opt/proxy-cesar
+EnvironmentFile=/opt/proxy-cesar/.env
+ExecStart=/opt/proxy-cesar/.venv/bin/arq src.tasks.arq_app.WorkerSettings
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

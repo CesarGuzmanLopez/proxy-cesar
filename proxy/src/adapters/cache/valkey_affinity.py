@@ -32,8 +32,10 @@ class ValkeyAffinityAdapter:
 
 async def setup_valkey(settings: Settings) -> valkey_async.Valkey:
     """Create and verify Valkey client. Called during FastAPI lifespan startup."""
-    client = valkey_async.from_url(
-        settings.valkey_url, decode_responses=True
-    )
-    await client.ping()
+    client = valkey_async.from_url(settings.valkey_url, decode_responses=True)
+    try:
+        await client.ping()
+    except Exception:
+        await client.aclose()
+        raise  # propagate — FastAPI lifespan will handle it
     return client

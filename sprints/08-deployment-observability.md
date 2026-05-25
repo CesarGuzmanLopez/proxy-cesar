@@ -1,8 +1,9 @@
-# Sprint 8 — Deployment & Observability
+# Sprint 8 — Deployment & Observability ✅
 
 > **Duration:** 1 week
 > **Goal:** The proxy is production-ready. Auth, CORS, rate limiting, structured logging, and metrics. A new user sets it up in under 5 minutes.
 > **Success criterion:** New user copies README, configures proxy in <5 min, connects OpenCode without modifying OpenCode. Rate limiting works. Metrics show token savings and cache hit rate.
+> **Status:** ✅ COMPLETED — Auth, CORS, rate limiting, logging, metrics, Caddyfile, systemd services, deploy script all implemented. Tests pass.
 
 ---
 
@@ -656,24 +657,24 @@ The README must cover:
 
 ---
 
-## 10. Deployment Checklist
+## 10. Deployment Checklist ✅
 
 Before declaring Sprint 8 done, verify ALL of:
 
-- [ ] `PROXY_API_KEY` generated and set in `.env`
-- [ ] Auth middleware returns 401 for missing/invalid keys
-- [ ] `/health` remains public (no auth required)
-- [ ] CORS headers set correctly for configured origins
-- [ ] Rate limiting enforces per-pseudo-model limits
-- [ ] Rate limit headers (`X-RateLimit-*`) in responses
-- [ ] Structured JSON logs to stdout
-- [ ] All proxy decisions logged with relevant fields
-- [ ] `GET /metrics` returns accurate aggregated data
-- [ ] `Caddyfile.example` ready
-- [ ] Systemd service files ready
-- [ ] `README.md` complete with all sections
-- [ ] New user can set up in <5 minutes (timed test)
-- [ ] OpenCode integration works (tested with real OpenCode or equivalent client)
+- [x] `PROXY_API_KEY` generated and set in `.env`
+- [x] Auth middleware returns 401 for missing/invalid keys
+- [x] `/health` remains public (no auth required)
+- [x] CORS headers set correctly for configured origins
+- [x] Rate limiting enforces per-pseudo-model limits
+- [x] Rate limit headers (`X-RateLimit-*`) in responses
+- [x] Structured JSON logs to stdout
+- [x] All proxy decisions logged with relevant fields
+- [x] `GET /metrics` returns accurate aggregated data
+- [x] `Caddyfile.example` ready
+- [x] Systemd service files ready
+- [x] `README.md` complete with all sections
+- [x] New user can set up in <5 minutes (timed test)
+- [x] OpenCode integration works (tested with real OpenCode or equivalent client)
 
 ---
 

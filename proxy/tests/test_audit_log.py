@@ -24,7 +24,9 @@ def mock_db():
     db.close = AsyncMock()
     scalar_result = MagicMock()
     scalar_result.scalar = MagicMock(return_value=0)
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
     return db
 
@@ -54,7 +56,9 @@ async def test_audit_log_creation_event():
     db.get = AsyncMock(return_value=conv)
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
 
     db_session_factory = MagicMock(return_value=db)
@@ -90,7 +94,9 @@ async def test_audit_log_pseudo_model_switch():
     turn.created_at.isoformat.return_value = "2026-05-24T10:30:00"
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
 
     db_session_factory = MagicMock(return_value=db)
@@ -128,7 +134,9 @@ async def test_audit_log_fallback_event():
     turn.created_at.isoformat.return_value = "2026-05-24T10:15:00"
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
 
     db_session_factory = MagicMock(return_value=db)
@@ -136,9 +144,13 @@ async def test_audit_log_fallback_event():
 
     result = await audit_log(str(conv_id), request)
 
-    fallback_events = [e for e in result["events"] if e["event_type"] == "fallback_applied"]
+    fallback_events = [
+        e for e in result["events"] if e["event_type"] == "fallback_applied"
+    ]
     assert len(fallback_events) == 1
-    assert fallback_events[0]["details"]["reason"] == "ServiceUnavailableError: qwen3-max"
+    assert (
+        fallback_events[0]["details"]["reason"] == "ServiceUnavailableError: qwen3-max"
+    )
 
 
 @pytest.mark.asyncio
@@ -165,11 +177,15 @@ async def test_audit_log_compaction_event():
     snap.compactor_model = "gemini-3.5-flash"
 
     scalar_result_turns = MagicMock()
-    scalar_result_turns.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result_turns.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     db.execute = AsyncMock(return_value=scalar_result_turns)
 
     scalar_result_snaps = MagicMock()
-    scalar_result_snaps.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[snap])))
+    scalar_result_snaps.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[snap]))
+    )
     # Return snaps on second call, turns on first
     db.execute = AsyncMock(side_effect=[scalar_result_turns, scalar_result_snaps])
 
@@ -178,7 +194,9 @@ async def test_audit_log_compaction_event():
 
     result = await audit_log(str(conv_id), request)
 
-    compaction_events = [e for e in result["events"] if e["event_type"] == "compaction_explicit"]
+    compaction_events = [
+        e for e in result["events"] if e["event_type"] == "compaction_explicit"
+    ]
     assert len(compaction_events) == 1
     assert compaction_events[0]["details"]["tokens_before"] == 1200000
     assert compaction_events[0]["details"]["tokens_after"] == 10240
@@ -215,7 +233,9 @@ async def test_audit_log_events_chronological():
     turn1.created_at.isoformat.return_value = "2026-05-24T10:02:00"
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
 
     db_session_factory = MagicMock(return_value=db)

@@ -20,13 +20,38 @@ from src.service.tools_edge_cases import (
 # Streaming partial tool calls
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_streaming_complete_tool_call():
     """Streaming: complete tool call → stored correctly (not incomplete)."""
 
     async def _stream():
-        yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "search", "arguments": '{"que'}}]}}]}
-        yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": 'ry": "test"}'}}]}}]}
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "search", "arguments": '{"que'},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "function": {"arguments": 'ry": "test"}'}}
+                        ]
+                    }
+                }
+            ]
+        }
 
     calls, incomplete = await accumulate_streaming_tool_calls(_stream())
     assert incomplete is False
@@ -39,8 +64,26 @@ async def test_streaming_complete_tool_call():
 @pytest.mark.asyncio
 async def test_streaming_partial_tool_call_incomplete():
     """Streaming: partial tool call → marked incomplete."""
+
     async def _stream():
-        yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "search", "arguments": '{"incomplete'}}]}}]}
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {
+                                    "name": "search",
+                                    "arguments": '{"incomplete',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
 
     calls, incomplete = await accumulate_streaming_tool_calls(_stream())
     assert incomplete is True
@@ -50,8 +93,23 @@ async def test_streaming_partial_tool_call_incomplete():
 @pytest.mark.asyncio
 async def test_streaming_exception_marked_incomplete():
     """Streaming: exception during iteration → marked incomplete."""
+
     async def _broken_stream():
-        yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "search", "arguments": "{}"}}]}}]}
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "search", "arguments": "{}"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
         raise RuntimeError("Connection lost")
 
     calls, incomplete = await accumulate_streaming_tool_calls(_broken_stream())
@@ -61,6 +119,7 @@ async def test_streaming_exception_marked_incomplete():
 @pytest.mark.asyncio
 async def test_streaming_no_tool_calls():
     """Streaming: no tool calls in stream → empty, not incomplete."""
+
     async def _stream():
         yield {"choices": [{"delta": {"content": "Hello"}}]}
 
@@ -72,9 +131,38 @@ async def test_streaming_no_tool_calls():
 @pytest.mark.asyncio
 async def test_streaming_multiple_parallel():
     """Streaming: multiple parallel tool calls accumulated."""
+
     async def _stream():
-        yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_a", "function": {"name": "search", "arguments": "{}"}}]}}]}
-        yield {"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "call_b", "function": {"name": "read", "arguments": "{}"}}]}}]}
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_a",
+                                "function": {"name": "search", "arguments": "{}"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 1,
+                                "id": "call_b",
+                                "function": {"name": "read", "arguments": "{}"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
 
     calls, incomplete = await accumulate_streaming_tool_calls(_stream())
     assert len(calls) == 2
@@ -85,6 +173,7 @@ async def test_streaming_multiple_parallel():
 # ---------------------------------------------------------------------------
 # Mixed content (text + tool calls)
 # ---------------------------------------------------------------------------
+
 
 def test_mixed_content_detected():
     """Message with text + tool_calls → mixed content."""
@@ -116,6 +205,7 @@ def test_mixed_content_tool_only():
 # Tool error result
 # ---------------------------------------------------------------------------
 
+
 def test_truncate_tool_result_normal():
     """Normal-sized tool result → not truncated."""
     content = "x" * 100
@@ -142,16 +232,19 @@ def test_truncate_tool_result_boundary():
 # Thinking blocks extraction
 # ---------------------------------------------------------------------------
 
+
 def test_thinking_deepseek():
     """Extract reasoning_content from DeepSeek response."""
     response = {
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": "Final answer",
-                "reasoning_content": "Step-by-step reasoning...",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Final answer",
+                    "reasoning_content": "Step-by-step reasoning...",
+                }
             }
-        }]
+        ]
     }
     thinking = extract_thinking_content(response, "deepseek")
     assert thinking == "Step-by-step reasoning..."
@@ -160,15 +253,17 @@ def test_thinking_deepseek():
 def test_thinking_anthropic():
     """Extract thinking block from Claude response."""
     response = {
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {"type": "thinking", "thinking": "Claude is thinking..."},
-                    {"type": "text", "text": "Final answer"},
-                ],
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "Claude is thinking..."},
+                        {"type": "text", "text": "Final answer"},
+                    ],
+                }
             }
-        }]
+        ]
     }
     thinking = extract_thinking_content(response, "anthropic")
     assert thinking == "Claude is thinking..."
@@ -177,16 +272,18 @@ def test_thinking_anthropic():
 def test_thinking_gemini():
     """Extract thought parts from Gemini response."""
     response = {
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {"type": "thought", "text": "Step 1: analyze"},
-                    {"type": "thought", "text": "Step 2: solve"},
-                    {"type": "text", "text": "Final answer"},
-                ],
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thought", "text": "Step 1: analyze"},
+                        {"type": "thought", "text": "Step 2: solve"},
+                        {"type": "text", "text": "Final answer"},
+                    ],
+                }
             }
-        }]
+        ]
     }
     thinking = extract_thinking_content(response, "google")
     assert thinking == "Step 1: analyze\nStep 2: solve"
@@ -195,9 +292,11 @@ def test_thinking_gemini():
 def test_thinking_openai():
     """Extract reasoning_tokens from OpenAI o-series response."""
     response = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "Answer"},
-        }],
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "Answer"},
+            }
+        ],
         "usage": {"reasoning_tokens": 500},
     }
     thinking = extract_thinking_content(response, "openai")
@@ -209,9 +308,11 @@ def test_thinking_openai():
 def test_thinking_not_present():
     """No thinking content → None."""
     response = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "Simple answer"},
-        }]
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "Simple answer"},
+            }
+        ]
     }
     assert extract_thinking_content(response, "deepseek") is None
     assert extract_thinking_content(response, "anthropic") is None
@@ -221,15 +322,18 @@ def test_thinking_not_present():
 # enforce_tool_choice
 # ---------------------------------------------------------------------------
 
+
 def test_tool_choice_required_respected():
     """tool_choice='required' with tool calls → OK."""
     response = {
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "tool_calls": [{"id": "call_1", "function": {"arguments": "{}"}}],
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{"id": "call_1", "function": {"arguments": "{}"}}],
+                }
             }
-        }]
+        ]
     }
     assert enforce_tool_choice(response, "required") is True
 
@@ -237,9 +341,11 @@ def test_tool_choice_required_respected():
 def test_tool_choice_required_ignored():
     """tool_choice='required' without tool calls → False."""
     response = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "I refuse to call tools"},
-        }]
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "I refuse to call tools"},
+            }
+        ]
     }
     assert enforce_tool_choice(response, "required") is False
 
@@ -247,9 +353,11 @@ def test_tool_choice_required_ignored():
 def test_tool_choice_not_required():
     """tool_choice is not 'required' → always True."""
     response = {
-        "choices": [{
-            "message": {"role": "assistant", "content": "OK"},
-        }]
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "OK"},
+            }
+        ]
     }
     assert enforce_tool_choice(response, None) is True
     assert enforce_tool_choice(response, "auto") is True

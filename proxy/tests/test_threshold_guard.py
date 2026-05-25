@@ -24,7 +24,9 @@ def test_input_above_threshold_without_pre_compaction():
 
 def test_input_above_threshold_with_pre_compaction():
     """Input above threshold with pre_compaction → passes (deferred to Sprint 4)."""
-    result = check_input_threshold("pensamiento-profundo-caro", 32000, 50000, pre_compaction_enabled=True)
+    result = check_input_threshold(
+        "pensamiento-profundo-caro", 32000, 50000, pre_compaction_enabled=True
+    )
     assert result.success is True
 
 

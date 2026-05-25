@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./proxy.db"
     valkey_url: str = "valkey://localhost:6379"
 
+    # Sprint 8: Auth
+    proxy_api_key: str = ""
+    """Bearer token for API access. Empty = dev mode (no auth)."""
+
+    # Sprint 8: CORS
+    cors_origins: str = "http://localhost:3000"
+    """Comma-separated list of allowed origins."""
+
     # Provider API keys — passed to LiteLLM via os.environ
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""

@@ -53,7 +53,10 @@ COMPLEX_TOOL = [
                     "query": {"type": "string", "description": "Search query"},
                     "path": {"type": "string", "description": "Base path to search in"},
                     "max_results": {"type": "integer", "description": "Max results"},
-                    "include_pattern": {"type": "string", "description": "Glob pattern"},
+                    "include_pattern": {
+                        "type": "string",
+                        "description": "Glob pattern",
+                    },
                 },
                 "required": ["query", "path"],
                 "additionalProperties": False,
@@ -63,7 +66,10 @@ COMPLEX_TOOL = [
 ]
 
 USER_MESSAGE = {"role": "user", "content": "What is the weather in Paris today?"}
-COMPLEX_MESSAGE = {"role": "user", "content": "Search for database connections in src/ directory, max 5 results."}
+COMPLEX_MESSAGE = {
+    "role": "user",
+    "content": "Search for database connections in src/ directory, max 5 results.",
+}
 
 TOOL_RESULT_MESSAGE = {
     "role": "tool",
@@ -92,6 +98,7 @@ def _check_tool_call(response: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 # Integration tests (skip by default)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 @pytest.mark.skip(reason="Requires API keys. Run with --run-integration")
@@ -124,8 +131,30 @@ async def test_deepseek_v4_pro_complex_schema():
 async def test_deepseek_v4_pro_parallel_tools():
     """DeepSeek V4 Pro: parallel tool calls."""
     tools = [
-        {"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}},
-        {"type": "function", "function": {"name": "get_time", "description": "Get time", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}},
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "Get time",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            },
+        },
     ]
     response = await call_litellm(
         model="deepseek/deepseek-chat",
@@ -146,7 +175,9 @@ async def test_deepseek_v4_pro_tool_choice_required():
         tools=SIMPLE_TOOL,
         tool_choice="required",
     )
-    assert enforce_tool_choice(response, "required"), "Model ignored tool_choice=required"
+    assert enforce_tool_choice(response, "required"), (
+        "Model ignored tool_choice=required"
+    )
 
 
 @pytest.mark.integration
@@ -222,7 +253,11 @@ async def test_deepseek_v4_pro_tool_result_roundtrip():
     }
     followup = await call_litellm(
         model="deepseek/deepseek-chat",
-        messages=[USER_MESSAGE, {"role": "assistant", "content": None, "tool_calls": [tc]}, result_msg],
+        messages=[
+            USER_MESSAGE,
+            {"role": "assistant", "content": None, "tool_calls": [tc]},
+            result_msg,
+        ],
         tools=SIMPLE_TOOL,
     )
     choices = followup.get("choices", [])

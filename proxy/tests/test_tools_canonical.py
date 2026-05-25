@@ -16,6 +16,7 @@ from src.service.tools_canonical import (
 # determine_tools_level
 # ---------------------------------------------------------------------------
 
+
 def test_no_tool_calls_level_zero():
     """No tool calls → tools_level_used: 0."""
     assert determine_tools_level(None) == 0
@@ -54,6 +55,7 @@ def test_strict_mode_tool_level_parallel():
 # determine_tool_level_for_turn
 # ---------------------------------------------------------------------------
 
+
 def test_turn_incomplete_caps_at_basic():
     """Tools incomplete with calls → capped at BASIC (1)."""
     calls = [{"function": {"arguments": '{"a":1, "b":2}'}}]
@@ -68,6 +70,7 @@ def test_turn_incomplete_no_calls_none():
 # ---------------------------------------------------------------------------
 # validate_tool_call_ids
 # ---------------------------------------------------------------------------
+
 
 def test_valid_tool_call_ids_pass():
     """Valid tool calls with unique IDs → passes."""
@@ -115,6 +118,7 @@ def test_empty_arguments_raises():
 # validate_arguments_json
 # ---------------------------------------------------------------------------
 
+
 def test_validate_valid_json():
     """Valid JSON arguments string → True."""
     assert validate_arguments_json('{"key": "value"}') is True
@@ -134,6 +138,7 @@ def test_validate_empty_json():
 # extract_tool_calls_from_response
 # ---------------------------------------------------------------------------
 
+
 def test_extract_tool_calls_from_response():
     """Extract tool calls from a standard LiteLLM response."""
     response = {
@@ -143,7 +148,11 @@ def test_extract_tool_calls_from_response():
                     "role": "assistant",
                     "content": "Searching...",
                     "tool_calls": [
-                        {"id": "call_1", "type": "function", "function": {"name": "search", "arguments": "{}"}},
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "search", "arguments": "{}"},
+                        },
                     ],
                 }
             }

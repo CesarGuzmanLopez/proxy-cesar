@@ -111,20 +111,20 @@ POST /v1/chat/completions
 
 ## 2. Stack 100% libre
 
-| Componente | Paquete | Licencia | Propósito |
-|---|---|---|---|
-| API Gateway | FastAPI | MIT | Endpoints REST, async nativo, OpenAPI auto |
-| Router LLM | LiteLLM | MIT | Abstracción multi-proveedor, fallbacks, cost tracking |
-| Persistencia | PostgreSQL + asyncpg | PostgreSQL / Apache 2.0 | Historial, snapshots, flags de capability |
-| Caché/Afinidad | Valkey | BSD | Afinidad de modelo físico, rate limiting |
-| Tareas asíncronas | Celery + Valkey broker | BSD | Compactación, degradación, normalización |
-| Validación | Pydantic v2 | MIT | Schemas de pseudo-modelos, tools, capabilities |
-| ORM | SQLAlchemy 2.0 + Alembic | MIT | Migraciones, queries async |
-| HTTP Client | httpx | BSD | Llamadas a LiteLLM y proveedores |
-| Token counting | tiktoken | MIT | Conteo de tokens antes de enviar |
-| Config | PyYAML | MIT | Definición de pseudo-modelos |
-| Procesamiento imagen | Pillow | HPND (BSD-like) | Pre-procesamiento de imágenes |
-| CORS / TLS | Caddy (reverse proxy) | Apache 2.0 | HTTPS en producción |
+| Componente           | Paquete                  | Licencia                | Propósito                                             |
+| -------------------- | ------------------------ | ----------------------- | ----------------------------------------------------- |
+| API Gateway          | FastAPI                  | MIT                     | Endpoints REST, async nativo, OpenAPI auto            |
+| Router LLM           | LiteLLM                  | MIT                     | Abstracción multi-proveedor, fallbacks, cost tracking |
+| Persistencia         | PostgreSQL + asyncpg     | PostgreSQL / Apache 2.0 | Historial, snapshots, flags de capability             |
+| Caché/Afinidad       | Valkey                   | BSD                     | Afinidad de modelo físico, rate limiting              |
+| Tareas asíncronas    | Celery + Valkey broker   | BSD                     | Compactación, degradación, normalización              |
+| Validación           | Pydantic v2              | MIT                     | Schemas de pseudo-modelos, tools, capabilities        |
+| ORM                  | SQLAlchemy 2.0 + Alembic | MIT                     | Migraciones, queries async                            |
+| HTTP Client          | httpx                    | BSD                     | Llamadas a LiteLLM y proveedores                      |
+| Token counting       | tiktoken                 | MIT                     | Conteo de tokens antes de enviar                      |
+| Config               | PyYAML                   | MIT                     | Definición de pseudo-modelos                          |
+| Procesamiento imagen | Pillow                   | HPND (BSD-like)         | Pre-procesamiento de imágenes                         |
+| CORS / TLS           | Caddy (reverse proxy)    | Apache 2.0              | HTTPS en producción                                   |
 
 **Nada de dependencias propietarias. Todo auditado y de código abierto.**
 
@@ -230,6 +230,7 @@ pensamiento-profundo-caro:
 ```
 
 **Notas de diseño:**
+
 - Prioridad: GLM 5.1 → DeepSeek V4 Pro (fallback con tools strict y parallel)
 - Router LLM activo: si la tarea es simple, `proxy_metadata` sugiere bajar a `tareas-avanzadas`. El usuario decide.
 - Pre-compaction activo: inputs >32K tokens se resumen con `deep-flash` antes de enviar al modelo caro
@@ -272,7 +273,7 @@ tareas-avanzadas:
       note: "Modo thinking. Razonamiento explícito."
     - provider: minimax
       model: minimax-m2.5
-      openai_tools_compatible: true  # No confiable con tools
+      openai_tools_compatible: true # No confiable con tools
       tools_strict: false
       parallel_tools: false
       vision: false
@@ -281,6 +282,7 @@ tareas-avanzadas:
 ```
 
 **Notas de diseño:**
+
 - MiniMax M2.5 está en la lista pero tiene `openai_tools_compatible: true`. Cuando la conversación usa tools, el proxy lo excluye automáticamente del pool. Solo entra como fallback en conversaciones sin tools.
 - DeepSeek V4 Pro soporta `strict: true` → schemas de tools garantizados.
 
@@ -296,7 +298,7 @@ avanzada-vision:
   input_token_threshold: 32000
   context_window: 32768
   continuous_compaction:
-    enabled: false   # las imágenes no se compactan semánticamente
+    enabled: false # las imágenes no se compactan semánticamente
   pre_compaction:
     enabled: false
   router_llm:
@@ -306,7 +308,7 @@ avanzada-vision:
   physical_models:
     - provider: google
       model: gemini-3.5-flash
-      openai_tools_compatible: true   # LiteLLM traduce
+      openai_tools_compatible: true # LiteLLM traduce
       tools_strict: false
       parallel_tools: false
       vision: true
@@ -380,7 +382,7 @@ deep-flash:
   physical_models:
     - provider: zhipu
       model: glm-4.5-flash
-      openai_tools_compatible: true   # básico pero funcional para tools simples
+      openai_tools_compatible: true # básico pero funcional para tools simples
       tools_strict: false
       parallel_tools: false
       vision: false
@@ -401,6 +403,7 @@ deep-flash:
 ```
 
 **Notas de diseño:**
+
 - Todos los modelos tienen `openai_tools_compatible: true` pero con niveles de confiabilidad distintos.
 - Para tools en este pseudo-modelo: el proxy informará en `proxy_metadata` que el nivel de soporte es básico (GLM y Groq) o completo (DeepSeek flash). El usuario decide si eso es suficiente para su caso.
 
@@ -439,7 +442,7 @@ flash-lowcost:
       vision: false
     - provider: ollama
       model: ollama/llama3.2
-      openai_tools_compatible: true   # local, sin soporte confiable de tools
+      openai_tools_compatible: true # local, sin soporte confiable de tools
       tools_strict: false
       parallel_tools: false
       vision: false
@@ -468,7 +471,7 @@ flash-vision:
   physical_models:
     - provider: google
       model: gemini-3.5-flash
-      openai_tools_compatible: true   # LiteLLM traduce
+      openai_tools_compatible: true # LiteLLM traduce
       tools_strict: false
       parallel_tools: false
       vision: true
@@ -482,7 +485,7 @@ flash-vision:
   fallback_strategy: sequential
 ```
 
-### 4.8 `compactador` *(operación, no conversacional)*
+### 4.8 `compactador` _(operación, no conversacional)_
 
 ```yaml
 compactador:
@@ -501,15 +504,15 @@ compactador:
   router_llm:
     enabled: false
   image_handling:
-    on_downgrade: "auto_describe"   # Si hay imágenes en el historial, las describe
+    on_downgrade: "auto_describe" # Si hay imágenes en el historial, las describe
   physical_models:
     - provider: google
       model: gemini-3.5-flash
       context_window: 1000000
-      openai_tools_compatible: true   # no necesita tools para compactar
-      vision: true                      # puede describir imágenes del historial
+      openai_tools_compatible: true # no necesita tools para compactar
+      vision: true # puede describir imágenes del historial
     - provider: anthropic
-      model: claude-haiku-4-5-20251001
+      model: claude-haiku-4-5-20251001 # el unico de Antrhopic que se usara en este sistema en modo normal y compactación, no usar otros modelos de Anthropic
       context_window: 200000
       openai_tools_compatible: true
       vision: false
@@ -518,7 +521,7 @@ compactador:
       context_window: 128000
       openai_tools_compatible: true
       vision: false
-  fallback_strategy: by_context_window   # selecciona el que cubre el historial dado
+  fallback_strategy: by_context_window # selecciona el que cubre el historial dado
 ```
 
 ---
@@ -593,20 +596,20 @@ Estos fallos no se mitigan con reintentos. Se evitan no usando esos modelos cuan
 
 ### 6.3 Tabla de compatibilidad por modelo físico
 
-| Modelo | `openai_tools_compatible` | `tools_strict` | `parallel_tools` | Notas |
-|---|---|---|---|---|
-| GPT-5.4 | ✅ nativo | ✅ | ✅ | No usado en pseudo-modelos (costo extremo). Solo referencia de formato. |
-| Gemini 3.5 Flash | ✅ (vía LiteLLM) | ✗ | Parcial | LiteLLM traduce. Parallel limitado |
-| DeepSeek V4 Pro | ✅ nativo | ✅ | ✅ | OpenAI-compatible, strict soportado |
-| DeepSeek V4 Flash | ✅ nativo | ✗ | ✅ | Compatible, parallel soportado |
-| Qwen3 Max | ✅ nativo | ✗ | ✗ | Compatible, parallel no confiable |
-| GLM-5.1 | ✅ nativo | ✗ | ✗ | Flagship Zhipu |
-| GLM-4.5-Flash | ✅ nativo | ✗ | ✗ | Básico. Solo tools simples y bien definidas |
-| GPT-OSS 20B (Groq) | ✅ nativo | ✗ | ✗ | Compatible, parallel no confiable |
-| MiniMax M2.5 | ✅ nativo | ✗ | ✗ | Básico. Schemas simples |
-| Qwen3.5 Plus | ✅ nativo | ✗ | ✗ | Básico. Úsese con schemas simples |
-| LLaVA / Ollama local | ❌ | ✗ | ✗ | Sin soporte confiable |
-| Llama3.2 local | ❌ | ✗ | ✗ | Sin soporte confiable |
+| Modelo               | `openai_tools_compatible` | `tools_strict` | `parallel_tools` | Notas                                                                   |
+| -------------------- | ------------------------- | -------------- | ---------------- | ----------------------------------------------------------------------- |
+| GPT-5.4              | ✅ nativo                 | ✅             | ✅               | No usado en pseudo-modelos (costo extremo). Solo referencia de formato. |
+| Gemini 3.5 Flash     | ✅ (vía LiteLLM)          | ✗              | Parcial          | LiteLLM traduce. Parallel limitado                                      |
+| DeepSeek V4 Pro      | ✅ nativo                 | ✅             | ✅               | OpenAI-compatible, strict soportado                                     |
+| DeepSeek V4 Flash    | ✅ nativo                 | ✗              | ✅               | Compatible, parallel soportado                                          |
+| Qwen3 Max            | ✅ nativo                 | ✗              | ✗                | Compatible, parallel no confiable                                       |
+| GLM-5.1              | ✅ nativo                 | ✗              | ✗                | Flagship Zhipu                                                          |
+| GLM-4.5-Flash        | ✅ nativo                 | ✗              | ✗                | Básico. Solo tools simples y bien definidas                             |
+| GPT-OSS 20B (Groq)   | ✅ nativo                 | ✗              | ✗                | Compatible, parallel no confiable                                       |
+| MiniMax M2.5         | ✅ nativo                 | ✗              | ✗                | Básico. Schemas simples                                                 |
+| Qwen3.5 Plus         | ✅ nativo                 | ✗              | ✗                | Básico. Úsese con schemas simples                                       |
+| LLaVA / Ollama local | ❌                        | ✗              | ✗                | Sin soporte confiable                                                   |
+| Llama3.2 local       | ❌                        | ✗              | ✗                | Sin soporte confiable                                                   |
 
 ### 6.4 Filtrado de modelos por tools
 
@@ -628,6 +631,7 @@ def get_eligible_models(pseudo_model: PseudoModel, session_caps: Capabilities) -
 ```
 
 Si el modelo fijado por afinidad no soporta parallel tools y la conversación las requiere, el proxy:
+
 1. Intenta el siguiente modelo de la lista con `parallel_tools: true`
 2. Actualiza la afinidad al nuevo modelo
 3. Informa en `proxy_metadata`: `{"tools_filter_applied": true, "reason": "parallel_tools_required"}`
@@ -637,6 +641,7 @@ Si el modelo fijado por afinidad no soporta parallel tools y la conversación la
 Todo el historial de tools se almacena en formato OpenAI canónico. LiteLLM lo traduce al formato del proveedor en cada request, y normaliza la respuesta de vuelta a OpenAI al recibirla.
 
 **Tool definition (almacenada como fue enviada por el cliente):**
+
 ```json
 {
   "type": "function",
@@ -647,7 +652,7 @@ Todo el historial de tools se almacena en formato OpenAI canónico. LiteLLM lo t
       "type": "object",
       "properties": {
         "query": { "type": "string" },
-        "path":  { "type": "string" }
+        "path": { "type": "string" }
       },
       "required": ["query"]
     },
@@ -657,6 +662,7 @@ Todo el historial de tools se almacena en formato OpenAI canónico. LiteLLM lo t
 ```
 
 **Assistant turn con tool calls (formato canónico almacenado):**
+
 ```json
 {
   "role": "assistant",
@@ -675,6 +681,7 @@ Todo el historial de tools se almacena en formato OpenAI canónico. LiteLLM lo t
 ```
 
 **Tool result (formato canónico almacenado):**
+
 ```json
 {
   "role": "tool",
@@ -690,26 +697,26 @@ El `tool_call_id` se usa **exactamente como lo devuelve el modelo vía LiteLLM**
 
 El proxy no implementa lógica de traducción de tools. LiteLLM la hace:
 
-| Dirección | Qué traduce LiteLLM |
-|---|---|
-| OpenAI → Anthropic | `parameters` → `input_schema`; `tool_calls[]` → `content[{type:"tool_use"}]`; `role:"tool"` → `role:"user"` con `tool_result` |
-| Anthropic → OpenAI | `content[{type:"tool_use"}]` → `tool_calls[]`; `input` (object) → `arguments` (string JSON) |
-| OpenAI → Gemini | Wrap en `functionDeclarations[]`; JSON Schema → OpenAPI 3.0 |
-| Gemini → OpenAI | `parts[{functionCall}]` → `tool_calls[]`; `functionCall.args` → `arguments` |
-| OpenAI → DeepSeek / Groq | Pass-through (hablan OpenAI nativo) |
+| Dirección                | Qué traduce LiteLLM                                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI → Anthropic       | `parameters` → `input_schema`; `tool_calls[]` → `content[{type:"tool_use"}]`; `role:"tool"` → `role:"user"` con `tool_result` |
+| Anthropic → OpenAI       | `content[{type:"tool_use"}]` → `tool_calls[]`; `input` (object) → `arguments` (string JSON)                                   |
+| OpenAI → Gemini          | Wrap en `functionDeclarations[]`; JSON Schema → OpenAPI 3.0                                                                   |
+| Gemini → OpenAI          | `parts[{functionCall}]` → `tool_calls[]`; `functionCall.args` → `arguments`                                                   |
+| OpenAI → DeepSeek / Groq | Pass-through (hablan OpenAI nativo)                                                                                           |
 
 **El proxy no escribe ni una línea de código de traducción de tools.** Solo verifica `openai_tools_compatible` antes de enviar.
 
 ### 6.7 Edge cases en tools
 
-| Edge case | Comportamiento del proxy |
-|---|---|
-| Streaming parcial de tool calls | Acumular todos los chunks antes de guardar en DB. Si el stream se interrumpe, descartar tool call incompleta y notificar con `incomplete_tool_call: true` en proxy_metadata |
-| Texto + tool calls en el mismo turno | Almacenar `content` textual y `tool_calls` como campos separados del mismo objeto assistant |
-| Tool call con error del cliente | Retornar `tool_result` con `content: "ERROR: <descripción>"`. El modelo decide si reintentar |
-| Resultado de tool >8K tokens | Truncar con marcador `[...truncado a 8K tokens...]`. El resultado completo se guarda en log |
-| Thinking/reasoning blocks con tools | OpenAI: `reasoning_content` en delta. Anthropic: `thinking` blocks. Almacenar junto con tool_calls para preservar contexto de caché |
-| Modelo que ignora tools (`tool_choice: "required"`) | Si el modelo responde sin tool_calls cuando se requería una, marcar el modelo como no elegible para este turno y forzar fallback. Log del evento |
+| Edge case                                           | Comportamiento del proxy                                                                                                                                                    |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Streaming parcial de tool calls                     | Acumular todos los chunks antes de guardar en DB. Si el stream se interrumpe, descartar tool call incompleta y notificar con `incomplete_tool_call: true` en proxy_metadata |
+| Texto + tool calls en el mismo turno                | Almacenar `content` textual y `tool_calls` como campos separados del mismo objeto assistant                                                                                 |
+| Tool call con error del cliente                     | Retornar `tool_result` con `content: "ERROR: <descripción>"`. El modelo decide si reintentar                                                                                |
+| Resultado de tool >8K tokens                        | Truncar con marcador `[...truncado a 8K tokens...]`. El resultado completo se guarda en log                                                                                 |
+| Thinking/reasoning blocks con tools                 | OpenAI: `reasoning_content` en delta. Anthropic: `thinking` blocks. Almacenar junto con tool_calls para preservar contexto de caché                                         |
+| Modelo que ignora tools (`tool_choice: "required"`) | Si el modelo responde sin tool_calls cuando se requería una, marcar el modelo como no elegible para este turno y forzar fallback. Log del evento                            |
 
 ### 6.8 Operaciones explícitas sobre tools
 
@@ -751,14 +758,14 @@ Los flags son **aditivos** (nunca se desactivan sin operación explícita) y se 
 {
   "conversation_id": "abc",
   "capabilities": {
-    "has_images":         true,
-    "has_audio":          false,
-    "has_pdf":            false,
-    "has_video":          false,
-    "has_tools":          true,
+    "has_images": true,
+    "has_audio": false,
+    "has_pdf": false,
+    "has_video": false,
+    "has_tools": true,
     "has_parallel_tools": false,
     "tools_eligible_models": ["deepseek-v4-pro", "deepseek-v4-flash"],
-    "total_tokens":       45230
+    "total_tokens": 45230
   }
 }
 ```
@@ -793,10 +800,10 @@ Si el usuario quiere degradar manualmente → `POST /conversations/{id}/degrade-
 
 **Detección:** `content[{type: "input_audio"}]` activa `has_audio: true`.
 
-| Escenario | Comportamiento en v1 |
-|---|---|
-| Audio en petición | ❌ Error `AUDIO_NOT_SUPPORTED` — el pseudo-modelo actual no tiene capacidad de audio |
-| Audio en historial, usuario migra | ❌ Bloqueado — no hay camino de degradación automático en v1 |
+| Escenario                         | Comportamiento en v1                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| Audio en petición                 | ❌ Error `AUDIO_NOT_SUPPORTED` — el pseudo-modelo actual no tiene capacidad de audio |
+| Audio en historial, usuario migra | ❌ Bloqueado — no hay camino de degradación automático en v1                         |
 
 **Camino futuro (v2+):** Transcripción a texto via Whisper o Gemini Audio. Operación explícita `POST /degrade-audio`.
 
@@ -804,11 +811,11 @@ Si el usuario quiere degradar manualmente → `POST /conversations/{id}/degrade-
 
 **Detección:** `content[{type: "file"}]` con mimetype `application/pdf` activa `has_pdf: true`.
 
-| Escenario | Comportamiento en v1 |
-|---|---|
-| PDF en petición, modelo con visión | ⚠️ Advertencia — el PDF se trata como imagen (el modelo "ve" las páginas). Se activa `has_pdf: true`. |
-| PDF en petición, modelo sin visión | ❌ Error `PDF_NOT_SUPPORTED` — sugerir extracción previa de texto o usar modelo con visión |
-| PDF en historial, migrar a modelo sin visión | ❌ Bloqueado (misma regla que imágenes) |
+| Escenario                                    | Comportamiento en v1                                                                                  |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| PDF en petición, modelo con visión           | ⚠️ Advertencia — el PDF se trata como imagen (el modelo "ve" las páginas). Se activa `has_pdf: true`. |
+| PDF en petición, modelo sin visión           | ❌ Error `PDF_NOT_SUPPORTED` — sugerir extracción previa de texto o usar modelo con visión            |
+| PDF en historial, migrar a modelo sin visión | ❌ Bloqueado (misma regla que imágenes)                                                               |
 
 **Camino futuro (v2+):** Extracción de texto con `pdfplumber` (MIT) o `PyMuPDF`. OCR con Tesseract para PDFs escaneados. Operación `POST /extract-pdf-text`.
 
@@ -820,12 +827,12 @@ Si el usuario quiere degradar manualmente → `POST /conversations/{id}/degrade-
 
 ### 7.6 Tabla resumen de soporte multimedia
 
-| Tipo | Detección | v1 con modelo compatible | v1 sin modelo compatible | Camino futuro |
-|---|---|---|---|---|
-| Imágenes | `image_url` | ✅ Completo | Auto-describe o bloqueo | — (ya completo) |
-| Audio | `input_audio` | ✅ (si modelo lo soporta) | ❌ Error | Transcripción ASR |
-| PDF | `file` + pdf mime | ⚠️ Como imagen | ❌ Error | Extracción texto |
-| Video | `video` / `file` + video | ❌ Error | ❌ Error | Extracción frames |
+| Tipo     | Detección                | v1 con modelo compatible  | v1 sin modelo compatible | Camino futuro     |
+| -------- | ------------------------ | ------------------------- | ------------------------ | ----------------- |
+| Imágenes | `image_url`              | ✅ Completo               | Auto-describe o bloqueo  | — (ya completo)   |
+| Audio    | `input_audio`            | ✅ (si modelo lo soporta) | ❌ Error                 | Transcripción ASR |
+| PDF      | `file` + pdf mime        | ⚠️ Como imagen            | ❌ Error                 | Extracción texto  |
+| Video    | `video` / `file` + video | ❌ Error                  | ❌ Error                 | Extracción frames |
 
 ---
 
@@ -876,30 +883,30 @@ def validate_switch(
 
 ### 8.2 Matriz de compatibilidad de referencia
 
-| Origen | Destino | Situación | Estado | Razón |
-|---|---|---|---|---|
-| `normal` | `tareas-avanzadas` | Sin multimedia, sin tools | ✅ Seguro | — |
-| `normal` | `tareas-avanzadas` | Tools, sin parallel | ✅ Seguro | DeepSeek en destino |
-| `normal` | `pensamiento-profundo-caro` | Cualquiera | ✅ Seguro | Superset de capacidades |
-| `normal` | `deep-flash` | Sin multimedia, sin tools | ⚠️ Advertencia | Pérdida de capacidad de razonamiento |
-| `normal` | `deep-flash` | Con tools | ⚠️ Advertencia | Tools básicos, no confiable en casos complejos |
-| `normal` | `flash-lowcost` | Sin multimedia | ⚠️ Advertencia | Pérdida significativa de capacidad |
-| `normal` | `flash-lowcost` | Con tools, parallel | ❌ Bloqueado | Sin parallel support en destino |
-| `tareas-avanzadas` | `normal` | Sin parallel tools | ✅ Seguro | — |
-| `tareas-avanzadas` | `normal` | Parallel tools | ⚠️ Advertencia | Qwen sin parallel; DeepSeek sí |
-| `tareas-avanzadas` | `pensamiento-profundo-caro` | Cualquiera | ✅ Seguro | — |
-| `tareas-avanzadas` | `deep-flash` | Con tools | ⚠️ Advertencia | Soporte básico de tools |
-| `pensamiento-profundo-caro` | `tareas-avanzadas` | Cualquiera | ✅ Seguro | — |
-| `pensamiento-profundo-caro` | `deep-flash` | Con tools | ⚠️ Advertencia | Tools básicos |
-| `avanzada-vision` | `flash-vision` | Con imágenes | ⚠️ Advertencia | Capacidad visual reducida |
-| `avanzada-vision` | `normal` | Con imágenes, auto_describe=false | ❌ Bloqueado | Requiere degradación de imágenes |
-| `avanzada-vision` | `normal` | Con imágenes, auto_describe=true | ⚠️ Advertencia | Imágenes serán descritas automáticamente |
-| `avanzada-vision` | `deep-flash` | Con imágenes | ❌ Bloqueado | Sin visión + sin auto_describe en destino |
-| `flash-vision` | `avanzada-vision` | Con imágenes | ✅ Seguro | Upgrade de capacidad visual |
-| `deep-flash` | `normal` | Sin multimedia | ✅ Seguro | — |
-| `deep-flash` | `normal` | Con multimedia | ✅ Seguro | Destino tiene mejor soporte |
-| `flash-lowcost` | `normal` | Cualquiera | ✅ Seguro | — |
-| Cualquiera | `compactador` | Cualquiera | ✅ Siempre | Es operación, no conversación |
+| Origen                      | Destino                     | Situación                         | Estado         | Razón                                          |
+| --------------------------- | --------------------------- | --------------------------------- | -------------- | ---------------------------------------------- |
+| `normal`                    | `tareas-avanzadas`          | Sin multimedia, sin tools         | ✅ Seguro      | —                                              |
+| `normal`                    | `tareas-avanzadas`          | Tools, sin parallel               | ✅ Seguro      | DeepSeek en destino                            |
+| `normal`                    | `pensamiento-profundo-caro` | Cualquiera                        | ✅ Seguro      | Superset de capacidades                        |
+| `normal`                    | `deep-flash`                | Sin multimedia, sin tools         | ⚠️ Advertencia | Pérdida de capacidad de razonamiento           |
+| `normal`                    | `deep-flash`                | Con tools                         | ⚠️ Advertencia | Tools básicos, no confiable en casos complejos |
+| `normal`                    | `flash-lowcost`             | Sin multimedia                    | ⚠️ Advertencia | Pérdida significativa de capacidad             |
+| `normal`                    | `flash-lowcost`             | Con tools, parallel               | ❌ Bloqueado   | Sin parallel support en destino                |
+| `tareas-avanzadas`          | `normal`                    | Sin parallel tools                | ✅ Seguro      | —                                              |
+| `tareas-avanzadas`          | `normal`                    | Parallel tools                    | ⚠️ Advertencia | Qwen sin parallel; DeepSeek sí                 |
+| `tareas-avanzadas`          | `pensamiento-profundo-caro` | Cualquiera                        | ✅ Seguro      | —                                              |
+| `tareas-avanzadas`          | `deep-flash`                | Con tools                         | ⚠️ Advertencia | Soporte básico de tools                        |
+| `pensamiento-profundo-caro` | `tareas-avanzadas`          | Cualquiera                        | ✅ Seguro      | —                                              |
+| `pensamiento-profundo-caro` | `deep-flash`                | Con tools                         | ⚠️ Advertencia | Tools básicos                                  |
+| `avanzada-vision`           | `flash-vision`              | Con imágenes                      | ⚠️ Advertencia | Capacidad visual reducida                      |
+| `avanzada-vision`           | `normal`                    | Con imágenes, auto_describe=false | ❌ Bloqueado   | Requiere degradación de imágenes               |
+| `avanzada-vision`           | `normal`                    | Con imágenes, auto_describe=true  | ⚠️ Advertencia | Imágenes serán descritas automáticamente       |
+| `avanzada-vision`           | `deep-flash`                | Con imágenes                      | ❌ Bloqueado   | Sin visión + sin auto_describe en destino      |
+| `flash-vision`              | `avanzada-vision`           | Con imágenes                      | ✅ Seguro      | Upgrade de capacidad visual                    |
+| `deep-flash`                | `normal`                    | Sin multimedia                    | ✅ Seguro      | —                                              |
+| `deep-flash`                | `normal`                    | Con multimedia                    | ✅ Seguro      | Destino tiene mejor soporte                    |
+| `flash-lowcost`             | `normal`                    | Cualquiera                        | ✅ Seguro      | —                                              |
+| Cualquiera                  | `compactador`               | Cualquiera                        | ✅ Siempre     | Es operación, no conversación                  |
 
 ### 8.3 Regla general (resumen)
 
@@ -1027,27 +1034,34 @@ sequenceDiagram
 
 ```markdown
 # Snapshot de conversación — 2025-01-15T14:32:00Z
+
 ## Historial original: ~1,200,000 tokens | Pseudo-modelo: tareas-avanzadas
 
 ### Estado del problema
+
 [Descripción del problema o tarea que se trabajaba al momento de compactar]
 
 ### Decisiones técnicas tomadas
+
 - [Decisión con razonamiento, no solo el resultado]
 - [Decisión con razonamiento]
 
 ### Código producido (extractos clave)
+
 [Solo el código que establece el estado actual. No todo. Solo lo necesario para continuar.]
 
 ### Estado actual
+
 - Resuelto: [lista]
 - Sin resolver: [lista]
 - En progreso al compactar: [descripción]
 
 ### Contexto técnico importante
+
 [Variables de entorno, restricciones arquitectónicas, dependencias, convenciones del proyecto]
 
 ### Puntos pendientes
+
 [Lo que el usuario iba a hacer a continuación]
 ```
 
@@ -1109,28 +1123,31 @@ El prefijo (system + tools) es idéntico entre turnos de la misma conversación 
 ### 13.2 Estrategias por proveedor
 
 **OpenAI:**
+
 - `prompt_cache_key` por conversación (hash del `conversation_id + system prompt`)
 - Caché automático para prompts ≥1024 tokens. TTL: 5-10 minutos de inactividad.
 
 **Anthropic:**
+
 - `cache_control: {type: "ephemeral"}` en system prompt y tool definitions
 - Máximo 4 breakpoints de caché. Se colocan después de system y después de tools.
 - Cache writes: 1.25× costo. Cache reads: 0.1× costo.
 
 **Google Gemini:**
+
 - `CachedContent` explícito al inicio de la conversación.
 - `cache_id` reutilizado en todos los turnos siguientes.
 - TTL: 60 minutos de inactividad (configurable).
 
 ### 13.3 Lo que destruye el caché (y el proxy lo evita)
 
-| Causa de cache miss | Cómo lo evita el proxy |
-|---|---|
-| Cambio de modelo físico | Afinidad de modelo por conversación |
-| Cambio en tool definitions | Ordenamiento alfabético estable entre turnos |
-| JSON keys no estables | `json.dumps(sort_keys=True)` en toda serialización |
-| Timestamps en el prefijo | Eliminados del contenido cacheable |
-| Cambio de sistema prompt | System prompt fijo por pseudo-modelo |
+| Causa de cache miss        | Cómo lo evita el proxy                             |
+| -------------------------- | -------------------------------------------------- |
+| Cambio de modelo físico    | Afinidad de modelo por conversación                |
+| Cambio en tool definitions | Ordenamiento alfabético estable entre turnos       |
+| JSON keys no estables      | `json.dumps(sort_keys=True)` en toda serialización |
+| Timestamps en el prefijo   | Eliminados del contenido cacheable                 |
+| Cambio de sistema prompt   | System prompt fijo por pseudo-modelo               |
 
 ### 13.4 Métricas de caché en proxy_metadata
 
@@ -1154,21 +1171,21 @@ El prefijo (system + tools) es idéntico entre turnos de la misma conversación 
 
 ### 14.1 Endpoints
 
-| Método | Ruta | Auth | Descripción |
-|---|---|---|---|
-| `POST` | `/v1/chat/completions` | ✅ | Endpoint principal (OpenAI-compatible + streaming SSE) |
-| `GET` | `/v1/models` | ✅ | Lista pseudo-modelos con capabilities |
-| `GET` | `/conversations/{id}` | ✅ | Estado completo: flags, tokens, snapshot activo |
-| `GET` | `/conversations/{id}/compatible-models` | ✅ | Qué pseudo-modelos son compatibles y por qué |
-| `GET` | `/conversations/{id}/tools-compatibility` | ✅ | Nivel de tools requerido vs disponible |
-| `POST` | `/conversations/{id}/change-pseudo-model` | ✅ | Cambiar pseudo-modelo con validación |
-| `POST` | `/conversations/{id}/compact` | ✅ | Compactación explícita |
-| `POST` | `/conversations/{id}/degrade-images` | ✅ | Describir imágenes → texto |
-| `POST` | `/conversations/{id}/normalize-tools` | ✅ | Serializar parallel tool calls |
-| `GET` | `/conversations/{id}/audit-log` | ✅ | Trazabilidad de decisiones del proxy |
-| `GET` | `/models/{pseudo_model}/tool-level` | ✅ | Capacidades de tools de un pseudo-modelo |
-| `GET` | `/health` | ✗ | Estado: proxy, DB, Valkey, proveedores |
-| `GET` | `/metrics` | ✅ | Estadísticas: tokens, ahorros, cache hit rate |
+| Método | Ruta                                      | Auth | Descripción                                            |
+| ------ | ----------------------------------------- | ---- | ------------------------------------------------------ |
+| `POST` | `/v1/chat/completions`                    | ✅   | Endpoint principal (OpenAI-compatible + streaming SSE) |
+| `GET`  | `/v1/models`                              | ✅   | Lista pseudo-modelos con capabilities                  |
+| `GET`  | `/conversations/{id}`                     | ✅   | Estado completo: flags, tokens, snapshot activo        |
+| `GET`  | `/conversations/{id}/compatible-models`   | ✅   | Qué pseudo-modelos son compatibles y por qué           |
+| `GET`  | `/conversations/{id}/tools-compatibility` | ✅   | Nivel de tools requerido vs disponible                 |
+| `POST` | `/conversations/{id}/change-pseudo-model` | ✅   | Cambiar pseudo-modelo con validación                   |
+| `POST` | `/conversations/{id}/compact`             | ✅   | Compactación explícita                                 |
+| `POST` | `/conversations/{id}/degrade-images`      | ✅   | Describir imágenes → texto                             |
+| `POST` | `/conversations/{id}/normalize-tools`     | ✅   | Serializar parallel tool calls                         |
+| `GET`  | `/conversations/{id}/audit-log`           | ✅   | Trazabilidad de decisiones del proxy                   |
+| `GET`  | `/models/{pseudo_model}/tool-level`       | ✅   | Capacidades de tools de un pseudo-modelo               |
+| `GET`  | `/health`                                 | ✗    | Estado: proxy, DB, Valkey, proveedores                 |
+| `GET`  | `/metrics`                                | ✅   | Estadísticas: tokens, ahorros, cache hit rate          |
 
 ### 14.2 Formato de respuesta
 
@@ -1208,17 +1225,17 @@ El prefijo (system + tools) es idéntico entre turnos de la misma conversación 
 
 ### 14.3 Códigos de error
 
-| HTTP | Código | Significado |
-|---|---|---|
-| 400 | `INPUT_EXCEEDS_THRESHOLD` | Input supera umbral del pseudo-modelo. Incluye sugerencias de pseudo-modelos con mayor umbral. |
-| 400 | `CONTEXT_UNUSABLE` | Historial total > ventana de todos los modelos. Única acción: compactar. |
-| 400 | `AUDIO_NOT_SUPPORTED` | Audio en petición, ningún modelo del pseudo-modelo lo soporta |
-| 400 | `PDF_NOT_SUPPORTED` | PDF en petición, modelo sin visión |
-| 400 | `VIDEO_NOT_SUPPORTED` | Video en petición (no soportado en v1) |
-| 409 | `PSEUDO_MODEL_INCOMPATIBLE` | Cambio de pseudo-modelo incompatible. Incluye remediation options. |
-| 409 | `IMAGES_INCOMPATIBLE` | Imágenes en historial, destino sin visión y sin auto_describe |
-| 409 | `PARALLEL_TOOLS_INCOMPATIBLE` | Historial con parallel tools, destino sin soporte. Ofrece normalize-tools. |
-| 503 | `ALL_MODELS_FAILED` | Todos los modelos del pseudo-modelo fallaron (503/429). Incluye razones por modelo. |
+| HTTP | Código                        | Significado                                                                                    |
+| ---- | ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| 400  | `INPUT_EXCEEDS_THRESHOLD`     | Input supera umbral del pseudo-modelo. Incluye sugerencias de pseudo-modelos con mayor umbral. |
+| 400  | `CONTEXT_UNUSABLE`            | Historial total > ventana de todos los modelos. Única acción: compactar.                       |
+| 400  | `AUDIO_NOT_SUPPORTED`         | Audio en petición, ningún modelo del pseudo-modelo lo soporta                                  |
+| 400  | `PDF_NOT_SUPPORTED`           | PDF en petición, modelo sin visión                                                             |
+| 400  | `VIDEO_NOT_SUPPORTED`         | Video en petición (no soportado en v1)                                                         |
+| 409  | `PSEUDO_MODEL_INCOMPATIBLE`   | Cambio de pseudo-modelo incompatible. Incluye remediation options.                             |
+| 409  | `IMAGES_INCOMPATIBLE`         | Imágenes en historial, destino sin visión y sin auto_describe                                  |
+| 409  | `PARALLEL_TOOLS_INCOMPATIBLE` | Historial con parallel tools, destino sin soporte. Ofrece normalize-tools.                     |
+| 503  | `ALL_MODELS_FAILED`           | Todos los modelos del pseudo-modelo fallaron (503/429). Incluye razones por modelo.            |
 
 ---
 
@@ -1235,10 +1252,10 @@ El prefijo (system + tools) es idéntico entre turnos de la misma conversación 
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "${CESAR_PROXY_URL}",
-        "apiKey": "${CESAR_PROXY_KEY}"
-      }
-    }
-  }
+        "apiKey": "${CESAR_PROXY_KEY}",
+      },
+    },
+  },
 }
 ```
 
@@ -1261,47 +1278,82 @@ El proxy expone `GET /v1/models` con la lista de pseudo-modelos y sus capabiliti
       "npm": "@ai-sdk/openai-compatible",
       "options": {
         "baseURL": "${CESAR_PROXY_URL}",
-        "apiKey": "${CESAR_PROXY_KEY}"
+        "apiKey": "${CESAR_PROXY_KEY}",
       },
       "models": {
         "pensamiento-profundo-caro": {
           "name": "pensamiento-profundo-caro",
-          "capabilities": { "tools": true, "vision": false, "streaming": true,
-                            "function_calling": true, "parallel_tool_calls": true }
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": true,
+          },
         },
         "tareas-avanzadas": {
           "name": "tareas-avanzadas",
-          "capabilities": { "tools": true, "vision": false, "streaming": true,
-                            "function_calling": true, "parallel_tool_calls": true }
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": true,
+          },
         },
         "normal": {
           "name": "normal",
-          "capabilities": { "tools": true, "vision": false, "streaming": true,
-                            "function_calling": true, "parallel_tool_calls": false }
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": false,
+          },
         },
         "deep-flash": {
           "name": "deep-flash",
-          "capabilities": { "tools": true, "vision": false, "streaming": true,
-                            "function_calling": true, "parallel_tool_calls": false }
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": false,
+          },
         },
         "flash-lowcost": {
           "name": "flash-lowcost",
-          "capabilities": { "tools": false, "vision": false, "streaming": true,
-                            "function_calling": false, "parallel_tool_calls": false }
+          "capabilities": {
+            "tools": false,
+            "vision": false,
+            "streaming": true,
+            "function_calling": false,
+            "parallel_tool_calls": false,
+          },
         },
         "avanzada-vision": {
           "name": "avanzada-vision",
-          "capabilities": { "tools": false, "vision": true, "streaming": true,
-                            "function_calling": false, "parallel_tool_calls": false }
+          "capabilities": {
+            "tools": false,
+            "vision": true,
+            "streaming": true,
+            "function_calling": false,
+            "parallel_tool_calls": false,
+          },
         },
         "flash-vision": {
           "name": "flash-vision",
-          "capabilities": { "tools": false, "vision": true, "streaming": true,
-                            "function_calling": false, "parallel_tool_calls": false }
-        }
-      }
-    }
-  }
+          "capabilities": {
+            "tools": false,
+            "vision": true,
+            "streaming": true,
+            "function_calling": false,
+            "parallel_tool_calls": false,
+          },
+        },
+      },
+    },
+  },
 }
 ```
 
@@ -1525,7 +1577,7 @@ proxy/
 
 ## 18. Plan de sprints
 
-### Sprint 1 — MVP: pseudo-modelos + afinidad + streaming *(2 semanas)*
+### Sprint 1 — MVP: pseudo-modelos + afinidad + streaming _(2 semanas)_
 
 **Objetivo:** El proxy funciona. `"normal"` → Qwen. Afinidad mantenida. Streaming correcto.
 
@@ -1544,7 +1596,7 @@ proxy/
 
 ---
 
-### Sprint 2 — Capabilities y compatibilidad *(2 semanas)*
+### Sprint 2 — Capabilities y compatibilidad _(2 semanas)_
 
 **Objetivo:** El proxy detecta multimedia y tools. Bloquea cambios incompatibles.
 
@@ -1561,7 +1613,7 @@ proxy/
 
 ---
 
-### Sprint 3 — Normalización de tools y formato canónico *(2 semanas)*
+### Sprint 3 — Normalización de tools y formato canónico _(2 semanas)_
 
 **Objetivo:** Tools funcionan confiablemente. Historial portable entre pseudo-modelos.
 
@@ -1577,7 +1629,7 @@ proxy/
 
 ---
 
-### Sprint 4 — Pre-compactación y compactación continua *(2 semanas)*
+### Sprint 4 — Pre-compactación y compactación continua _(2 semanas)_
 
 **Objetivo:** Los modelos caros no reciben inputs enormes ni contextos saturados.
 
@@ -1594,7 +1646,7 @@ proxy/
 
 ---
 
-### Sprint 5 — Auto-describe imágenes y router LLM *(2 semanas)*
+### Sprint 5 — Auto-describe imágenes y router LLM _(2 semanas)_
 
 **Objetivo:** Migrar de modelos visuales es fluido. El router informa sin imponer.
 
@@ -1609,7 +1661,7 @@ proxy/
 
 ---
 
-### Sprint 6 — Compactación explícita y alertas *(1 semana)*
+### Sprint 6 — Compactación explícita y alertas _(1 semana)_
 
 **Objetivo:** Las conversaciones nunca quedan permanentemente inutilizables.
 
@@ -1624,7 +1676,7 @@ proxy/
 
 ---
 
-### Sprint 7 — Optimización de caché de proveedor *(1 semana)*
+### Sprint 7 — Optimización de caché de proveedor _(1 semana)_
 
 **Objetivo:** Los cache hits son máximos. OpenCode funciona sin configuración adicional.
 
@@ -1641,7 +1693,7 @@ proxy/
 
 ---
 
-### Sprint 8 — Despliegue y observabilidad *(1 semana)*
+### Sprint 8 — Despliegue y observabilidad _(1 semana)_
 
 **Objetivo:** El proxy está en producción. Todo es trazable. Un nuevo usuario lo configura en <5 minutos.
 
@@ -1844,6 +1896,6 @@ compactador:
 
 ---
 
-*El valor de este proxy es su predictibilidad.*
-*Cada decisión tiene una razón clara y registrada.*
-*El usuario sabe exactamente qué pasó y por qué — siempre.*
+_El valor de este proxy es su predictibilidad._
+_Cada decisión tiene una razón clara y registrada._
+_El usuario sabe exactamente qué pasó y por qué — siempre._

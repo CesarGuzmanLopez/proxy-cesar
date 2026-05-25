@@ -3,7 +3,7 @@
 sprint §13.5 — minimum 6 test cases.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -43,7 +43,9 @@ async def test_2_primary_503_fallback(async_client: AsyncClient, mock_litellm):
     }
 
     mock_litellm.side_effect = [
-        ServiceUnavailableError("Primary model down", llm_provider="qwen", model="qwen3-max"),
+        ServiceUnavailableError(
+            "Primary model down", llm_provider="qwen", model="qwen3-max"
+        ),
         second_response,
     ]
 

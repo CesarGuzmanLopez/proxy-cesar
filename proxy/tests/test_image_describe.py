@@ -9,7 +9,7 @@ Total: 15 tests
 python.md §4: Pure functions tested deterministically.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,7 +25,9 @@ from src.service.multimedia.image_describer import (
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _make_image_msg(url: str = "https://example.com/img.png", detail: str = "auto") -> dict:
+def _make_image_msg(
+    url: str = "https://example.com/img.png", detail: str = "auto"
+) -> dict:
     """Create a message with a single image_url content part."""
     return {
         "role": "user",
@@ -169,7 +171,8 @@ class TestAutoDescribeImages:
         """No images → returns original messages unchanged."""
         messages = [_make_text_msg("Hello")]
         modified, meta = await auto_describe_images(
-            messages, "gemini/gemini-3.5-flash",
+            messages,
+            "gemini/gemini-3.5-flash",
         )
         assert modified == messages
         assert meta["images_described"] == 0
@@ -182,7 +185,8 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("A code screenshot.")
         messages = [_make_image_msg("https://example.com/code.png")]
         modified, meta = await auto_describe_images(
-            messages, "gemini/gemini-3.5-flash",
+            messages,
+            "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 1
         content = modified[0]["content"]
@@ -200,7 +204,8 @@ class TestAutoDescribeImages:
             _make_image_msg("https://example.com/c.png"),
         ]
         modified, meta = await auto_describe_images(
-            messages, "gemini/gemini-3.5-flash",
+            messages,
+            "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 3
         assert meta["unique_images_described"] == 3
@@ -223,7 +228,8 @@ class TestAutoDescribeImages:
             _make_image_msg("https://example.com/same.png"),
         ]
         modified, meta = await auto_describe_images(
-            messages, "gemini/gemini-3.5-flash",
+            messages,
+            "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 2  # Both instances tagged
         assert meta["unique_images_described"] == 1  # Only 1 unique
@@ -236,7 +242,8 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("Description.")
         messages = [_make_image_msg("https://example.com/img.png")]
         modified, meta = await auto_describe_images(
-            messages, "gemini/gemini-3.5-flash",
+            messages,
+            "gemini/gemini-3.5-flash",
         )
         # The first content part (text) should be unchanged
         first_part = modified[0]["content"][0]
@@ -249,7 +256,8 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("Description text.")
         messages = [_make_image_msg("https://example.com/img.png")]
         modified, meta = await auto_describe_images(
-            messages, "gemini/gemini-3.5-flash",
+            messages,
+            "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 1
         assert meta["described_by"] == "gemini/gemini-3.5-flash"
@@ -262,7 +270,8 @@ class TestAutoDescribeImages:
         mock_call.return_value = _make_mock_litellm("Description.")
         messages = [_make_image_msg("https://example.com/img.png", detail="high")]
         modified, meta = await auto_describe_images(
-            messages, "gemini/gemini-3.5-flash",
+            messages,
+            "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 1
         mock_call.assert_called_once()

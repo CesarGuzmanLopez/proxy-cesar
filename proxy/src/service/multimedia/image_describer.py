@@ -78,13 +78,15 @@ def find_image_refs(messages: list[dict]) -> list[dict]:
             is_duplicate = url in seen_urls
             seen_urls.add(url)
 
-            refs.append({
-                "msg_idx": msg_idx,
-                "part_idx": part_idx,
-                "url": url,
-                "detail": part.get("image_url", {}).get("detail", "auto"),
-                "is_duplicate": is_duplicate,
-            })
+            refs.append(
+                {
+                    "msg_idx": msg_idx,
+                    "part_idx": part_idx,
+                    "url": url,
+                    "detail": part.get("image_url", {}).get("detail", "auto"),
+                    "is_duplicate": is_duplicate,
+                }
+            )
 
     return refs
 

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.service.compactor.explicit import (
-    _run_compaction_sync,
     compact_conversation,
     select_compactor_model,
 )
@@ -32,7 +31,9 @@ def mock_db():
     # Default: scalar attribute for count queries
     scalar_result = MagicMock()
     scalar_result.scalar = MagicMock(return_value=0)
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
     return db
 
@@ -56,11 +57,15 @@ def mock_litellm_success():
     mock_response.usage.completion_tokens = 250
     mock_response.model_dump.return_value = {
         "id": "chatcmpl-mock",
-        "choices": [{"message": {"role": "assistant", "content": "Snapshot content..."}}],
+        "choices": [
+            {"message": {"role": "assistant", "content": "Snapshot content..."}}
+        ],
         "usage": {"prompt_tokens": 500, "completion_tokens": 250},
     }
 
-    with patch("src.service.compactor.explicit.call_litellm", new_callable=AsyncMock) as mock:
+    with patch(
+        "src.service.compactor.explicit.call_litellm", new_callable=AsyncMock
+    ) as mock:
         mock.return_value = mock_response
         yield mock
 
@@ -109,7 +114,9 @@ def conversation_with_turns():
 def test_select_compactor_model_large_enough(config_with_compactador):
     """Selects model with enough context window for the history."""
     model = select_compactor_model(config_with_compactador, 50000)
-    assert model == "gemini-3.5-flash"  # First model with 1M ctx window (enough for 50K)
+    assert (
+        model == "gemini-3.5-flash"
+    )  # First model with 1M ctx window (enough for 50K)
 
 
 def test_select_compactor_model_largest_fallback(config_with_compactador):
@@ -130,7 +137,9 @@ def test_select_compactor_model_no_compactador():
 
 
 @pytest.mark.asyncio
-async def test_compact_generates_snapshot(mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns):
+async def test_compact_generates_snapshot(
+    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+):
     """POST /compact generates a snapshot with required fields."""
     conv, turns = conversation_with_turns
 
@@ -138,7 +147,9 @@ async def test_compact_generates_snapshot(mock_litellm_success, config_with_comp
     mock_db.get = AsyncMock(return_value=conv)
 
     scalar_result_turns = MagicMock()
-    scalar_result_turns.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    scalar_result_turns.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result_turns)
 
     result = await compact_conversation(
@@ -159,13 +170,17 @@ async def test_compact_generates_snapshot(mock_litellm_success, config_with_comp
 
 
 @pytest.mark.asyncio
-async def test_snapshot_stored_in_db(mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns):
+async def test_snapshot_stored_in_db(
+    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+):
     """Snapshot stored in conversation_snapshots table via db.add."""
     conv, turns = conversation_with_turns
     mock_db.get = AsyncMock(return_value=conv)
 
     scalar_result_turns = MagicMock()
-    scalar_result_turns.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    scalar_result_turns.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result_turns)
 
     await compact_conversation(
@@ -186,14 +201,18 @@ async def test_snapshot_stored_in_db(mock_litellm_success, config_with_compactad
 
 
 @pytest.mark.asyncio
-async def test_active_snapshot_id_updated(mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns):
+async def test_active_snapshot_id_updated(
+    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+):
     """active_snapshot_id is updated on the conversation after compaction."""
     conv, turns = conversation_with_turns
     old_id = conv.active_snapshot_id
     mock_db.get = AsyncMock(return_value=conv)
 
     scalar_result_turns = MagicMock()
-    scalar_result_turns.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    scalar_result_turns.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result_turns)
 
     await compact_conversation(
@@ -220,7 +239,9 @@ async def test_empty_conversation_400(config_with_compactador, mock_db):
 
     # No turns
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     from fastapi import HTTPException
@@ -254,7 +275,9 @@ async def test_conversation_not_found_404(config_with_compactador, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_async_dispatch_to_arq(mock_litellm_success, config_with_compactador, mock_db):
+async def test_async_dispatch_to_arq(
+    mock_litellm_success, config_with_compactador, mock_db
+):
     """History > 500K tokens dispatches to arq when pool is available."""
     conv = MagicMock()
     conv.id = uuid.uuid4()
@@ -266,7 +289,9 @@ async def test_async_dispatch_to_arq(mock_litellm_success, config_with_compactad
     turn.messages = [{"role": "user", "content": "Large content"}]
     turn.turn_number = 1
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     # Mock arq pool
@@ -295,13 +320,17 @@ async def test_async_dispatch_to_arq(mock_litellm_success, config_with_compactad
 
 
 @pytest.mark.asyncio
-async def test_multiple_compactions_chain(mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns):
+async def test_multiple_compactions_chain(
+    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+):
     """Multiple explicit compactions chain correctly via superseded_by."""
     conv, turns = conversation_with_turns
     mock_db.get = AsyncMock(return_value=conv)
 
     turns_scalar = MagicMock()
-    turns_scalar.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    turns_scalar.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=turns_scalar)
 
     conv.total_tokens = 50000
@@ -327,6 +356,7 @@ async def test_multiple_compactions_chain(mock_litellm_success, config_with_comp
         if model_cls.__name__ == "Conversation":
             return conv
         return old_snapshot_mock
+
     mock_db.get = AsyncMock(side_effect=get_side_effect)
 
     # Second compaction
@@ -341,13 +371,17 @@ async def test_multiple_compactions_chain(mock_litellm_success, config_with_comp
 
 
 @pytest.mark.asyncio
-async def test_snapshot_contains_required_sections(mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns):
+async def test_snapshot_contains_required_sections(
+    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+):
     """Snapshot contains all required sections (Problem State, Technical Decisions, etc.)."""
     conv, turns = conversation_with_turns
     mock_db.get = AsyncMock(return_value=conv)
 
     scalar_result_turns = MagicMock()
-    scalar_result_turns.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    scalar_result_turns.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result_turns)
 
     result = await compact_conversation(
@@ -360,24 +394,15 @@ async def test_snapshot_contains_required_sections(mock_litellm_success, config_
     preview = result["preview"]
     assert preview is not None
 
-    # Check for required section headers (simple string checks per plan)
-    required_sections = [
-        "Problem State",
-        "Technical Decisions",
-        "Code Produced",
-        "Current Status",
-        "Technical Context",
-        "Tools & Capabilities",
-        "Pending Items",
-        "Conversation Metadata",
-    ]
     # The preview is truncated at 500 chars, so check for section markers
     # We verify the snapshot content was passed through to the compactor
     assert result["tokens_after"] > 0
 
 
 @pytest.mark.asyncio
-async def test_snapshot_preview_truncated(mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns):
+async def test_snapshot_preview_truncated(
+    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+):
     """Long snapshot content is truncated in preview with ellipsis."""
     # Create a response with very long content
     long_content = "# Snapshot\n\n" + ("Long content.\n" * 200)
@@ -386,7 +411,9 @@ async def test_snapshot_preview_truncated(mock_litellm_success, config_with_comp
     mock_db.get = AsyncMock(return_value=conv)
 
     scalar_result_turns = MagicMock()
-    scalar_result_turns.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    scalar_result_turns.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result_turns)
 
     # Override the mock response with long content
@@ -400,7 +427,9 @@ async def test_snapshot_preview_truncated(mock_litellm_success, config_with_comp
         "usage": {"prompt_tokens": 500, "completion_tokens": 500},
     }
 
-    with patch("src.service.compactor.explicit.call_litellm", new_callable=AsyncMock) as mock:
+    with patch(
+        "src.service.compactor.explicit.call_litellm", new_callable=AsyncMock
+    ) as mock:
         mock.return_value = long_response
         result = await compact_conversation(
             conversation_id=str(conv.id),

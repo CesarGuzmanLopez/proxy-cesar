@@ -48,10 +48,6 @@ async def test_3_health_ok(async_client: AsyncClient):
 @pytest.mark.asyncio
 async def test_4_health_degraded(async_client: AsyncClient):
     """GET /health reflects degraded state when services are down."""
-    from src.main import app
-
-    # Mock valkey to be down
-    mock_valkey = await pytest.fixtures.mock_valkey if hasattr(pytest, 'fixtures') else None
 
     response = await async_client.get("/health")
     assert response.status_code == 200

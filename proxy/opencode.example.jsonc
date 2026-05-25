@@ -1,0 +1,85 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "cesar-proxy/gpt-4o",
+  "provider": {
+    "cesar-proxy": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "${CESAR_PROXY_URL}",
+        "apiKey": "${CESAR_PROXY_KEY}"
+      },
+      "models": {
+        "pensamiento-profundo-caro": {
+          "name": "pensamiento-profundo-caro",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": true
+          }
+        },
+        "tareas-avanzadas": {
+          "name": "tareas-avanzadas",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": true
+          }
+        },
+        "normal": {
+          "name": "normal",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": false
+          }
+        },
+        "deep-flash": {
+          "name": "deep-flash",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": false
+          }
+        },
+        "flash-lowcost": {
+          "name": "flash-lowcost",
+          "capabilities": {
+            "tools": false,
+            "vision": false,
+            "streaming": true,
+            "function_calling": false,
+            "parallel_tool_calls": false
+          }
+        },
+        "avanzada-vision": {
+          "name": "avanzada-vision",
+          "capabilities": {
+            "tools": false,
+            "vision": true,
+            "streaming": true,
+            "function_calling": false,
+            "parallel_tool_calls": false
+          }
+        },
+        "flash-vision": {
+          "name": "flash-vision",
+          "capabilities": {
+            "tools": false,
+            "vision": true,
+            "streaming": true,
+            "function_calling": false,
+            "parallel_tool_calls": false
+          }
+        }
+      }
+    }
+  }
+}

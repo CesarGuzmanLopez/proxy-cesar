@@ -1,0 +1,89 @@
+"""Client-agnostic model name normalization tests (Sprint 7 §4.8).
+
+Verifies that ANY client (OpenCode, Cline, RooCode, Continue, Aider, curl)
+can send model names in various formats and the proxy normalizes them correctly.
+"""
+
+import pytest
+
+from src.config.pseudo_models import load_config
+from src.service.model_resolver import normalize_model_name
+
+# Load config once
+_CONFIG = load_config()
+
+
+@pytest.mark.parametrize(
+    "raw_name,expected",
+    [
+        # Direct pseudo-model names
+        ("normal", "normal"),
+        ("tareas-avanzadas", "tareas-avanzadas"),
+        ("pensamiento-profundo-caro", "pensamiento-profundo-caro"),
+        ("deep-flash", "deep-flash"),
+        ("flash-lowcost", "flash-lowcost"),
+        ("avanzada-vision", "avanzada-vision"),
+        ("flash-vision", "flash-vision"),
+        ("compactador", "compactador"),
+        # OpenCode local provider: "local/<pseudo>"
+        ("local/normal", "normal"),
+        ("local/deep-flash", "deep-flash"),
+        # Custom provider names: "cesar-proxy/<pseudo>"
+        ("cesar-proxy/normal", "normal"),
+        ("cesar-proxy/tareas-avanzadas", "tareas-avanzadas"),
+        # Cline fork: "cline/<pseudo>"
+        ("cline/normal", "normal"),
+        ("cline/deep-flash", "deep-flash"),
+        # RooCode fork: "roo/<pseudo>"
+        ("roo/normal", "normal"),
+        ("roo/flash-lowcost", "flash-lowcost"),
+        # OpenAI aliases (with and without prefix)
+        ("gpt-4o", "normal"),
+        ("local/gpt-4o", "normal"),
+        ("gpt-4o-mini", "deep-flash"),
+        ("local/gpt-4o-mini", "deep-flash"),
+        ("o3", "pensamiento-profundo-caro"),
+        ("local/o3", "pensamiento-profundo-caro"),
+        ("o4-mini", "pensamiento-profundo-caro"),
+        # Google alias
+        ("gemini-2.5-flash", "avanzada-vision"),
+        ("local/gemini-2.5-flash", "avanzada-vision"),
+        # Default fallback for unknown models
+        ("unknown-model", "normal"),
+        ("local/unknown-thing", "normal"),
+    ],
+)
+def test_model_name_normalization(raw_name, expected):
+    """All model name formats should resolve to the correct pseudo-model."""
+    result = normalize_model_name(raw_name, _CONFIG)
+    assert result == expected, (
+        f"'{raw_name}' should resolve to '{expected}', got '{result}'"
+    )
+
+
+def test_unknown_model_with_prefix_falls_back_to_default():
+    """Unknown model with prefix strips prefix then falls back to default."""
+    result = normalize_model_name("some-client/unknown", _CONFIG)
+    assert result == "normal"  # default alias
+
+
+def test_all_known_pseudo_models_normalize_to_themselves():
+    """Every pseudo-model name normalizes to itself."""
+    for name in _CONFIG.pseudo_models:
+        assert normalize_model_name(name, _CONFIG) == name
+
+
+def test_aliases_map_to_valid_pseudo_models():
+    """All aliases must map to pseudo-models that exist in config."""
+    for alias, target in _CONFIG.model_aliases.items():
+        if alias == "default":
+            continue
+        assert target in _CONFIG.pseudo_models, (
+            f"Alias '{alias}' maps to '{target}' which is not a valid pseudo-model"
+        )
+
+
+def test_default_alias_maps_to_valid_pseudo_model():
+    """The default alias must map to a valid pseudo-model."""
+    assert "default" in _CONFIG.model_aliases
+    assert _CONFIG.model_aliases["default"] in _CONFIG.pseudo_models

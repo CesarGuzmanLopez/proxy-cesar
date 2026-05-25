@@ -3,14 +3,12 @@
 sprint §13.1 — minimum 15 test cases for the 14 validation rules.
 """
 
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
 from src.config.pseudo_models import (
-    ProxyConfigSchema,
     load_config,
 )
 

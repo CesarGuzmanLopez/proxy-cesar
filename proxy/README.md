@@ -18,39 +18,57 @@ See `python.md` for the full coding guidelines.
 
 ```
 src/
-├── api/            # FastAPI routers — HTTP boundary, request/response
-│   ├── chat.py         POST /v1/chat/completions
-│   ├── conversations.py  GET/POST /conversations/{id}
-│   ├── health.py       GET /health
-│   └── models.py       GET /v1/models
-├── service/        # Business logic orchestration
-│   ├── chat_service.py      Main chat flow (resolve, validate, fallback, save)
-│   ├── chat_models.py       ChatResult, FallbackInfo, proxy metadata
-│   ├── model_resolver.py    Pseudo-model → physical model resolution
+├── api/              # FastAPI routers — HTTP boundary
+│   ├── chat.py           POST /v1/chat/completions (incl. SSE streaming)
+│   ├── conversations.py  GET/POST /conversations/{id}/* (compact, degrade, normalize, audit)
+│   ├── health.py         GET /health (public, no auth)
+│   ├── metrics.py        GET /metrics (auth required — Sprint 8)
+│   └── models.py         GET /v1/models
+├── service/          # Business logic orchestration
+│   ├── chat_service.py      Main chat flow orchestrator
+│   ├── chat_models.py       ChatResult, FallbackInfo, proxy_metadata builder
+│   ├── model_resolver.py    Pseudo-model → physical model resolution + aliases
 │   ├── capability_detector.py  Turn/session capability detection + token counting
 │   ├── compatibility.py     Content validation + pseudo-model switch validation
-│   ├── threshold_guard.py   Input threshold guard (uses Result monad)
+│   ├── threshold_guard.py   Input threshold guard (Result monad)
 │   ├── tool_filter.py       Filter physical models by parallel tool support
-│   ├── tools_normalizer.py  Parallel tool call serialization
 │   ├── tools_canonical.py   Tool level determination, ID validation
+│   ├── tools_normalizer.py  Parallel tool call serialization
 │   ├── tools_edge_cases.py  Streaming tool assembly, thinking extraction, truncation
-│   └── compactor/           Context compaction pipeline
-│       ├── pre_compactor.py    Pre-request input summarization
-│       └── continuous.py       Continuous + external compaction detection
-├── domain/         # Pure domain types — no infrastructure imports
-│   ├── types.py            Ok[T] / Err[E] Result monad
-│   ├── errors.py           Domain error types (frozen dataclasses)
-│   ├── capabilities.py     SessionCapabilities, TurnCapabilities, CompatibilityResult
-│   └── affinity.py         AffinityPort protocol
-├── adapters/       # Infrastructure implementations
-│   ├── db/models.py        SQLModel ORM (Conversation, ConversationTurn, ConversationSnapshot)
+│   ├── context_alert.py     Context usage alerts (60%, 80%, 100%) — Sprint 6
+│   ├── compactor/
+│   │   ├── pre_compactor.py    Pre-request input summarization
+│   │   ├── continuous.py       Continuous compaction + external detection
+│   │   ├── explicit.py         POST /compact — Sprint 6
+│   │   └── prompts.py          Compaction prompts
+│   ├── multimedia/
+│   │   └── image_describer.py  Auto-describe images — Sprint 5
+│   └── router_llm/
+│       └── suggester.py        Task complexity evaluation — Sprint 5
+├── domain/           # Pure domain types — no infrastructure imports
+│   ├── types.py            Ok[T] / Err[E] Result monad (frozen dataclasses)
+│   ├── errors.py           Domain error types (11 types)
+│   ├── capabilities.py     SessionCapabilities, CompatibilityResult
+│   └── affinity.py         AffinityPort protocol (get/set/delete)
+├── adapters/         # Infrastructure implementations
+│   ├── db/models.py        SQLModel ORM (3 tables)
+│   ├── db/engine.py        Async SQLAlchemy engine
 │   ├── litellm/client.py   LiteLLM adapter (call_litellm)
-│   └── cache/valkey_affinity.py  Valkey physical model affinity store
-├── config/         # Configuration
-│   ├── pseudo_models.py    YAML loader + Pydantic validation
+│   └── cache/
+│       ├── valkey_affinity.py   Physical model affinity store — Sprint 1
+│       ├── message_ordering.py  Canonical ordering — Sprint 7
+│       └── provider_cache.py    Provider-specific cache — Sprint 7
+├── config/           # Configuration
+│   ├── pseudo_models.py    YAML loader + strict Pydantic validation — Sprint 1
 │   └── settings.py         Environment settings (pydantic-settings)
-└── schemas/        # Pydantic request/response schemas
-    └── tools.py            NormalizeToolsRequest, NormalizeToolsResponse
+├── middleware/
+│   └── rate_limiter.py     Per-pseudo-model rate limiter (Valkey) — Sprint 8
+├── auth.py                Bearer token auth middleware — Sprint 8
+├── logging_config.py       Structured JSON logging — Sprint 8
+├── tasks/
+│   └── arq_app.py          Async compaction via arq — Sprint 6
+└── schemas/
+    └── tools.py            Pydantic request/response schemas
 ```
 
 ---
@@ -59,7 +77,9 @@ src/
 
 ### Pseudo-Models
 
-Abstract model identities that map to 1+ physical models (actual LiteLLM provider IDs). Example: `normal` maps to `openrouter/qwen3-max` → `openrouter/deepseek-v4-flash` with automatic fallback. 8 pseudo-models are defined in `pseudo_models.yaml`, each validated at startup against 14 strict rules.
+Abstract model identities that map to 1+ physical models (actual LiteLLM provider IDs). Example: `normal` maps to `openrouter/qwen3-max` → `deepseek/deepseek-v4-flash` with automatic fallback. 8 pseudo-models are defined in `pseudo_models.yaml`, each validated at startup against strict Pydantic rules.
+
+**Model aliases** bridge OpenCode model names to pseudo-models (`gpt-4o` → `normal`, `o3` → `pensamiento-profundo-caro`, etc.). Unknown models fall back to the default alias. See `opencode.example.jsonc` for ready-to-use OpenCode configuration.
 
 ### Content Compatibility
 
@@ -87,6 +107,40 @@ Per-turn scanning of messages detects capabilities (images, audio, PDF, video, t
 ### Physical Model Affinity
 
 Conversations are pinned to their first physical model via Valkey cache (`conv:{id}:physical_model`, 24h TTL). This ensures consistent behavior across turns — the same model handles the entire conversation unless a capability-based filter forces a change.
+
+### Model Aliases (Sprint 7)
+
+Bridges client model names to pseudo-models without modifying clients. Configured in `pseudo_models.yaml`:
+- `gpt-4o` → `normal`
+- `o3` / `o4-mini` → `pensamiento-profundo-caro`
+- `gpt-4o-mini` → `deep-flash`
+- `gemini-2.5-flash` → `avanzada-vision`
+- `default: normal` catches unknown model names (client-friendly)
+
+### Provider Cache Optimization (Sprint 7)
+
+Three-layer strategy maximizes cache hits:
+- **Layer 1 — Valkey affinity**: Every turn uses the same physical model
+- **Layer 2 — Canonical ordering**: Messages as `system → tools(sorted) → history → new query`
+- **Layer 3 — Provider-specific**: Anthropic `cache_control` breakpoints, OpenAI/DeepSeek auto-caching
+
+Every response includes `proxy_metadata.cache` with hit/miss info and estimated savings.
+
+### Authentication (Sprint 8)
+
+Bearer `Authorization: Bearer <PROXY_API_KEY>` on all endpoints except `/health`. Dev mode (no auth) when `PROXY_API_KEY` is empty. 401 errors with descriptive messages.
+
+### Rate Limiting (Sprint 8)
+
+Per-pseudo-model fixed-window rate limiter in Valkey. `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers on every response. Configurable via `RATE_LIMIT_*` env vars.
+
+### Structured Logging (Sprint 8)
+
+All proxy decisions logged as JSON lines to stdout: conversation creation, affinity, fallbacks, switches, compactions, auth failures, rate limit hits, provider errors.
+
+### Metrics (Sprint 8)
+
+`GET /metrics` returns aggregated telemetry: requests, tokens (input/output/cached), cache hit rate, compaction savings, fallbacks, active conversations, error breakdown.
 
 ### Fallback
 
@@ -120,8 +174,11 @@ curl http://localhost:9110/health
 | Variable | Default | Description |
 |---|---|---|
 | `PROXY_PORT` | `9110` | HTTP listen port |
+| `PROXY_API_KEY` | — | Bearer token for API access (empty = dev mode) |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./proxy.db` | Database connection string |
 | `VALKEY_URL` | `valkey://localhost:6379` | Cache connection string |
+| `LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key |
 | `OPENROUTER_API_KEY` | — | OpenRouter API key |
 | `GOOGLE_API_KEY` | — | Google AI API key |
@@ -278,10 +335,11 @@ ruff format src/
 ### Test Suite
 
 ```bash
-pytest                          # All tests (178+ tests)
+pytest                          # All tests (401+ tests)
 pytest tests/ -x                # Stop on first failure
 pytest tests/ -v                # Verbose output
 pytest tests/test_streaming.py  # Streaming-specific tests
+pytest tests/ -k "not streaming"  # All non-streaming tests
 ```
 
 ---

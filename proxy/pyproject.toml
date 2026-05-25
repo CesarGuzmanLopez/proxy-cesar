@@ -63,3 +63,13 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.pylsp]
+[tool.pylsp.plugins.preload]
+enabled = false
+[tool.pylsp.plugins.pylint]
+enabled = false
+[tool.pylsp.plugins.mypy_ls]
+enabled = false
+[tool.pylsp.plugins.jedi_completion]
+resolve_at_most = 5

@@ -12,7 +12,6 @@ python.md §4: pure functions for detection, async service for compaction.
 """
 
 import json
-import uuid
 
 from sqlalchemy import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -200,13 +199,15 @@ async def _build_compaction_history(
     if conversation.active_snapshot_id:
         snapshot = await db.get(ConversationSnapshot, conversation.active_snapshot_id)
         if snapshot:
-            history.append({
-                "role": "system",
-                "content": (
-                    f"[Previous snapshot from turn {snapshot.turn_number_at_compaction}]\n\n"
-                    f"{snapshot.snapshot_content}"
-                ),
-            })
+            history.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"[Previous snapshot from turn {snapshot.turn_number_at_compaction}]\n\n"
+                        f"{snapshot.snapshot_content}"
+                    ),
+                }
+            )
 
     for turn in compact_turns:
         turn_messages = turn.messages
@@ -216,7 +217,9 @@ async def _build_compaction_history(
     return history
 
 
-def _resolve_compactor_model(pseudo_model: PseudoModelSchema, config) -> tuple[str | None, str | None]:
+def _resolve_compactor_model(
+    pseudo_model: PseudoModelSchema, config
+) -> tuple[str | None, str | None]:
     """Resolve the compactor physical model name.
 
     Returns (compactor_model, error_reason). If error_reason is set, compactor_model is None.
@@ -255,7 +258,9 @@ async def _store_compaction_snapshot(
     await db.flush()
 
     if conversation.active_snapshot_id:
-        old_snapshot = await db.get(ConversationSnapshot, conversation.active_snapshot_id)
+        old_snapshot = await db.get(
+            ConversationSnapshot, conversation.active_snapshot_id
+        )
         if old_snapshot:
             old_snapshot.superseded_by = new_snapshot.id
 
@@ -311,7 +316,9 @@ async def continuous_compact(
         return {"applied": False, "reason": "not_enough_turns_to_compact"}
 
     # Build history to compact
-    history_to_compact = await _build_compaction_history(db, conversation, compact_turns)
+    history_to_compact = await _build_compaction_history(
+        db, conversation, compact_turns
+    )
 
     # Resolve compactor model
     compaction_prompt = build_continuous_compaction_prompt()
@@ -339,10 +346,14 @@ async def continuous_compact(
             messages=compaction_messages,
             max_tokens=8000,
         )
-        response_dict = response.model_dump() if hasattr(response, "model_dump") else response
+        response_dict = (
+            response.model_dump() if hasattr(response, "model_dump") else response
+        )
         if isinstance(response_dict, dict):
             choices = response_dict.get("choices", [])
-            snapshot_content = choices[0].get("message", {}).get("content", "") if choices else ""
+            snapshot_content = (
+                choices[0].get("message", {}).get("content", "") if choices else ""
+            )
             usage = response_dict.get("usage", {})
             snapshot_tokens = usage.get("completion_tokens", 0) or 0
         else:
@@ -404,17 +415,19 @@ async def assemble_context(
     if conversation.active_snapshot_id:
         snapshot = await db.get(ConversationSnapshot, conversation.active_snapshot_id)
         if snapshot:
-            messages.append({
-                "role": "system",
-                "content": (
-                    f"[CONVERSATION SNAPSHOT — generated at turn "
-                    f"{snapshot.turn_number_at_compaction} "
-                    f"by {snapshot.compactor_model}. "
-                    f"Original history: {snapshot.tokens_before} tokens, "
-                    f"compacted to {snapshot.tokens_after} tokens.]\n\n"
-                    f"{snapshot.snapshot_content}"
-                ),
-            })
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"[CONVERSATION SNAPSHOT — generated at turn "
+                        f"{snapshot.turn_number_at_compaction} "
+                        f"by {snapshot.compactor_model}. "
+                        f"Original history: {snapshot.tokens_before} tokens, "
+                        f"compacted to {snapshot.tokens_after} tokens.]\n\n"
+                        f"{snapshot.snapshot_content}"
+                    ),
+                }
+            )
 
             # Load only turns AFTER the snapshot
             result = await db.execute(

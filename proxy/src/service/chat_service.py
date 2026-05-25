@@ -15,8 +15,6 @@ import time
 import uuid
 
 from fastapi import HTTPException
-
-logger = logging.getLogger(__name__)
 from litellm.exceptions import (
     AuthenticationError,
     BadRequestError,
@@ -24,27 +22,49 @@ from litellm.exceptions import (
     RateLimitError,
     ServiceUnavailableError,
 )
-from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
+from sqlmodel.ext.asyncio.session import AsyncSession
 
+from src.adapters.cache.message_ordering import (
+    canonicalize_message_order,
+    sort_tool_definitions,
+)
+from src.adapters.cache.provider_cache import (
+    apply_anthropic_cache_control,
+    build_cache_destruction_metadata,
+    build_cache_metadata,
+    should_apply_cache_control,
+)
+from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
 from src.adapters.db.models import Conversation, ConversationTurn
 from src.adapters.litellm import call_litellm
-from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
+from src.api.metrics import metrics
 from src.config.pseudo_models import ProxyConfigSchema
 from src.domain.capabilities import SessionCapabilities
-from src.service.model_resolver import normalize_model_name
 from src.service.capability_detector import (
     accumulate_capabilities,
     detect_turn_capabilities,
     estimate_tokens,
     load_session_capabilities,
 )
+from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
+from src.service.compactor.continuous import (
+    assemble_context,
+    continuous_compact,
+    detect_external_compaction,
+    handle_external_compaction,
+)
+from src.service.compactor.pre_compactor import pre_compact_input
 from src.service.compatibility import (
     validate_incoming_content,
     validate_switch,
 )
 from src.service.compatibility import _any_vision as _any_vision_comp
+from src.service.context_alert import get_context_alert
+from src.service.model_resolver import normalize_model_name
+from src.service.multimedia.image_describer import auto_describe_images
+from src.service.router_llm.suggester import evaluate_complexity, is_downgrade
 from src.service.threshold_guard import check_input_threshold
 from src.service.tool_filter import get_eligible_models, is_pinned_model_eligible
 from src.service.tools_canonical import (
@@ -57,17 +77,8 @@ from src.service.tools_edge_cases import (
     extract_thinking_content,
     truncate_tool_result,
 )
-from src.service.compactor.pre_compactor import pre_compact_input
-from src.service.compactor.continuous import (
-    assemble_context,
-    continuous_compact,
-    detect_external_compaction,
-    handle_external_compaction,
-)
-from src.service.multimedia.image_describer import auto_describe_images
-from src.service.router_llm.suggester import evaluate_complexity, is_downgrade
-from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
-from src.service.context_alert import get_context_alert
+
+logger = logging.getLogger(__name__)
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -94,22 +105,44 @@ async def process_chat_request(
     _t0 = time.monotonic()
     logger.info(
         "req_start | trace=%s model=%s conv=%s messages=%d tools=%s stream=%s",
-        _req_id, model, conversation_id or "new",
-        len(messages), bool(tools), stream,
+        _req_id,
+        model,
+        conversation_id or "new",
+        len(messages),
+        bool(tools),
+        stream,
     )
 
     # Step 1-3: Resolve model + detect capabilities + validate content
     pseudo_model_name, pm_schema, turn_caps = _resolve_and_validate(
-        model, messages, tools, config,
+        model,
+        messages,
+        tools,
+        config,
     )
+    # Sprint 8: track request metrics
+    metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())
     conv_uuid = _parse_uuid(conv_id)
 
     # Step 4-11: Load session, check switch, load/create conversation, resolve model, set affinity
-    existing_affinity, session_caps, compatibility, physical_model, provider, tools_filter, conv, is_new = (
-        await _resolve_session_conv_and_models(
-            db, affinity, conv_id, conv_uuid, pseudo_model_name, pm_schema, config,
-        )
+    (
+        existing_affinity,
+        session_caps,
+        compatibility,
+        physical_model,
+        provider,
+        tools_filter,
+        conv,
+        is_new,
+    ) = await _resolve_session_conv_and_models(
+        db,
+        affinity,
+        conv_id,
+        conv_uuid,
+        pseudo_model_name,
+        pm_schema,
+        config,
     )
     await affinity.set(conv_id, physical_model)
 
@@ -135,7 +168,13 @@ async def process_chat_request(
 
     # Sprint 4: Pre-compaction, external detection, continuous compaction
     prep = await _apply_compaction(
-        conv, is_new, messages_for_llm, pm_schema, config, db, est_input,
+        conv,
+        is_new,
+        messages_for_llm,
+        pm_schema,
+        config,
+        db,
+        est_input,
     )
     active_messages = prep["active_messages"]
 
@@ -189,10 +228,14 @@ async def process_chat_request(
     logger.info(
         "req_end   | trace=%s conv=%s pseudo=%s physical=%s "
         "stream=%s fallback=%s tokens_in=%s elapsed=%.1fs",
-        _req_id, conv_id[:12], pseudo_model_name, physical_model,
+        _req_id,
+        conv_id[:12],
+        pseudo_model_name,
+        physical_model,
         stream,
         fallback_info.reason if fallback_info.applied else "none",
-        est_input, _elapsed,
+        est_input,
+        _elapsed,
     )
 
     # Compute Sprint 5 metadata
@@ -202,32 +245,34 @@ async def process_chat_request(
         images_described = auto_describe_meta.get("images_described", 0)
         images_described_by = auto_describe_meta.get("described_by")
 
-    return await _save_and_return(SaveContext(
-        db=db,
-        conv=conv,
-        conv_uuid=conv_uuid,
-        conv_id=conv_id,
-        pseudo_model_name=pseudo_model_name,
-        physical_model=physical_model,
-        provider=provider,
-        turn_caps=turn_caps,
-        messages=messages,
-        response=response,
-        fallback_info=fallback_info,
-        is_new_conversation=is_new,
-        existing_affinity=existing_affinity,
-        pm_schema=pm_schema,
-        session_caps=session_caps,
-        tools=tools,
-        tool_choice=tool_choice,
-        prep=prep,
-        compatibility=compatibility,
-        tools_filter=tools_filter,
-        images_described=images_described,
-        images_described_by=images_described_by,
-        router_suggestion=router_suggestion,
-        context_alert=context_alert,
-    ))
+    return await _save_and_return(
+        SaveContext(
+            db=db,
+            conv=conv,
+            conv_uuid=conv_uuid,
+            conv_id=conv_id,
+            pseudo_model_name=pseudo_model_name,
+            physical_model=physical_model,
+            provider=provider,
+            turn_caps=turn_caps,
+            messages=messages,
+            response=response,
+            fallback_info=fallback_info,
+            is_new_conversation=is_new,
+            existing_affinity=existing_affinity,
+            pm_schema=pm_schema,
+            session_caps=session_caps,
+            tools=tools,
+            tool_choice=tool_choice,
+            prep=prep,
+            compatibility=compatibility,
+            tools_filter=tools_filter,
+            images_described=images_described,
+            images_described_by=images_described_by,
+            router_suggestion=router_suggestion,
+            context_alert=context_alert,
+        )
+    )
 
 
 # ── Step helpers ──────────────────────────────────────────────────────────────
@@ -284,7 +329,9 @@ async def _resolve_session_conv_and_models(
     # Must happen BEFORE load_session_capabilities to avoid the identity-map issue:
     # if load_session_capabilities loads Conversation (without selectinload) first,
     # the subsequent db.get with selectinload returns the same object without eager loads.
-    conv = await db.get(Conversation, conv_uuid, options=[selectinload(Conversation.turns)])
+    conv = await db.get(
+        Conversation, conv_uuid, options=[selectinload(Conversation.turns)]
+    )
     is_new = conv is None
 
     # Load session capabilities (uses identity-mapped conv, no extra DB trip)
@@ -318,12 +365,17 @@ async def _resolve_session_conv_and_models(
 
     eligible = get_eligible_models(pm_schema.physical_models, session_caps)
     tools_filter_applied = bool(
-        session_caps.has_parallel_tools and len(eligible) < len(pm_schema.physical_models)
+        session_caps.has_parallel_tools
+        and len(eligible) < len(pm_schema.physical_models)
     )
     tools_filter_reason = "parallel_tools_required" if tools_filter_applied else None
 
     pinned = existing_affinity
-    if pinned and session_caps.has_parallel_tools and not is_pinned_model_eligible(pinned, eligible):
+    if (
+        pinned
+        and session_caps.has_parallel_tools
+        and not is_pinned_model_eligible(pinned, eligible)
+    ):
         pinned = None
     if pinned:
         selected_phys = next(
@@ -384,7 +436,9 @@ def _raise_if_exceeds_threshold(
                     f"({error.threshold} tokens) for pseudo-model "
                     f"'{pm_schema.display_name}'."
                 ),
-                "suggestions": _suggest_higher_threshold_models(config, error.estimated),
+                "suggestions": _suggest_higher_threshold_models(
+                    config, error.estimated
+                ),
             },
         )
 
@@ -415,7 +469,10 @@ def _resolve_auto_describe_params(
 
     vision_model: str = (
         pinned_physical_model
-        if any(m.model == pinned_physical_model and m.vision for m in current_pm.physical_models)
+        if any(
+            m.model == pinned_physical_model and m.vision
+            for m in current_pm.physical_models
+        )
         else vision_models[0].model
     )
     return (vision_model, current_pseudo_name)
@@ -443,7 +500,10 @@ async def handle_auto_describe(
     """Execute auto-describe when switching from vision to non-vision model."""
     # Resolve vision model (also validates auto-describe is needed)
     vision_model, current_pseudo_name = _resolve_auto_describe_params(
-        config, current_pseudo_name, new_pm_schema, pinned_physical_model,
+        config,
+        current_pseudo_name,
+        new_pm_schema,
+        pinned_physical_model,
     )
     if vision_model is None:
         return (None, None)
@@ -453,7 +513,9 @@ async def handle_auto_describe(
     if not all_messages:
         return (None, None)
 
-    described_history, desc_meta = await auto_describe_images(all_messages, vision_model)
+    described_history, desc_meta = await auto_describe_images(
+        all_messages, vision_model
+    )
     described_count = desc_meta.get("images_described", 0)
     if described_count == 0:
         return (None, desc_meta)
@@ -470,7 +532,9 @@ async def handle_auto_describe(
         messages=described_history,
         response={"metadata": desc_meta},
         turn_type="degradation_event",
-        had_images=False, had_tools=False, had_parallel_tools=False,
+        had_images=False,
+        had_tools=False,
+        had_parallel_tools=False,
     )
     db.add(deg_turn)
     conv.images_described = max(conv.images_described or 0, 0) + described_count
@@ -531,9 +595,13 @@ async def _apply_compaction(
     }
 
     # Pre-compaction
-    if pm_schema.pre_compaction.enabled and estimated_input > (pm_schema.pre_compaction.threshold or 0):
+    if pm_schema.pre_compaction.enabled and estimated_input > (
+        pm_schema.pre_compaction.threshold or 0
+    ):
         compacted, meta = await pre_compact_input(
-            messages=messages, pseudo_model=pm_schema, config=config,
+            messages=messages,
+            pseudo_model=pm_schema,
+            config=config,
         )
         state["pre_compaction_applied"] = meta.get("applied", False)
         state["pre_compaction_metadata"] = meta
@@ -553,9 +621,16 @@ async def _apply_compaction(
             skip_continuous = True
 
     # Continuous compaction
-    if not skip_continuous and conv is not None and pm_schema.continuous_compaction.enabled:
+    if (
+        not skip_continuous
+        and conv is not None
+        and pm_schema.continuous_compaction.enabled
+    ):
         cc_meta = await continuous_compact(
-            conversation=conv, pseudo_model=pm_schema, config=config, db=db,
+            conversation=conv,
+            pseudo_model=pm_schema,
+            config=config,
+            db=db,
         )
         state["continuous_compaction_applied"] = cc_meta.get("applied", False)
         state["continuous_compaction_metadata"] = cc_meta
@@ -570,7 +645,11 @@ async def _apply_compaction(
 
 async def _save_and_return(ctx: SaveContext) -> ChatResult:
     """Steps 14-20: Build turn, save to DB, accumulate capabilities, return result."""
-    response_dict = ctx.response.model_dump() if hasattr(ctx.response, "model_dump") else ctx.response
+    response_dict = (
+        ctx.response.model_dump()
+        if hasattr(ctx.response, "model_dump")
+        else ctx.response
+    )
 
     input_tokens, output_tokens = _parse_usage(response_dict)
     tool_meta = _process_tool_metadata(response_dict, ctx)
@@ -588,6 +667,10 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
             if truncated != content:
                 tool_result_truncated = True
                 msg["content"] = truncated
+
+    # Sprint 7: extract provider cache metadata from response
+    provider = ctx.provider or ""
+    cache_meta = _extract_cache_metadata(ctx.response, provider, ctx.fallback_info)
 
     turn_number = 1
     if ctx.conv.turns:
@@ -618,11 +701,35 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
     ctx.conv.physical_model = ctx.physical_model
     ctx.conv.total_tokens += input_tokens + output_tokens
     ctx.conv.updated_at = func.now()
+
+    # Accumulate capabilities BEFORE commit — same transaction as turn save
+    updated_caps = await accumulate_capabilities(
+        ctx.db, ctx.conv_uuid, ctx.turn_caps, ctx.session_caps
+    )
+
     await ctx.db.commit()
 
-    updated_caps = await accumulate_capabilities(ctx.db, ctx.conv_uuid, ctx.turn_caps, ctx.session_caps)
+    # Sprint 8: record metrics
+    metrics.record_tokens(
+        input_tokens, output_tokens, input_tokens
+    )  # cached_tokens estimated
+    if ctx.fallback_info.applied:
+        metrics.record_fallback(ctx.fallback_info.reason or "unknown")
+    if ctx.prep.get("pre_compaction_applied"):
+        saved = (
+            ctx.prep.get("pre_compaction_metadata", {}).get("savings_tokens", 0) or 0
+        )
+        metrics.record_compaction("pre", saved)
+    if ctx.prep.get("continuous_compaction_applied"):
+        saved = (
+            ctx.prep.get("continuous_compaction_metadata", {}).get("savings_tokens", 0)
+            or 0
+        )
+        metrics.record_compaction("continuous", saved)
 
-    affinity_maintained = not ctx.is_new_conversation and ctx.existing_affinity == ctx.physical_model
+    affinity_maintained = (
+        not ctx.is_new_conversation and ctx.existing_affinity == ctx.physical_model
+    )
 
     return ChatResult(
         conversation_id=ctx.conv_id,
@@ -653,6 +760,7 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
         images_described_by=ctx.images_described_by,
         router_suggestion=ctx.router_suggestion,
         context_alert=ctx.context_alert,
+        cache_metadata=cache_meta,
     )
 
 
@@ -671,6 +779,9 @@ async def call_with_fallback(
     NotFoundError (404 — e.g. model not available via provider), and
     AuthenticationError (401 — expired / invalid key for a given provider).
     Any other exception propagates immediately (the request fails fast).
+
+    Sprint 7: applies provider-specific cache optimizations (Anthropic cache_control)
+    and tracks cache destruction on fallback.
     """
     fallback_info = FallbackInfo()
     last_error: Exception | None = None
@@ -685,21 +796,68 @@ async def call_with_fallback(
         BadRequestError,  # e.g. invalid model ID, model not found via provider
     )
 
+    # Sprint 7: track cache optimization for metadata extraction
+    cache_optimization_applied = False
+
     for idx, phys in enumerate(pseudo_model_schema.physical_models):
         try:
             logger.info(
                 "llm_call  | trace=%s attempt=%d/%d model=%s stream=%s",
-                _trace_id, idx + 1,
+                _trace_id,
+                idx + 1,
                 len(pseudo_model_schema.physical_models),
-                phys.model, stream,
+                phys.model,
+                stream,
             )
+
+            # Sprint 7: canonical message ordering for deterministic cache hits
+            # Reorder: system first, then history, then new messages at the tail
+            call_messages = canonicalize_message_order(messages)
+
+            # Sprint 7: stable tool definition serialization
+            raw_tools = kwargs.get("tools")
+            if raw_tools:
+                sorted_tools = sort_tool_definitions(raw_tools)
+                kwargs["tools"] = sorted_tools
+                # Log a sample sorted tool name for traceability
+                if sorted_tools:
+                    first_name = sorted_tools[0].get("function", {}).get("name", "?")
+                    logger.debug(
+                        "tools_sorted | trace=%s count=%d first=%s",
+                        _trace_id,
+                        len(sorted_tools),
+                        first_name,
+                    )
+
+            # Sprint 7: apply provider-specific cache optimizations
+            provider = phys.provider.lower()
+            if should_apply_cache_control(provider):
+                call_messages = apply_anthropic_cache_control(call_messages)
+                cache_optimization_applied = True
+                logger.debug(
+                    "cache_control applied provider=%s messages=%d",
+                    provider,
+                    len(call_messages),
+                )
+
             response = await call_litellm(
                 model=phys.model,
-                messages=messages,
+                messages=call_messages,
                 stream=stream,
                 **{k: v for k, v in kwargs.items() if v is not None},
             )
             fallback_info.attempted_models.append(phys.model)
+
+            # Sprint 7: attach provider for cache metadata extraction (non-streaming only)
+            if not stream:
+                try:
+                    response._proxy_provider = provider
+                    response._proxy_cache_optimization_applied = (
+                        cache_optimization_applied
+                    )
+                except (AttributeError, TypeError):
+                    pass  # some response objects are immutable (e.g., async generators)
+
             elapsed = time.monotonic() - _start
             # Log response summary for non-streaming
             if not stream:
@@ -708,18 +866,24 @@ async def call_with_fallback(
                     logger.info(
                         "llm_ok    | trace=%s model=%s elapsed=%.1fs "
                         "content_len=%d finish=%s",
-                        _trace_id, phys.model, elapsed, len(c),
+                        _trace_id,
+                        phys.model,
+                        elapsed,
+                        len(c),
                         response.choices[0].finish_reason,
                     )
                 except (AttributeError, IndexError):
                     logger.warning(
                         "llm_ok    | trace=%s model=%s (unexpected format)",
-                        _trace_id, phys.model,
+                        _trace_id,
+                        phys.model,
                     )
             else:
                 logger.info(
                     "llm_ok    | trace=%s model=%s elapsed=%.1fs (streaming)",
-                    _trace_id, phys.model, elapsed,
+                    _trace_id,
+                    phys.model,
+                    elapsed,
                 )
             return response, fallback_info
         except _RETRYABLE as e:
@@ -729,7 +893,9 @@ async def call_with_fallback(
             fallback_info.reason = f"{type(e).__name__}: {phys.model}"
             logger.warning(
                 "llm_fallback | trace=%s model=%s error=%s elapsed=%.1fs",
-                _trace_id, phys.model, type(e).__name__,
+                _trace_id,
+                phys.model,
+                type(e).__name__,
                 time.monotonic() - _start,
             )
             continue
@@ -737,7 +903,10 @@ async def call_with_fallback(
     elapsed = time.monotonic() - _start
     logger.error(
         "llm_fail   | trace=%s elapsed=%.1fs models=%s last_error=%s",
-        _trace_id, elapsed, fallback_info.attempted_models, last_error,
+        _trace_id,
+        elapsed,
+        fallback_info.attempted_models,
+        last_error,
     )
     raise HTTPException(
         status_code=503,
@@ -833,7 +1002,11 @@ def _process_tool_metadata(response_dict: dict, ctx) -> dict:
         except ValueError:
             ctx.turn_caps.tools_incomplete = True
 
-    if ctx.tool_choice == "required" and tool_calls and not enforce_tool_choice(response_dict, ctx.tool_choice):
+    if (
+        ctx.tool_choice == "required"
+        and tool_calls
+        and not enforce_tool_choice(response_dict, ctx.tool_choice)
+    ):
         ctx.turn_caps.tools_incomplete = True
 
     thinking_content = extract_thinking_content(response_dict, ctx.provider)
@@ -859,11 +1032,54 @@ def _suggest_higher_threshold_models(
     """Suggest pseudo-models with higher input_token_threshold."""
     suggestions = []
     for name, pm in config.pseudo_models.items():
-        if pm.input_token_threshold is not None and pm.input_token_threshold >= estimated_tokens:
-            suggestions.append({
-                "pseudo_model": name,
-                "display_name": pm.display_name,
-                "input_token_threshold": pm.input_token_threshold,
-            })
+        if (
+            pm.input_token_threshold is not None
+            and pm.input_token_threshold >= estimated_tokens
+        ):
+            suggestions.append(
+                {
+                    "pseudo_model": name,
+                    "display_name": pm.display_name,
+                    "input_token_threshold": pm.input_token_threshold,
+                }
+            )
     suggestions.sort(key=lambda x: x["input_token_threshold"])
     return suggestions
+
+
+def _extract_cache_metadata(
+    response,
+    provider: str,
+    fallback_info: FallbackInfo,
+) -> dict:
+    """Sprint 7: Extract cache hit/miss metadata from the provider response.
+
+    Uses provider_cache.build_cache_metadata() for standard extraction and
+    adds cache destruction info when fallback occurred.
+    """
+    response_dict = (
+        response.model_dump() if hasattr(response, "model_dump") else response
+    )
+    if not isinstance(response_dict, dict):
+        response_dict = {}
+
+    # Check if cache optimization was applied (attached in call_with_fallback)
+    cache_applied = getattr(response, "_proxy_cache_optimization_applied", False)
+    meta = build_cache_metadata(response_dict, provider, cache_applied)
+
+    # If fallback occurred, add cache destruction metadata
+    if fallback_info.applied and fallback_info.attempted_models:
+        prev_model = (
+            fallback_info.attempted_models[0]
+            if len(fallback_info.attempted_models) > 1
+            else ""
+        )
+        new_model = fallback_info.attempted_models[-1]
+        destruction = build_cache_destruction_metadata(
+            previous_model=prev_model,
+            new_model=new_model,
+            previous_cached_tokens=meta.get("cached_tokens", 0),
+        )
+        meta["fallback_cache_destruction"] = destruction
+
+    return meta

@@ -1,0 +1,33 @@
+# Caddy reverse proxy configuration for Proxy Determinista Multi-Modelo
+# 
+# Usage:
+#   1. Install Caddy: https://caddyserver.com/docs/install
+#   2. Save this file as /etc/caddy/Caddyfile
+#   3. Run: sudo caddy run --config /etc/caddy/Caddyfile
+#   4. Caddy automatically obtains and renews Let's Encrypt certificates
+
+proxy.tudominio.com {
+    reverse_proxy localhost:9110
+
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # JSON access logs
+    log {
+        output file /var/log/caddy/proxy-access.log
+        format json
+    }
+
+    # Optional: rate limiting at the reverse proxy level
+    # rate_limit {
+    #     zone dynamic {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+}

@@ -17,7 +17,6 @@ Sprint 5 — Auto-describe + Router LLM:
 import asyncio
 import json
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -47,14 +46,21 @@ def load_image() -> str:
     if not IMG_PATH.exists():
         return ""
     import base64
+
     with open(IMG_PATH, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
     return f"data:image/png;base64,{b64}"
 
 
-async def chat(model: str, msg: str | list, max_tokens: int = 300,
-               conv_id: str = None, stream: bool = False,
-               tools: list = None, tool_choice=None):
+async def chat(
+    model: str,
+    msg: str | list,
+    max_tokens: int = 300,
+    conv_id: str = None,
+    stream: bool = False,
+    tools: list = None,
+    tool_choice=None,
+):
     body = {
         "model": model,
         "messages": [{"role": "user", "content": msg}] if isinstance(msg, str) else msg,
@@ -76,9 +82,14 @@ async def chat(model: str, msg: str | list, max_tokens: int = 300,
 async def stream_chat(model: str, msg: str, max_tokens: int = 300):
     async with httpx.AsyncClient(timeout=180) as c:
         async with c.stream(
-            "POST", f"{BASE}/v1/chat/completions",
-            json={"model": model, "messages": [{"role": "user", "content": msg}],
-                  "stream": True, "max_tokens": max_tokens},
+            "POST",
+            f"{BASE}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": msg}],
+                "stream": True,
+                "max_tokens": max_tokens,
+            },
         ) as resp:
             has_content, has_done, count = False, False, 0
             async for line in resp.aiter_lines():
@@ -106,12 +117,17 @@ async def test_sprint4():
 
     # ── 4a. Compactador pseudo-model (debe responder) ─────────────────
     print("\n[4a] Compactador — operación de compactación")
-    st, d = await chat("compactador", "compact this conversation: user asked about Python lists. assistant explained list comprehension. user asked for examples.", 1000)
+    st, d = await chat(
+        "compactador",
+        "compact this conversation: user asked about Python lists. assistant explained list comprehension. user asked for examples.",
+        1000,
+    )
     if st == 200:
         c = d.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         phys = d.get("proxy_metadata", {}).get("physical_model", "?")
-        log_test("  Compactador responde", bool(c),
-                 f"content_len={len(c)} physical={phys}")
+        log_test(
+            "  Compactador responde", bool(c), f"content_len={len(c)} physical={phys}"
+        )
     else:
         err = d.get("detail", {}).get("message", str(d)[:150])
         log_test("  Compactador responde", False, f"HTTP {st} error={err[:100]}")
@@ -123,8 +139,11 @@ async def test_sprint4():
     st, d = await chat("flash-vision", huge, 10)  # threshold=16000
     if st == 400:
         err_code = d.get("detail", {}).get("error", "")
-        log_test("  flash-vision input excede → 400", "INPUT_EXCEEDS_THRESHOLD" in err_code,
-                 f"error={err_code}")
+        log_test(
+            "  flash-vision input excede → 400",
+            "INPUT_EXCEEDS_THRESHOLD" in err_code,
+            f"error={err_code}",
+        )
     else:
         log_test("  flash-vision input excede → 400", False, f"HTTP {st}")
 
@@ -135,8 +154,11 @@ async def test_sprint4():
     if st == 200:
         c = d.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         meta = d.get("proxy_metadata", {})
-        log_test("  Normal sin pre-compaction", bool(c),
-                 f"content={c[:40]!r} pre_compaction={meta.get('pre_compaction_applied')}")
+        log_test(
+            "  Normal sin pre-compaction",
+            bool(c),
+            f"content={c[:40]!r} pre_compaction={meta.get('pre_compaction_applied')}",
+        )
     else:
         log_test("  Normal sin pre-compaction", False, f"HTTP {st}")
     await asyncio.sleep(1)
@@ -150,8 +172,11 @@ async def test_sprint4():
         has_cont = "continuous_compaction_applied" in meta
         has_ext = "external_compaction_detected" in meta
         all_fields = has_pre and has_cont and has_ext
-        log_test("  Campos de compactación presentes", all_fields,
-                 f"pre={has_pre} continuous={has_cont} external={has_ext}")
+        log_test(
+            "  Campos de compactación presentes",
+            all_fields,
+            f"pre={has_pre} continuous={has_cont} external={has_ext}",
+        )
     else:
         log_test("  Campos de compactación presentes", False, f"HTTP {st}")
     await asyncio.sleep(1)
@@ -162,9 +187,11 @@ async def test_sprint4():
     st, d = await chat("normal", "hello world", 200)
     if st == 200:
         meta = d.get("proxy_metadata", {})
-        log_test("  external_compaction_detected field",
-                 "external_compaction_detected" in meta,
-                 f"value={meta.get('external_compaction_detected')}")
+        log_test(
+            "  external_compaction_detected field",
+            "external_compaction_detected" in meta,
+            f"value={meta.get('external_compaction_detected')}",
+        )
     else:
         log_test("  external_compaction_detected field", False, f"HTTP {st}")
 
@@ -183,9 +210,11 @@ async def test_sprint5():
     if st == 200:
         meta = d.get("proxy_metadata", {})
         suggestion = meta.get("router_suggestion")
-        log_test("  router_suggestion presente",
-                 suggestion is not None,
-                 f"suggestion={suggestion}")
+        log_test(
+            "  router_suggestion presente",
+            suggestion is not None,
+            f"suggestion={suggestion}",
+        )
     else:
         log_test("  router_suggestion presente", False, f"HTTP {st}")
     await asyncio.sleep(1)
@@ -195,9 +224,11 @@ async def test_sprint5():
     st, d = await chat("normal", "what is 2+2?", 200)
     if st == 200:
         meta = d.get("proxy_metadata", {})
-        log_test("  router_suggestion ausente para normal",
-                 meta.get("router_suggestion") is None,
-                 f"router_suggestion={meta.get('router_suggestion')}")
+        log_test(
+            "  router_suggestion ausente para normal",
+            meta.get("router_suggestion") is None,
+            f"router_suggestion={meta.get('router_suggestion')}",
+        )
     else:
         log_test("  router_suggestion ausente para normal", False, f"HTTP {st}")
     await asyncio.sleep(1)
@@ -207,11 +238,18 @@ async def test_sprint5():
     st, d = await chat("flash-lowcost", "hello", 200)
     if st == 200:
         meta = d.get("proxy_metadata", {})
-        fields = ["images_described", "images_described_by",
-                   "images_degraded_manually", "router_suggestion"]
+        fields = [
+            "images_described",
+            "images_described_by",
+            "images_degraded_manually",
+            "router_suggestion",
+        ]
         present = all(f in meta for f in fields)
-        log_test("  Todos los campos S5 presentes", present,
-                 f"ausentes={[f for f in fields if f not in meta]}")
+        log_test(
+            "  Todos los campos S5 presentes",
+            present,
+            f"ausentes={[f for f in fields if f not in meta]}",
+        )
     else:
         log_test("  Todos los campos S5 presentes", False, f"HTTP {st}")
     await asyncio.sleep(1)
@@ -219,20 +257,26 @@ async def test_sprint5():
     # ── 5d. Auto-describe switch (vision → non-vision) ──────────────
     print("\n[5d] Auto-describe — switch visión→no-visión")
     if not HAS_IMAGE:
-        log_test("  Auto-describe switch", False,
-                 "captura.png no encontrada — skip")
+        log_test("  Auto-describe switch", False, "captura.png no encontrada — skip")
     else:
         conv = str(uuid.uuid4())
         # Turn 1: send image to vision model
         st1, d1 = await chat(
             "avanzada-vision",
             [
-                {"role": "user", "content": [
-                    {"type": "text", "text": "Describe"},
-                    {"type": "image_url", "image_url": {"url": DATA_URL, "detail": "low"}},
-                ]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": DATA_URL, "detail": "low"},
+                        },
+                    ],
+                },
             ],
-            500, conv,
+            500,
+            conv,
         )
         if st1 == 200:
             # Turn 2: switch to non-vision model (debe trigger auto-describe)
@@ -240,22 +284,33 @@ async def test_sprint5():
             st2, d2 = await chat(
                 "pensamiento-profundo-caro",
                 "What do you see in that image? (describe from the auto-description)",
-                500, conv,
+                500,
+                conv,
             )
             if st2 == 200:
                 meta = d2.get("proxy_metadata", {})
                 imgs = meta.get("images_described", 0)
                 desc_by = meta.get("images_described_by", "")
-                content = d2.get("choices", [{}])[0].get("message", {}).get("content", "")
-                log_test("  Switch con auto-describe", imgs > 0,
-                         f"images_described={imgs} described_by={desc_by} content={content[:60]!r}")
+                content = (
+                    d2.get("choices", [{}])[0].get("message", {}).get("content", "")
+                )
+                log_test(
+                    "  Switch con auto-describe",
+                    imgs > 0,
+                    f"images_described={imgs} described_by={desc_by} content={content[:60]!r}",
+                )
             else:
                 err = d2.get("detail", {}).get("message", str(d2)[:100])
-                log_test("  Switch con auto-describe", False, f"HTTP {st2} error={err[:80]}")
+                log_test(
+                    "  Switch con auto-describe", False, f"HTTP {st2} error={err[:80]}"
+                )
         else:
             err = d1.get("detail", {}).get("message", str(d1)[:100])
-            log_test("  Switch con auto-describe", False,
-                     f"visión falló HTTP {st1} {err[:80]}")
+            log_test(
+                "  Switch con auto-describe",
+                False,
+                f"visión falló HTTP {st1} {err[:80]}",
+            )
     await asyncio.sleep(1)
 
     # ── 5e. Degradación manual ──────────────────────────────────────
@@ -267,12 +322,19 @@ async def test_sprint5():
         st1, d1 = await chat(
             "avanzada-vision",
             [
-                {"role": "user", "content": [
-                    {"type": "text", "text": "Describe"},
-                    {"type": "image_url", "image_url": {"url": DATA_URL, "detail": "low"}},
-                ]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": DATA_URL, "detail": "low"},
+                        },
+                    ],
+                },
             ],
-            500, conv_d,
+            500,
+            conv_d,
         )
         if st1 == 200:
             await asyncio.sleep(1)
@@ -282,19 +344,30 @@ async def test_sprint5():
                     data = r.json()
                     imgs = data.get("images_described", 0)
                     can_switch = data.get("can_now_switch_to", [])
-                    log_test("  POST /degrade-images OK", imgs > 0,
-                             f"images_described={imgs} can_switch={len(can_switch)} models")
+                    log_test(
+                        "  POST /degrade-images OK",
+                        imgs > 0,
+                        f"images_described={imgs} can_switch={len(can_switch)} models",
+                    )
                 elif r.status_code == 400:
                     err = r.json().get("detail", {}).get("error", "")
-                    log_test("  POST /degrade-images", True,
-                             f"HTTP 400 (esperado si sin imágenes): {err}")
+                    log_test(
+                        "  POST /degrade-images",
+                        True,
+                        f"HTTP 400 (esperado si sin imágenes): {err}",
+                    )
                 else:
                     err = r.json().get("detail", {}).get("message", str(r.json())[:100])
-                    log_test("  POST /degrade-images", False, f"HTTP {r.status_code} {err[:80]}")
+                    log_test(
+                        "  POST /degrade-images",
+                        False,
+                        f"HTTP {r.status_code} {err[:80]}",
+                    )
         else:
             err = d1.get("detail", {}).get("message", str(d1)[:100])
-            log_test("  POST /degrade-images", False,
-                     f"visión falló HTTP {st1} {err[:80]}")
+            log_test(
+                "  POST /degrade-images", False, f"visión falló HTTP {st1} {err[:80]}"
+            )
     await asyncio.sleep(1)
 
     # ── 5f. Degradación sin imágenes → 400 ──────────────────────────
@@ -306,8 +379,7 @@ async def test_sprint5():
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(f"{BASE}/conversations/{conv_no}/degrade-images")
             ok = r.status_code == 400
-            log_test("  degrade sin imágenes → 400", ok,
-                     f"HTTP {r.status_code}")
+            log_test("  degrade sin imágenes → 400", ok, f"HTTP {r.status_code}")
     else:
         log_test("  degrade sin imágenes → 400", False, f"HTTP {st_n}")
 
@@ -321,9 +393,11 @@ async def test_sprint5():
             if r.status_code == 200:
                 data = r.json()
                 models = data.get("compatible_models", [])
-                log_test("  compatible-models endpoint",
-                         len(models) > 0,
-                         f"{len(models)} models listed")
+                log_test(
+                    "  compatible-models endpoint",
+                    len(models) > 0,
+                    f"{len(models)} models listed",
+                )
             else:
                 log_test("  compatible-models endpoint", False, f"HTTP {r.status_code}")
     else:

@@ -34,7 +34,9 @@ def _process_tool_delta(
 
 
 def _assemble_tool_call(
-    idx: int, entry: dict, was_incomplete: bool,
+    idx: int,
+    entry: dict,
+    was_incomplete: bool,
 ) -> tuple[dict | None, bool]:
     """Assemble a single tool call from accumulated deltas, validating JSON."""
     args = "".join(entry["function"]["arguments_parts"])

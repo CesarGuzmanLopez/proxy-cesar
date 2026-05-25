@@ -82,18 +82,20 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
-    - provider: google
-      model: gemini/gemini-3.5-flash
-      openai_tools_compatible: true
-      tools_strict: false
-      parallel_tools: false
-      vision: true
     - provider: groq
       model: groq/meta-llama/llama-4-scout-17b-16e-instruct
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
       vision: true
+      note: "Primary: fast, cheap Llama 4 vision via Groq"
+    - provider: google
+      model: gemini/gemini-3.5-flash
+      openai_tools_compatible: true # LiteLLM traduce
+      tools_strict: false
+      parallel_tools: false
+      vision: true
+      note: "Fallback: Gemini Flash vision"
     fallback_strategy: sequential
   normal:
     display_name: Normal
@@ -247,3 +249,18 @@ pseudo_models:
       openai_tools_compatible: true
       vision: false
     fallback_strategy: by_context_window
+
+model_aliases:
+  # OpenAI names → pseudo-models
+  gpt-4o: normal
+  gpt-4o-mini: deep-flash
+  "gpt-4.1": tareas-avanzadas
+  o3: pensamiento-profundo-caro
+  o4-mini: pensamiento-profundo-caro
+  # Anthropic names → pseudo-models
+  claude-haiku-3-5-20241022: flash-lowcost
+  # Google names → pseudo-models
+  gemini-2.5-flash: avanzada-vision
+  gemini-2.5-pro: avanzada-vision
+  # Generic fallback
+  default: normal

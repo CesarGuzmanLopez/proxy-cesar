@@ -3,7 +3,12 @@
 Covers default values for Sprint 5 fields.
 """
 
-from src.service.chat_models import FallbackInfo, MetadataContext, SaveContext, StreamContext
+from src.service.chat_models import (
+    FallbackInfo,
+    MetadataContext,
+    SaveContext,
+    StreamContext,
+)
 from src.domain.capabilities import SessionCapabilities
 
 

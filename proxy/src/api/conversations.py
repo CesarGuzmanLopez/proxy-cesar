@@ -57,8 +57,9 @@ async def get_conversation(
 
         # Count turns (avoid lazy load of conv.turns)
         result = await db.execute(
-            select(func.count(ConversationTurn.id))
-            .where(ConversationTurn.conversation_id == conv_uuid)
+            select(func.count(ConversationTurn.id)).where(
+                ConversationTurn.conversation_id == conv_uuid
+            )
         )
         turn_count = result.scalar() or 0
 
@@ -87,7 +88,9 @@ async def get_conversation(
                 "has_parallel_tools": has_parallel,
             },
             "max_tools_level": max_tools_level,
-            "active_snapshot_id": str(conv.active_snapshot_id) if conv.active_snapshot_id else None,
+            "active_snapshot_id": str(conv.active_snapshot_id)
+            if conv.active_snapshot_id
+            else None,
         }
     finally:
         await db.close()
@@ -133,12 +136,14 @@ async def get_compatible_models(
 
         for name, pm in config.pseudo_models.items():
             if name == current_pseudo:
-                compatible_models.append({
-                    "pseudo_model": name,
-                    "display_name": pm.display_name,
-                    "status": "safe",
-                    "reason": "Current pseudo-model.",
-                })
+                compatible_models.append(
+                    {
+                        "pseudo_model": name,
+                        "display_name": pm.display_name,
+                        "status": "safe",
+                        "reason": "Current pseudo-model.",
+                    }
+                )
                 continue
 
             result = validate_switch(
@@ -149,13 +154,15 @@ async def get_compatible_models(
                 config=config,
             )
 
-            compatible_models.append({
-                "pseudo_model": name,
-                "display_name": pm.display_name,
-                "status": result.status.value,
-                "reason": result.reason,
-                "remediation": result.remediation if result.remediation else None,
-            })
+            compatible_models.append(
+                {
+                    "pseudo_model": name,
+                    "display_name": pm.display_name,
+                    "status": result.status.value,
+                    "reason": result.reason,
+                    "remediation": result.remediation if result.remediation else None,
+                }
+            )
 
         return {
             "conversation_id": conversation_id,
@@ -208,24 +215,26 @@ async def get_tools_compatibility(
 
         pseudo_models_list = []
         for name, pm in config.pseudo_models.items():
-            parallel_eligible = [m.model for m in pm.physical_models if m.parallel_tools]
+            parallel_eligible = [
+                m.model for m in pm.physical_models if m.parallel_tools
+            ]
             strict_models = [m.model for m in pm.physical_models if m.tools_strict]
             non_strict = [m.model for m in pm.physical_models if not m.tools_strict]
             blocked = [m.model for m in pm.physical_models if not m.parallel_tools]
 
-            pseudo_models_list.append({
-                "name": name,
-                "display_name": pm.display_name,
-                "tool_support": {
-                    "parallel_eligible": len(parallel_eligible) > 0,
-                    "parallel_models": parallel_eligible,
-                    "strict_models": strict_models,
-                    "non_strict_models": non_strict,
-                    "blocked_models": (
-                        blocked if has_parallel else []
-                    ),
-                },
-            })
+            pseudo_models_list.append(
+                {
+                    "name": name,
+                    "display_name": pm.display_name,
+                    "tool_support": {
+                        "parallel_eligible": len(parallel_eligible) > 0,
+                        "parallel_models": parallel_eligible,
+                        "strict_models": strict_models,
+                        "non_strict_models": non_strict,
+                        "blocked_models": (blocked if has_parallel else []),
+                    },
+                }
+            )
 
         return {
             "conversation_id": conversation_id,
@@ -472,14 +481,16 @@ async def audit_log(
         events: list[dict] = []
 
         # Conversation created
-        events.append({
-            "timestamp": conv.created_at.isoformat(),
-            "event_type": "conversation_created",
-            "details": {
-                "pseudo_model": conv.pseudo_model,
-                "physical_model": conv.physical_model,
-            },
-        })
+        events.append(
+            {
+                "timestamp": conv.created_at.isoformat(),
+                "event_type": "conversation_created",
+                "details": {
+                    "pseudo_model": conv.pseudo_model,
+                    "physical_model": conv.physical_model,
+                },
+            }
+        )
 
         # Turns: detect pseudo-model switches, fallbacks, event types
         turns_result = await db.execute(
@@ -491,35 +502,41 @@ async def audit_log(
         for turn in turns_result.scalars().all():
             # Pseudo-model switch detection
             if turn.turn_type == "normal" and turn.pseudo_model != prev_pseudo:
-                events.append({
-                    "timestamp": turn.created_at.isoformat(),
-                    "event_type": "pseudo_model_switched",
-                    "details": {
-                        "from": prev_pseudo,
-                        "to": turn.pseudo_model,
-                        "turn": turn.turn_number,
-                    },
-                })
+                events.append(
+                    {
+                        "timestamp": turn.created_at.isoformat(),
+                        "event_type": "pseudo_model_switched",
+                        "details": {
+                            "from": prev_pseudo,
+                            "to": turn.pseudo_model,
+                            "turn": turn.turn_number,
+                        },
+                    }
+                )
                 prev_pseudo = turn.pseudo_model
 
             # Fallback
             if turn.fallback_applied:
-                events.append({
-                    "timestamp": turn.created_at.isoformat(),
-                    "event_type": "fallback_applied",
-                    "details": {
-                        "turn": turn.turn_number,
-                        "reason": turn.fallback_reason,
-                    },
-                })
+                events.append(
+                    {
+                        "timestamp": turn.created_at.isoformat(),
+                        "event_type": "fallback_applied",
+                        "details": {
+                            "turn": turn.turn_number,
+                            "reason": turn.fallback_reason,
+                        },
+                    }
+                )
 
             # Non-normal event turns
             if turn.turn_type != "normal":
-                events.append({
-                    "timestamp": turn.created_at.isoformat(),
-                    "event_type": turn.turn_type,
-                    "details": {"turn": turn.turn_number},
-                })
+                events.append(
+                    {
+                        "timestamp": turn.created_at.isoformat(),
+                        "event_type": turn.turn_type,
+                        "details": {"turn": turn.turn_number},
+                    }
+                )
 
         # Snapshots (explicit + continuous + external)
         snap_result = await db.execute(
@@ -528,15 +545,17 @@ async def audit_log(
             .order_by(ConversationSnapshot.created_at)
         )
         for snap in snap_result.scalars().all():
-            events.append({
-                "timestamp": snap.created_at.isoformat(),
-                "event_type": f"compaction_{snap.snapshot_type}",
-                "details": {
-                    "tokens_before": snap.tokens_before,
-                    "tokens_after": snap.tokens_after,
-                    "compactor": snap.compactor_model,
-                },
-            })
+            events.append(
+                {
+                    "timestamp": snap.created_at.isoformat(),
+                    "event_type": f"compaction_{snap.snapshot_type}",
+                    "details": {
+                        "tokens_before": snap.tokens_before,
+                        "tokens_after": snap.tokens_after,
+                        "compactor": snap.compactor_model,
+                    },
+                }
+            )
 
         events.sort(key=lambda e: e["timestamp"])
 
@@ -585,39 +604,52 @@ async def degrade_images(
     try:
         conv_uuid = _parse_uuid(conversation_id)
         conv = await db.get(
-            Conversation, conv_uuid,
+            Conversation,
+            conv_uuid,
             options=[selectinload(Conversation.turns)],
         )
         if conv is None:
-            raise HTTPException(status_code=404, detail={
-                "error": "CONVERSATION_NOT_FOUND",
-            })
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "CONVERSATION_NOT_FOUND",
+                },
+            )
 
         # Check if images exist
         caps = await load_session_capabilities(db, conv_uuid)
         if not caps.has_images:
-            raise HTTPException(status_code=400, detail={
-                "error": "NO_IMAGES",
-                "message": "This conversation has no images to degrade.",
-            })
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "NO_IMAGES",
+                    "message": "This conversation has no images to degrade.",
+                },
+            )
 
         # Find a vision model in the current pseudo-model
         current_pm = config.pseudo_models.get(conv.pseudo_model)
         if current_pm is None:
-            raise HTTPException(status_code=400, detail={
-                "error": "UNKNOWN_PSEUDO_MODEL",
-                "message": f"Current pseudo-model '{conv.pseudo_model}' not found.",
-            })
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "UNKNOWN_PSEUDO_MODEL",
+                    "message": f"Current pseudo-model '{conv.pseudo_model}' not found.",
+                },
+            )
 
         vision_models = [m for m in current_pm.physical_models if m.vision]
         if not vision_models:
-            raise HTTPException(status_code=400, detail={
-                "error": "NO_VISION_MODEL",
-                "message": (
-                    f"Current pseudo-model '{conv.pseudo_model}' has no "
-                    f"vision-capable physical model to describe images."
-                ),
-            })
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "NO_VISION_MODEL",
+                    "message": (
+                        f"Current pseudo-model '{conv.pseudo_model}' has no "
+                        f"vision-capable physical model to describe images."
+                    ),
+                },
+            )
 
         # Use pinned model if it has vision, otherwise first vision model
         vision_model: str = (
@@ -638,7 +670,8 @@ async def degrade_images(
 
         # Auto-describe
         described_messages, desc_meta = await auto_describe_images(
-            all_messages, vision_model,
+            all_messages,
+            vision_model,
         )
 
         described_count = desc_meta.get("images_described", 0)
@@ -652,8 +685,8 @@ async def degrade_images(
 
         # Store as a degradation_event turn
         turn_number: int = (
-            max(t.turn_number for t in conv.turns) + 1
-        ) if conv.turns else 1
+            (max(t.turn_number for t in conv.turns) + 1) if conv.turns else 1
+        )
 
         deg_turn = ConversationTurn(
             conversation_id=conv_uuid,

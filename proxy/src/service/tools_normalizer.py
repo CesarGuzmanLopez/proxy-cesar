@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 @dataclass
 class NormalizationMetadata:
     """Metadata about a normalization operation."""
+
     turns_serialized: int = 0
     parallel_calls_serialized: int = 0
     affected_turns: list[int] = field(default_factory=list)
@@ -24,10 +25,7 @@ def _find_tool_result(tc_id: str, messages: list[dict], start_idx: int) -> dict 
     """Find the tool result message for a given tool_call_id."""
     for j in range(start_idx, len(messages)):
         result_msg = messages[j]
-        if (
-            result_msg.get("role") == "tool"
-            and result_msg.get("tool_call_id") == tc_id
-        ):
+        if result_msg.get("role") == "tool" and result_msg.get("tool_call_id") == tc_id:
             return result_msg
     return None
 
@@ -64,14 +62,16 @@ def _serialize_parallel_turn(
 
         # Insert annotation (except after the last call)
         if idx < len(tool_calls) - 1:
-            normalized.append({
-                "role": "system",
-                "content": (
-                    f"[TOOL_SERIALIZED: originally parallel in "
-                    f"turn #{turn_number}, call {idx + 1} of "
-                    f"{len(tool_calls)}]"
-                ),
-            })
+            normalized.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"[TOOL_SERIALIZED: originally parallel in "
+                        f"turn #{turn_number}, call {idx + 1} of "
+                        f"{len(tool_calls)}]"
+                    ),
+                }
+            )
 
 
 def _build_parallel_call_ids(messages: list[dict]) -> set[str]:
@@ -111,9 +111,13 @@ def normalize_history(
 
         if msg.get("role") == "assistant" and len(tool_calls) > 1:
             _serialize_parallel_turn(
-                msg=msg, tool_calls=tool_calls, turn_number=i + 1,
-                messages=messages, msg_index=i,
-                normalized=normalized, skip_tool_results=skip_tool_results,
+                msg=msg,
+                tool_calls=tool_calls,
+                turn_number=i + 1,
+                messages=messages,
+                msg_index=i,
+                normalized=normalized,
+                skip_tool_results=skip_tool_results,
                 meta=meta,
             )
 

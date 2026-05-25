@@ -4,7 +4,10 @@ Sprint 4 §5.3 — minimum 5 tests.
 Verifies that prompts are well-formed, complete, and deterministic.
 """
 
-from src.service.compactor.prompts import build_continuous_compaction_prompt, build_pre_compaction_prompt
+from src.service.compactor.prompts import (
+    build_continuous_compaction_prompt,
+    build_pre_compaction_prompt,
+)
 
 
 def test_pre_compaction_prompt_contains_user_content():

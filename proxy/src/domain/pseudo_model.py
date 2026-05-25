@@ -29,6 +29,7 @@ class PreCompactionConfig:
     plan-proxy.md §9.2: If enabled, inputs exceeding threshold are
     summarized by a cheap compactor model before the expensive model sees them.
     """
+
     enabled: bool = False
     threshold: int | None = None
     target_tokens: int | None = None
@@ -42,6 +43,7 @@ class ContinuousCompactionConfig:
     plan-proxy.md §10.2: If enabled, when accumulated context exceeds
     trigger_pct of context_window, old turns are compacted into a snapshot.
     """
+
     enabled: bool = False
     trigger_pct: int | None = None
     compact_preserve_recent: int | None = None
@@ -53,6 +55,7 @@ class RouterLLMConfig:
 
     plan-proxy.md §12: Optional evaluation of task complexity.
     """
+
     enabled: bool = False
     suggester: str | None = None
     suggest_on_downgrade_only: bool = True
@@ -65,6 +68,7 @@ class ImageHandlingConfig:
     plan-proxy.md §7.2: On downgrade to a model without vision,
     either auto_describe or block.
     """
+
     on_downgrade: str = "block"
 
 

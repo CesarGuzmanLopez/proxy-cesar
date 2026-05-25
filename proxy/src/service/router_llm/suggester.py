@@ -383,8 +383,7 @@ def _parse_evaluation_response(content: str) -> dict | None:
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
         cleaned = "\n".join(
-            line for line in lines
-            if not line.strip().startswith("```")
+            line for line in lines if not line.strip().startswith("```")
         )
         cleaned = cleaned.strip()
 

@@ -11,6 +11,7 @@ from typing import Literal
 
 class ToolFunctionSchema(BaseModel, extra="forbid"):
     """A single tool function definition (OpenAI format)."""
+
     name: str = Field(min_length=1, max_length=256)
     description: str = Field(default="", max_length=4096)
     parameters: dict = Field(default_factory=dict)
@@ -19,6 +20,7 @@ class ToolFunctionSchema(BaseModel, extra="forbid"):
 
 class ToolDefinitionSchema(BaseModel, extra="forbid"):
     """Wrapper for a tool definition (OpenAI format)."""
+
     type: Literal["function"] = "function"
     function: ToolFunctionSchema
 
@@ -29,6 +31,7 @@ class ToolCallFunctionSchema(BaseModel, extra="forbid"):
     `arguments` is a JSON string — stored exactly as the model returns it.
     plan-proxy.md §6.5: arguments must NOT be parsed into an object.
     """
+
     name: str = Field(min_length=1, max_length=256)
     arguments: str = Field(min_length=1)
 
@@ -39,6 +42,7 @@ class ToolCallSchema(BaseModel, extra="forbid"):
     `id` is used EXACTLY as returned by the model via LiteLLM.
     plan-proxy.md §6.5: no prefix, no suffix, no modification.
     """
+
     id: str = Field(min_length=1, max_length=128)
     type: Literal["function"] = "function"
     function: ToolCallFunctionSchema
@@ -49,6 +53,7 @@ class ToolResultSchema(BaseModel, extra="forbid"):
 
     `tool_call_id` must match the assistant's tool_call id.
     """
+
     role: Literal["tool"] = "tool"
     tool_call_id: str = Field(min_length=1, max_length=128)
     name: str | None = Field(default=None, max_length=256)
@@ -57,6 +62,7 @@ class ToolResultSchema(BaseModel, extra="forbid"):
 
 class NormalizeToolsRequest(BaseModel, extra="forbid"):
     """Request body for POST /conversations/{id}/normalize-tools."""
+
     dry_run: bool = False
 
 
@@ -66,6 +72,7 @@ class NormalizeToolsResponse(BaseModel, extra="forbid"):
     plan-proxy.md §6.8: original history is preserved.
     A normalization_event turn is created with the serialized history.
     """
+
     conversation_id: str
     normalized_turns: int = Field(ge=0)
     parallel_calls_serialized: int = Field(ge=0)

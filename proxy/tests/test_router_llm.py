@@ -14,14 +14,13 @@ python.md §3: Result monad — errors returned, not raised.
 
 import builtins
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.service.chat_service import evaluate_router_suggestion
 from src.service.router_llm.suggester import (
     ALLOWED_SUGGESTIONS,
-    MAX_TASK_CHARS,
     _classify_with_bert,
     _compute_tier,
     _extract_last_user_content,
@@ -35,7 +34,9 @@ from src.config.pseudo_models import load_config
 _CONFIG = load_config("pseudo_models.yaml")
 
 
-def _make_simple_eval_response(complexity: str = "simple", suggested: str = "normal", reason: str = "Simple task.") -> MagicMock:
+def _make_simple_eval_response(
+    complexity: str = "simple", suggested: str = "normal", reason: str = "Simple task."
+) -> MagicMock:
     """Create a mock LiteLLM response for a simple task evaluation."""
     payload = {
         "complexity": complexity,
@@ -58,7 +59,9 @@ class TestEvaluateComplexity:
     @patch("src.service.router_llm.suggester.call_litellm")
     async def test_simple_task_returns_suggestion(self, mock_call):
         """Simple task → returns complexity: simple with suggested model."""
-        mock_call.return_value = _make_simple_eval_response("simple", "normal", "Simple question.")
+        mock_call.return_value = _make_simple_eval_response(
+            "simple", "normal", "Simple question."
+        )
         result = await evaluate_complexity(
             messages=[{"role": "user", "content": "What is 2+2?"}],
             suggester_model="zai/glm-4.5-flash",
@@ -81,7 +84,9 @@ class TestEvaluateComplexity:
     @patch("src.service.router_llm.suggester.call_litellm")
     async def test_only_last_user_message_evaluated(self, mock_call):
         """Multi-turn → only last user message evaluated."""
-        mock_call.return_value = _make_simple_eval_response("simple", "normal", "Simple task.")
+        mock_call.return_value = _make_simple_eval_response(
+            "simple", "normal", "Simple task."
+        )
         messages = [
             {"role": "user", "content": "First message about architecture."},
             {"role": "assistant", "content": "Let me help with that."},
@@ -101,13 +106,18 @@ class TestEvaluateComplexity:
     @patch("src.service.router_llm.suggester.call_litellm")
     async def test_multimodal_content_extracts_text(self, mock_call):
         """Multimodal message → extracts text parts only, ignores images."""
-        mock_call.return_value = _make_simple_eval_response("simple", "normal", "Text extraction task.")
+        mock_call.return_value = _make_simple_eval_response(
+            "simple", "normal", "Text extraction task."
+        )
         messages = [
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "Describe this diagram."},
-                    {"type": "image_url", "image_url": {"url": "https://example.com/diag.png"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/diag.png"},
+                    },
                 ],
             }
         ]
@@ -129,7 +139,10 @@ class TestEvaluateComplexity:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": "https://example.com/img.png"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/img.png"},
+                    },
                 ],
             }
         ]
@@ -222,7 +235,10 @@ class TestExtractLastUserContent:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": "https://example.com/img.png"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/img.png"},
+                    },
                 ],
             }
         ]
@@ -262,10 +278,12 @@ class TestLoadBertClassifier:
         """onnxruntime not installed → returns False gracefully."""
         mock_path.return_value.exists.return_value = True
         real_import = builtins.__import__
+
         def mock_import(name, *args, **kwargs):
             if name == "onnxruntime":
                 raise ImportError(f"No module named {name}")
             return real_import(name, *args, **kwargs)
+
         with patch("builtins.__import__", mock_import):
             result = load_bert_classifier()
         assert result is False
@@ -276,16 +294,19 @@ class TestLoadBertClassifier:
         mock_path.return_value.exists.return_value = True
         real_import = builtins.__import__
         mock_session = MagicMock()
+
         def mock_import(name, *args, **kwargs):
             if name == "onnxruntime":
                 mock_ort = MagicMock()
                 mock_ort.InferenceSession.return_value = mock_session
                 return mock_ort
             return real_import(name, *args, **kwargs)
+
         with patch("builtins.__import__", mock_import):
             result = load_bert_classifier()
         assert result is True
         import src.service.router_llm.suggester as _s
+
         _s._bert_session = None
 
 
@@ -340,6 +361,7 @@ class TestClassifyWithBert:
     def test_not_loaded(self):
         """_bert_session is None → returns None."""
         import src.service.router_llm.suggester as _s
+
         _s._bert_session = None
         result = _classify_with_bert("some text")
         assert result is None

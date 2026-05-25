@@ -3,12 +3,11 @@
 Targets specific uncovered lines to push new code coverage past 80%.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.service.chat_service import (
-    _apply_compaction,
     _suggest_higher_threshold_models,
     call_with_fallback,
     evaluate_router_suggestion,
@@ -28,8 +27,10 @@ async def test_call_with_fallback_non_retryable_propagates():
     mock_schema.physical_models = [mock_phys]
     mock_schema.display_name = "Test"
 
-    with patch("src.service.chat_service.call_litellm",
-               side_effect=ValueError("Non-retryable error")):
+    with patch(
+        "src.service.chat_service.call_litellm",
+        side_effect=ValueError("Non-retryable error"),
+    ):
         with pytest.raises(ValueError, match="Non-retryable error"):
             await call_with_fallback(mock_schema, [{"role": "user", "content": "hi"}])
 
@@ -47,11 +48,13 @@ async def test_call_with_fallback_retryable_triggers_fallback():
 
     from fastapi import HTTPException
     from litellm.exceptions import ServiceUnavailableError
+
     svc_err = ServiceUnavailableError(
-        message="Down", llm_provider="test", model="test-model",
+        message="Down",
+        llm_provider="test",
+        model="test-model",
     )
-    with patch("src.service.chat_service.call_litellm",
-               side_effect=svc_err):
+    with patch("src.service.chat_service.call_litellm", side_effect=svc_err):
         with pytest.raises(HTTPException) as exc:
             await call_with_fallback(mock_schema, [])
         assert exc.value.status_code == 503

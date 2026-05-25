@@ -83,9 +83,7 @@ def validate_tool_call_ids(tool_calls: list[dict]) -> None:
 
         args = tc.get("function", {}).get("arguments", "")
         if not args:
-            raise ValueError(
-                f"Tool call '{tc_id}' has empty 'arguments' field"
-            )
+            raise ValueError(f"Tool call '{tc_id}' has empty 'arguments' field")
 
 
 def validate_arguments_json(arguments: str) -> bool:
@@ -157,6 +155,7 @@ class TurnToolMetadata:
 
     plan-proxy.md §6.5: all tool history stored in canonical OpenAI format.
     """
+
     tool_definitions: list[dict] | None = None
     thinking_blocks: dict | None = None
     tools_incomplete: bool = False

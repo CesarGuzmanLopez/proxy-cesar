@@ -4,7 +4,7 @@ sprint §13.4 — minimum 5 test cases.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -16,11 +16,13 @@ def mock_streaming_response():
 
     async def async_gen():
         chunk = MagicMock()
-        chunk.model_dump_json.return_value = json.dumps({
-            "id": "chatcmpl-mock",
-            "object": "chat.completion.chunk",
-            "choices": [{"delta": {"content": "Hello"}, "finish_reason": None}],
-        })
+        chunk.model_dump_json.return_value = json.dumps(
+            {
+                "id": "chatcmpl-mock",
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": "Hello"}, "finish_reason": None}],
+            }
+        )
         chunk.choices = [MagicMock()]
         chunk.choices[0].delta.content = "Hello"
         chunk.choices[0].delta.tool_calls = None
@@ -30,7 +32,9 @@ def mock_streaming_response():
 
 
 @pytest.mark.asyncio
-async def test_1_sse_format(async_client: AsyncClient, mock_litellm, mock_streaming_response):
+async def test_1_sse_format(
+    async_client: AsyncClient, mock_litellm, mock_streaming_response
+):
     """Stream response produces valid SSE format (data: ...\\n\\n)."""
     mock_litellm.return_value = mock_streaming_response
 
@@ -47,12 +51,14 @@ async def test_1_sse_format(async_client: AsyncClient, mock_litellm, mock_stream
     content = response.text
     lines = content.strip().split("\n")
     # Each SSE message starts with "data: "
-    sse_data_lines = [l for l in lines if l.startswith("data: ")]
+    sse_data_lines = [line for line in lines if line.startswith("data: ")]
     assert len(sse_data_lines) >= 2  # at least one content chunk + final meta + [DONE]
 
 
 @pytest.mark.asyncio
-async def test_2_content_chunks_forwarded(async_client: AsyncClient, mock_litellm, mock_streaming_response):
+async def test_2_content_chunks_forwarded(
+    async_client: AsyncClient, mock_litellm, mock_streaming_response
+):
     """Content chunks are forwarded without modification."""
     mock_litellm.return_value = mock_streaming_response
 
@@ -72,7 +78,9 @@ async def test_2_content_chunks_forwarded(async_client: AsyncClient, mock_litell
 
 
 @pytest.mark.asyncio
-async def test_3_final_chunk_has_metadata(async_client: AsyncClient, mock_litellm, mock_streaming_response):
+async def test_3_final_chunk_has_metadata(
+    async_client: AsyncClient, mock_litellm, mock_streaming_response
+):
     """Final chunk contains proxy_metadata."""
     mock_litellm.return_value = mock_streaming_response
 
@@ -92,7 +100,9 @@ async def test_3_final_chunk_has_metadata(async_client: AsyncClient, mock_litell
 
 
 @pytest.mark.asyncio
-async def test_4_done_marker(async_client: AsyncClient, mock_litellm, mock_streaming_response):
+async def test_4_done_marker(
+    async_client: AsyncClient, mock_litellm, mock_streaming_response
+):
     """[DONE] marker is present at end of stream."""
     mock_litellm.return_value = mock_streaming_response
 

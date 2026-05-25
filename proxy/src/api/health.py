@@ -34,11 +34,23 @@ async def health(request: Request):
 
     # Check providers (API keys configured)
     providers = {}
-    for provider in ["anthropic", "openrouter", "google", "deepseek", "groq", "zhipuai", "zai"]:
+    for provider in [
+        "anthropic",
+        "openrouter",
+        "google",
+        "deepseek",
+        "groq",
+        "zhipuai",
+        "zai",
+    ]:
         key_env = f"{provider.upper()}_API_KEY"
         providers[provider] = "configured" if os.getenv(key_env) else "not configured"
 
-    overall = "ok" if db_status == "connected" and valkey_status == "connected" else "degraded"
+    overall = (
+        "ok"
+        if db_status == "connected" and valkey_status == "connected"
+        else "degraded"
+    )
 
     return {
         "status": overall,

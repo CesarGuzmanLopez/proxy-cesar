@@ -7,15 +7,15 @@ python.md §7: async-first, uses call_litellm for HTTP calls.
 python.md §4: pure functions where possible.
 """
 
-import json
-
 from src.adapters.litellm import call_litellm
 from src.config.pseudo_models import PseudoModelSchema
 from src.service.capability_detector import estimate_tokens
 from src.service.compactor.prompts import build_pre_compaction_prompt
 
 
-def _resolve_pre_compactor(config, compactor_name: str, input_tokens: int) -> tuple[str | None, dict | None]:
+def _resolve_pre_compactor(
+    config, compactor_name: str, input_tokens: int
+) -> tuple[str | None, dict | None]:
     """Resolve the compactor physical model for pre-compaction.
 
     Returns (compactor_model, error_metadata). If error_metadata is set,
@@ -57,7 +57,9 @@ async def _call_compactor_and_extract_summary(
         messages=compaction_messages,
         max_tokens=target_tokens,
     )
-    response_dict = response.model_dump() if hasattr(response, "model_dump") else response
+    response_dict = (
+        response.model_dump() if hasattr(response, "model_dump") else response
+    )
     if isinstance(response_dict, dict):
         choices = response_dict.get("choices", [])
         summary = choices[0].get("message", {}).get("content", "") if choices else ""
@@ -107,7 +109,9 @@ async def pre_compact_input(
         }
 
     # Resolve compactor model
-    compactor_model, error_meta = _resolve_pre_compactor(config, compactor_name, input_tokens)
+    compactor_model, error_meta = _resolve_pre_compactor(
+        config, compactor_name, input_tokens
+    )
     if error_meta:
         return messages, error_meta
 

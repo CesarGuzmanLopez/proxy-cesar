@@ -7,8 +7,6 @@ python.md §1.1: domain must not import FastAPI, SQLAlchemy, or Pydantic.
 from dataclasses import dataclass, field
 from enum import Enum
 
-from src.domain.tools import ToolLevel
-
 
 @dataclass
 class TurnCapabilities:
@@ -30,7 +28,9 @@ class TurnCapabilities:
     # Sprint 3: tool-specific state
     tools_incomplete: bool = False
     thinking_blocks: dict | None = None
-    tools_level_used: int = 0  # ToolLevel as int (0=NONE, 1=BASIC, 2=STANDARD, 3=PARALLEL_STRICT)
+    tools_level_used: int = (
+        0  # ToolLevel as int (0=NONE, 1=BASIC, 2=STANDARD, 3=PARALLEL_STRICT)
+    )
 
     # Sprint 5: image description tracking per turn
     images_described_count: int = 0

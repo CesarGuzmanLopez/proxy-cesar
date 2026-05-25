@@ -22,6 +22,7 @@ class FallbackInfo:
 @dataclass
 class StreamContext:
     """Context for streaming response generation — reduces params from 31 to 1."""
+
     litellm_response: Any
     conversation_id: str
     pseudo_model: str
@@ -44,6 +45,8 @@ class StreamContext:
     images_described_by: str | None = None
     router_suggestion: dict | None = None
     context_alert: ContextAlert | None = None
+    cache_metadata: dict | None = None
+    images_degraded_manually: bool = False
     db: Any = None
     conv: Any = None
     conv_uuid: Any = None
@@ -59,6 +62,7 @@ class StreamContext:
 @dataclass
 class SaveContext:
     """Context for saving a turn and returning ChatResult — reduces params from 23 to 1."""
+
     db: Any
     conv: Any
     conv_uuid: Any
@@ -83,11 +87,13 @@ class SaveContext:
     images_described_by: str | None = None
     router_suggestion: dict | None = None
     context_alert: ContextAlert | None = None
+    cache_metadata: dict | None = None
 
 
 @dataclass
 class MetadataContext:
     """Context for building proxy_metadata — reduces params from 22 to 1."""
+
     pseudo_model: str
     physical_model: str
     conversation_id: str
@@ -111,6 +117,7 @@ class MetadataContext:
     images_degraded_manually: bool = False
     router_suggestion: dict | None = None
     context_alert: ContextAlert | None = None
+    cache_metadata: dict | None = None
 
 
 @dataclass
@@ -154,6 +161,7 @@ class ChatResult:
 
     # Sprint 6 fields
     context_alert: ContextAlert | None = None
+    cache_metadata: dict | None = None
 
 
 def build_proxy_metadata(ctx: MetadataContext) -> dict:
@@ -175,7 +183,9 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
 
     metadata["context_tokens_total"] = ctx.context_tokens
     if ctx.context_window:
-        metadata["context_usage_pct"] = round((ctx.context_tokens / ctx.context_window) * 100, 1)
+        metadata["context_usage_pct"] = round(
+            (ctx.context_tokens / ctx.context_window) * 100, 1
+        )
     else:
         metadata["context_usage_pct"] = None
 
@@ -200,10 +210,16 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
     metadata["pre_compaction_applied"] = ctx.pre_compaction_applied
     if ctx.pre_compaction_applied and ctx.pre_compaction_metadata:
         metadata["pre_compaction"] = {
-            "original_input_tokens": ctx.pre_compaction_metadata.get("original_input_tokens", 0),
-            "compacted_input_tokens": ctx.pre_compaction_metadata.get("compacted_input_tokens", 0),
+            "original_input_tokens": ctx.pre_compaction_metadata.get(
+                "original_input_tokens", 0
+            ),
+            "compacted_input_tokens": ctx.pre_compaction_metadata.get(
+                "compacted_input_tokens", 0
+            ),
             "compactor_model": ctx.pre_compaction_metadata.get("compactor_model", ""),
-            "compactor_pseudo_model": ctx.pre_compaction_metadata.get("compactor_pseudo_model", ""),
+            "compactor_pseudo_model": ctx.pre_compaction_metadata.get(
+                "compactor_pseudo_model", ""
+            ),
             "savings_tokens": ctx.pre_compaction_metadata.get("savings_tokens", 0),
         }
     else:
@@ -213,12 +229,22 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
     if ctx.continuous_compaction_applied and ctx.continuous_compaction_metadata:
         metadata["continuous_compaction"] = {
             "tokens_before": ctx.continuous_compaction_metadata.get("tokens_before", 0),
-            "tokens_after_snapshot": ctx.continuous_compaction_metadata.get("tokens_after", 0),
-            "compactor_model": ctx.continuous_compaction_metadata.get("compactor_model", ""),
-            "turns_compacted": ctx.continuous_compaction_metadata.get("turns_compacted", 0),
-            "turns_preserved": ctx.continuous_compaction_metadata.get("turns_preserved", 0),
+            "tokens_after_snapshot": ctx.continuous_compaction_metadata.get(
+                "tokens_after", 0
+            ),
+            "compactor_model": ctx.continuous_compaction_metadata.get(
+                "compactor_model", ""
+            ),
+            "turns_compacted": ctx.continuous_compaction_metadata.get(
+                "turns_compacted", 0
+            ),
+            "turns_preserved": ctx.continuous_compaction_metadata.get(
+                "turns_preserved", 0
+            ),
             "snapshot_id": ctx.continuous_compaction_metadata.get("snapshot_id", ""),
-            "snapshot_type": ctx.continuous_compaction_metadata.get("snapshot_type", "continuous"),
+            "snapshot_type": ctx.continuous_compaction_metadata.get(
+                "snapshot_type", "continuous"
+            ),
         }
     else:
         metadata["continuous_compaction"] = None
@@ -232,6 +258,10 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
     metadata["images_degraded_manually"] = ctx.images_degraded_manually
 
     metadata["router_suggestion"] = ctx.router_suggestion
+
+    # Sprint 7: provider cache
+    if ctx.cache_metadata:
+        metadata["cache"] = ctx.cache_metadata
 
     # Sprint 6: context alerts
     if ctx.context_alert:
@@ -248,6 +278,3 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
         metadata["context_alert"] = alert_dict
 
     return metadata
-
-
-

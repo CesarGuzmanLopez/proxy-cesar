@@ -16,22 +16,27 @@ def _make_parallel_turn(n_calls: int, turn_num: int = 5):
     results = []
     for i in range(n_calls):
         cid = f"call_{turn_num}_{i}"
-        msg["tool_calls"].append({
-            "id": cid,
-            "type": "function",
-            "function": {"name": "search", "arguments": "{}"},
-        })
-        results.append({
-            "role": "tool",
-            "tool_call_id": cid,
-            "content": f"Result {i}",
-        })
+        msg["tool_calls"].append(
+            {
+                "id": cid,
+                "type": "function",
+                "function": {"name": "search", "arguments": "{}"},
+            }
+        )
+        results.append(
+            {
+                "role": "tool",
+                "tool_call_id": cid,
+                "content": f"Result {i}",
+            }
+        )
     return msg, results
 
 
 # ---------------------------------------------------------------------------
 # normalize_history
 # ---------------------------------------------------------------------------
+
 
 def test_single_parallel_turn_serialized():
     """Single parallel turn (3 calls) → 3 assistant+tool pairs."""
@@ -52,9 +57,11 @@ def test_multiple_parallel_turns():
     msg2, res2 = _make_parallel_turn(3, turn_num=2)
     messages = [
         {"role": "user", "content": "First"},
-        msg1, *res1,
+        msg1,
+        *res1,
         {"role": "user", "content": "Second"},
-        msg2, *res2,
+        msg2,
+        *res2,
     ]
     normalized, meta = normalize_history(messages)
     assert meta.turns_serialized == 2
@@ -93,7 +100,11 @@ def test_no_parallel_tools_no_change():
     """No parallel tools → returns same history."""
     messages = [
         {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hi", "tool_calls": [{"id": "call_1", "function": {"arguments": "{}"}}]},
+        {
+            "role": "assistant",
+            "content": "Hi",
+            "tool_calls": [{"id": "call_1", "function": {"arguments": "{}"}}],
+        },
         {"role": "tool", "tool_call_id": "call_1", "content": "Done"},
     ]
     normalized, meta = normalize_history(messages)
@@ -113,9 +124,11 @@ def test_mixed_parallel_and_sequential():
     par_msg, par_results = _make_parallel_turn(2)
     messages = [
         {"role": "user", "content": "A"},
-        seq_msg, seq_result,
+        seq_msg,
+        seq_result,
         {"role": "user", "content": "B"},
-        par_msg, *par_results,
+        par_msg,
+        *par_results,
     ]
     normalized, meta = normalize_history(messages)
     assert meta.turns_serialized == 1
@@ -143,7 +156,9 @@ def test_content_only_on_first_serialized():
     msg, results = _make_parallel_turn(3)
     messages = [{"role": "user", "content": "Hi"}, msg, *results]
     normalized, meta = normalize_history(messages)
-    serialized = [m for m in normalized if m.get("role") == "assistant" and m.get("tool_calls")]
+    serialized = [
+        m for m in normalized if m.get("role") == "assistant" and m.get("tool_calls")
+    ]
     assert serialized[0]["content"] == "Let me search for that."
     assert serialized[1]["content"] is None
     assert serialized[2]["content"] is None
@@ -181,6 +196,7 @@ def test_tool_result_preserved_after_serialization():
 # ---------------------------------------------------------------------------
 # generate_preview
 # ---------------------------------------------------------------------------
+
 
 def test_generate_preview_normal():
     """generate_preview returns readable description."""

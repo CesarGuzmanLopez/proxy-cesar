@@ -12,6 +12,7 @@ Usage:
 try:
     from arq import create_pool
     from arq.connections import RedisSettings
+
     HAS_ARQ = True
 except ImportError:
     HAS_ARQ = False

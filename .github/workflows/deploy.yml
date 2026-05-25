@@ -5,6 +5,7 @@
 #   PLATA_SSH_PORT   — SSH port (default 22)
 #   PLATA_USER       — deploy user on the server (must have sudo for systemctl)
 #   PLATA_SSH_KEY    — private SSH key for the deploy user
+#   PROXY_API_KEY    — Bearer token for API access
 #   ANTHROPIC_API_KEY
 #   DEEPSEEK_API_KEY
 #   GOOGLE_API_KEY
@@ -26,6 +27,7 @@ jobs:
     if: github.repository == 'CesarGuzmanLopez/proxy-cesar'
 
     env:
+      PROXY_API_KEY: ${{ secrets.PROXY_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -46,7 +48,7 @@ jobs:
           username: ${{ secrets.PLATA_USER }}
           key: ${{ secrets.PLATA_SSH_KEY }}
           envs: >-
-            ANTHROPIC_API_KEY,DEEPSEEK_API_KEY,GOOGLE_API_KEY,GROQ_API_KEY,
+            PROXY_API_KEY,ANTHROPIC_API_KEY,DEEPSEEK_API_KEY,GOOGLE_API_KEY,GROQ_API_KEY,
             OPENROUTER_API_KEY,ZHIPUAI_API_KEY,ZAI_API_KEY
           script: |
             set -euo pipefail

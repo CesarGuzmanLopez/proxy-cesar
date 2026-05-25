@@ -64,7 +64,7 @@ async def test_2_affinity_maintained(async_client: AsyncClient, mock_litellm):
 
 @pytest.mark.asyncio
 async def test_3_unknown_pseudo_model(async_client: AsyncClient, mock_litellm):
-    """Unknown pseudo-model → 400 UNKNOWN_PSEUDO_MODEL."""
+    """Unknown pseudo-model → resolved via default alias to 'normal' (200)."""
     response = await async_client.post(
         "/v1/chat/completions",
         json={
@@ -72,13 +72,16 @@ async def test_3_unknown_pseudo_model(async_client: AsyncClient, mock_litellm):
             "messages": [{"role": "user", "content": "Hello"}],
         },
     )
-    assert response.status_code == 400
+    # Sprint 7: default alias maps unknown models to "normal"
+    assert response.status_code == 200
     data = response.json()
-    assert "UNKNOWN_PSEUDO_MODEL" in str(data)
+    assert data["proxy_metadata"]["pseudo_model"] == "normal"
 
 
 @pytest.mark.asyncio
-async def test_4_auto_generated_conversation_id(async_client: AsyncClient, mock_litellm):
+async def test_4_auto_generated_conversation_id(
+    async_client: AsyncClient, mock_litellm
+):
     """Auto-generated conversation_id when not provided."""
     response = await async_client.post(
         "/v1/chat/completions",
@@ -233,7 +236,10 @@ def test_10_model_normalization(async_client: AsyncClient):
     assert normalize_model_name("normal", config) == "normal"
     assert normalize_model_name("local/normal", config) == "normal"
     assert normalize_model_name("cesar-proxy/normal", config) == "normal"
-    assert normalize_model_name("local/pensamiento-profundo-caro", config) == "pensamiento-profundo-caro"
+    assert (
+        normalize_model_name("local/pensamiento-profundo-caro", config)
+        == "pensamiento-profundo-caro"
+    )
 
 
 @pytest.mark.asyncio
@@ -274,8 +280,12 @@ async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_li
     )
 
     with (
-        patch("src.service.chat_service.load_session_capabilities", new_callable=AsyncMock) as mock_load_caps,
-        patch("src.service.chat_service.auto_describe_images", new_callable=AsyncMock) as mock_auto,
+        patch(
+            "src.service.chat_service.load_session_capabilities", new_callable=AsyncMock
+        ) as mock_load_caps,
+        patch(
+            "src.service.chat_service.auto_describe_images", new_callable=AsyncMock
+        ) as mock_auto,
     ):
         mock_load_caps.return_value = session_caps
         mock_auto.return_value = (

@@ -43,11 +43,20 @@ def mock_litellm_success():
     mock_response.usage.completion_tokens = 120
     mock_response.model_dump.return_value = {
         "id": "chatcmpl-mock",
-        "choices": [{"message": {"role": "assistant", "content": "## Snapshot\n\nCompacted content."}}],
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "## Snapshot\n\nCompacted content.",
+                }
+            }
+        ],
         "usage": {"prompt_tokens": 500, "completion_tokens": 120},
     }
 
-    with patch("src.service.compactor.continuous.call_litellm", new_callable=AsyncMock) as mock:
+    with patch(
+        "src.service.compactor.continuous.call_litellm", new_callable=AsyncMock
+    ) as mock:
         mock.return_value = mock_response
         yield mock
 
@@ -55,7 +64,9 @@ def mock_litellm_success():
 @pytest.fixture
 def mock_litellm_failure():
     """Mock call_litellm raising an exception."""
-    with patch("src.service.compactor.continuous.call_litellm", new_callable=AsyncMock) as mock:
+    with patch(
+        "src.service.compactor.continuous.call_litellm", new_callable=AsyncMock
+    ) as mock:
         mock.side_effect = RuntimeError("API unavailable")
         yield mock
 
@@ -122,15 +133,32 @@ def conversation_below_threshold():
 
 
 @pytest.mark.asyncio
-async def test_below_trigger_no_compaction(mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db, conversation_below_threshold):
+async def test_below_trigger_no_compaction(
+    mock_litellm_success,
+    config_with_compactor,
+    pseudo_model_with_cc,
+    mock_db,
+    conversation_below_threshold,
+):
     """Context below trigger_pct → no compaction applied."""
-    meta = await continuous_compact(conversation_below_threshold, pseudo_model_with_cc, config_with_compactor, mock_db)
+    meta = await continuous_compact(
+        conversation_below_threshold,
+        pseudo_model_with_cc,
+        config_with_compactor,
+        mock_db,
+    )
     assert meta["applied"] is False
     assert meta["reason"] == "below_trigger"
 
 
 @pytest.mark.asyncio
-async def test_above_trigger_triggers_compaction(mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db, conversation_above_threshold):
+async def test_above_trigger_triggers_compaction(
+    mock_litellm_success,
+    config_with_compactor,
+    pseudo_model_with_cc,
+    mock_db,
+    conversation_above_threshold,
+):
     """Context above trigger_pct → continuous compaction triggered."""
     # Mock DB to return turns (need at least 3 to compact)
     turn1 = MagicMock()
@@ -152,10 +180,17 @@ async def test_above_trigger_triggers_compaction(mock_litellm_success, config_wi
     turn3.turn_number = 3
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
-    meta = await continuous_compact(conversation_above_threshold, pseudo_model_with_cc, config_with_compactor, mock_db)
+    meta = await continuous_compact(
+        conversation_above_threshold,
+        pseudo_model_with_cc,
+        config_with_compactor,
+        mock_db,
+    )
     assert meta["applied"] is True
     assert meta["tokens_before"] > 0
     assert meta["tokens_after"] > 0
@@ -167,7 +202,13 @@ async def test_above_trigger_triggers_compaction(mock_litellm_success, config_wi
 
 
 @pytest.mark.asyncio
-async def test_snapshot_stored_in_db(mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db, conversation_above_threshold):
+async def test_snapshot_stored_in_db(
+    mock_litellm_success,
+    config_with_compactor,
+    pseudo_model_with_cc,
+    mock_db,
+    conversation_above_threshold,
+):
     """Snapshot stored via db.add when compaction succeeds."""
     turn1 = MagicMock()
     turn1.messages = [{"role": "user", "content": "Turn 1"}]
@@ -188,11 +229,18 @@ async def test_snapshot_stored_in_db(mock_litellm_success, config_with_compactor
     turn3.turn_number = 3
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
     mock_db.add = MagicMock()
 
-    await continuous_compact(conversation_above_threshold, pseudo_model_with_cc, config_with_compactor, mock_db)
+    await continuous_compact(
+        conversation_above_threshold,
+        pseudo_model_with_cc,
+        config_with_compactor,
+        mock_db,
+    )
     mock_db.add.assert_called_once()
     added_snapshot = mock_db.add.call_args[0][0]
     assert added_snapshot.snapshot_type == "continuous"
@@ -202,7 +250,13 @@ async def test_snapshot_stored_in_db(mock_litellm_success, config_with_compactor
 
 
 @pytest.mark.asyncio
-async def test_active_snapshot_id_updated(mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db, conversation_above_threshold):
+async def test_active_snapshot_id_updated(
+    mock_litellm_success,
+    config_with_compactor,
+    pseudo_model_with_cc,
+    mock_db,
+    conversation_above_threshold,
+):
     """active_snapshot_id is updated on the conversation."""
     turn1 = MagicMock()
     turn1.messages = [{"role": "user", "content": "Turn 1"}]
@@ -221,11 +275,18 @@ async def test_active_snapshot_id_updated(mock_litellm_success, config_with_comp
     turn3.turn_number = 3
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     old_id = conversation_above_threshold.active_snapshot_id
-    await continuous_compact(conversation_above_threshold, pseudo_model_with_cc, config_with_compactor, mock_db)
+    await continuous_compact(
+        conversation_above_threshold,
+        pseudo_model_with_cc,
+        config_with_compactor,
+        mock_db,
+    )
     # active_snapshot_id should now have a string value
     assert conversation_above_threshold.active_snapshot_id is not None
     if old_id is None:
@@ -233,7 +294,9 @@ async def test_active_snapshot_id_updated(mock_litellm_success, config_with_comp
 
 
 @pytest.mark.asyncio
-async def test_recent_turns_preserved(mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db):
+async def test_recent_turns_preserved(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db
+):
     """Recent turns are preserved (not compacted)."""
     conv = MagicMock()
     conv.id = "00000000-0000-0000-0000-000000000003"
@@ -244,17 +307,23 @@ async def test_recent_turns_preserved(mock_litellm_success, config_with_compacto
     turns = []
     for i in range(10):
         t = MagicMock()
-        t.messages = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"Turn {i+1}"}]
+        t.messages = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"Turn {i + 1}"}
+        ]
         t.input_tokens = 5000
         t.output_tokens = 500
         t.turn_number = i + 1
         turns.append(t)
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
-    meta = await continuous_compact(conv, pseudo_model_with_cc, config_with_compactor, mock_db)
+    meta = await continuous_compact(
+        conv, pseudo_model_with_cc, config_with_compactor, mock_db
+    )
     if meta["applied"]:
         assert meta["turns_compacted"] >= 1
         assert meta["turns_preserved"] >= 0
@@ -263,21 +332,45 @@ async def test_recent_turns_preserved(mock_litellm_success, config_with_compacto
 
 
 @pytest.mark.asyncio
-async def test_not_enough_turns_to_compact(mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db, conversation_above_threshold):
+async def test_not_enough_turns_to_compact(
+    mock_litellm_success,
+    config_with_compactor,
+    pseudo_model_with_cc,
+    mock_db,
+    conversation_above_threshold,
+):
     """Fewer than 3 turns → not enough to compact."""
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
-    meta = await continuous_compact(conversation_above_threshold, pseudo_model_with_cc, config_with_compactor, mock_db)
+    meta = await continuous_compact(
+        conversation_above_threshold,
+        pseudo_model_with_cc,
+        config_with_compactor,
+        mock_db,
+    )
     assert meta["applied"] is False
     assert "not_enough_turns" in meta["reason"]
 
 
 @pytest.mark.asyncio
-async def test_cc_disabled_no_compaction(mock_litellm_success, config_with_compactor, pseudo_model_cc_disabled, mock_db, conversation_above_threshold):
+async def test_cc_disabled_no_compaction(
+    mock_litellm_success,
+    config_with_compactor,
+    pseudo_model_cc_disabled,
+    mock_db,
+    conversation_above_threshold,
+):
     """Continuous compaction NOT triggered when disabled in config."""
-    meta = await continuous_compact(conversation_above_threshold, pseudo_model_cc_disabled, config_with_compactor, mock_db)
+    meta = await continuous_compact(
+        conversation_above_threshold,
+        pseudo_model_cc_disabled,
+        config_with_compactor,
+        mock_db,
+    )
     # When CC is disabled, the function still runs but checks its own config
     # Since we're calling it directly, it should either not be called or return not-applied
     assert "applied" in meta
@@ -291,13 +384,17 @@ async def test_cc_disabled_no_compaction(mock_litellm_success, config_with_compa
     no_config.continuous_compaction.compact_preserve_recent = 16000
     no_config.context_window = 200000
 
-    meta2 = await continuous_compact(conversation_above_threshold, no_config, config_with_compactor, mock_db)
+    meta2 = await continuous_compact(
+        conversation_above_threshold, no_config, config_with_compactor, mock_db
+    )
     assert meta2["applied"] is False
     assert meta2["reason"] == "no_trigger_config"
 
 
 @pytest.mark.asyncio
-async def test_compactor_not_available_no_compaction(mock_litellm_success, mock_db, conversation_above_threshold):
+async def test_compactor_not_available_no_compaction(
+    mock_litellm_success, mock_db, conversation_above_threshold
+):
     """No compactor model available → compaction fails gracefully."""
     pm = MagicMock()
     pm.continuous_compaction.enabled = True
@@ -327,15 +424,25 @@ async def test_compactor_not_available_no_compaction(mock_litellm_success, mock_
     turn3.turn_number = 3
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     meta = await continuous_compact(conversation_above_threshold, pm, config, mock_db)
-    assert meta["applied"] is False or ("warning" in meta and "compactor_not_available" in meta.get("reason", ""))
+    assert meta["applied"] is False or (
+        "warning" in meta and "compactor_not_available" in meta.get("reason", "")
+    )
 
 
 @pytest.mark.asyncio
-async def test_compactor_failure_graceful(mock_litellm_failure, config_with_compactor, pseudo_model_with_cc, mock_db, conversation_above_threshold):
+async def test_compactor_failure_graceful(
+    mock_litellm_failure,
+    config_with_compactor,
+    pseudo_model_with_cc,
+    mock_db,
+    conversation_above_threshold,
+):
     """Compactor failure → graceful fallback, no crash."""
     turn1 = MagicMock()
     turn1.messages = [{"role": "user", "content": "T1"}]
@@ -354,17 +461,26 @@ async def test_compactor_failure_graceful(mock_litellm_failure, config_with_comp
     turn3.turn_number = 3
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
-    meta = await continuous_compact(conversation_above_threshold, pseudo_model_with_cc, config_with_compactor, mock_db)
+    meta = await continuous_compact(
+        conversation_above_threshold,
+        pseudo_model_with_cc,
+        config_with_compactor,
+        mock_db,
+    )
     assert meta["applied"] is False
     assert "compactor_failed" in meta["reason"]
     assert "warning" in meta
 
 
 @pytest.mark.asyncio
-async def test_second_compaction_supersedes_first(mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db):
+async def test_second_compaction_supersedes_first(
+    mock_litellm_success, config_with_compactor, pseudo_model_with_cc, mock_db
+):
     """Multiple compactions: second snapshot supersedes first."""
     conv = MagicMock()
     conv.id = "00000000-0000-0000-0000-000000000004"
@@ -374,18 +490,22 @@ async def test_second_compaction_supersedes_first(mock_litellm_success, config_w
     turns = []
     for i in range(5):
         t = MagicMock()
-        t.messages = [{"role": "user", "content": f"Turn {i+1}"}]
+        t.messages = [{"role": "user", "content": f"Turn {i + 1}"}]
         t.input_tokens = 30000
         t.output_tokens = 1000
         t.turn_number = i + 1
         turns.append(t)
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=turns)))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=turns))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     # First compaction
-    meta1 = await continuous_compact(conv, pseudo_model_with_cc, config_with_compactor, mock_db)
+    meta1 = await continuous_compact(
+        conv, pseudo_model_with_cc, config_with_compactor, mock_db
+    )
     assert meta1["applied"] is True
     snapshot_id_1 = meta1["snapshot_id"]
 
@@ -396,7 +516,9 @@ async def test_second_compaction_supersedes_first(mock_litellm_success, config_w
     conv.active_snapshot_id = snapshot_id_1
 
     # Second compaction (with the same turns — in practice more turns would exist)
-    meta2 = await continuous_compact(conv, pseudo_model_with_cc, config_with_compactor, mock_db)
+    meta2 = await continuous_compact(
+        conv, pseudo_model_with_cc, config_with_compactor, mock_db
+    )
     # The second compaction will add a new snapshot
     assert "applied" in meta2
 
@@ -510,7 +632,10 @@ async def test_handle_external_compaction_stores_snapshot(mock_db):
     )
 
     messages = [
-        {"role": "system", "content": "Summary of the conversation: proxy development."},
+        {
+            "role": "system",
+            "content": "Summary of the conversation: proxy development.",
+        },
         {"role": "user", "content": "Now add rate limiting."},
     ]
 
@@ -549,7 +674,9 @@ async def test_assemble_context_with_snapshot():
     recent_turn.messages = [{"role": "user", "content": "Continue from here."}]
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[recent_turn])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[recent_turn]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
 
     conv = MagicMock()
@@ -578,7 +705,9 @@ async def test_assemble_context_without_snapshot():
     turn2.messages = [{"role": "user", "content": "Hello!"}]
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
 
     conv = MagicMock()
@@ -602,7 +731,9 @@ async def test_assemble_context_broken_snapshot_reference():
     turn2.messages = [{"role": "user", "content": "User."}]
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2]))
+    )
     db.execute = AsyncMock(return_value=scalar_result)
 
     conv = MagicMock()

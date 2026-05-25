@@ -17,7 +17,7 @@ Covers:
 import json
 import uuid
 from pathlib import Path
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 
 import fakeredis
@@ -52,8 +52,16 @@ def _make_chat_response(
     mock.model_dump.return_value = {
         "id": "chatcmpl-e2e-test",
         "object": "chat.completion",
-        "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}],
-        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        },
     }
     return mock
 
@@ -94,7 +102,12 @@ def _make_compaction_response():
     mock.model_dump.return_value = {
         "id": "chatcmpl-compact",
         "object": "chat.completion",
-        "choices": [{"message": {"role": "assistant", "content": snapshot_content}, "finish_reason": "stop"}],
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": snapshot_content},
+                "finish_reason": "stop",
+            }
+        ],
         "usage": {"prompt_tokens": 5000, "completion_tokens": 350},
     }
     return mock, snapshot_content
@@ -127,16 +140,19 @@ def app_with_mocks():
     # DB execute mock
     scalar_result = MagicMock()
     scalar_result.scalar = MagicMock(return_value=0)
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     mock_session.execute = AsyncMock(return_value=scalar_result)
 
     db_session_factory = MagicMock(return_value=mock_session)
 
     # Patch litellm before importing the app
-    with patch("src.service.compactor.explicit.call_litellm") as mock_llm, \
-         patch("src.service.compactor.continuous.call_litellm") as mock_cont_llm, \
-         patch("src.adapters.litellm.client.litellm.acompletion") as mock_acompletion:
-
+    with (
+        patch("src.service.compactor.explicit.call_litellm") as mock_llm,
+        patch("src.service.compactor.continuous.call_litellm") as mock_cont_llm,
+        patch("src.adapters.litellm.client.litellm.acompletion") as mock_acompletion,
+    ):
         mock_response = _make_chat_response()
         mock_acompletion.return_value = mock_response
         mock_llm.return_value = _make_compaction_response()[0]
@@ -181,8 +197,14 @@ async def test_context_alert_normal_in_metadata(client):
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
     conv.turns = []
-    for attr in ("capability_has_images", "capability_has_audio", "capability_has_pdf",
-                  "capability_has_video", "capability_has_tools", "capability_has_parallel_tools"):
+    for attr in (
+        "capability_has_images",
+        "capability_has_audio",
+        "capability_has_pdf",
+        "capability_has_video",
+        "capability_has_tools",
+        "capability_has_parallel_tools",
+    ):
         setattr(conv, attr, False)
     conv.max_tools_level = 0
     conv.images_described = 0
@@ -190,11 +212,14 @@ async def test_context_alert_normal_in_metadata(client):
 
     mock_db.get = AsyncMock(return_value=conv)
 
-    resp = await ac.post("/v1/chat/completions", json={
-        "model": "normal",
-        "messages": [{"role": "user", "content": "Hello!"}],
-        "conversation_id": str(conv.id),
-    })
+    resp = await ac.post(
+        "/v1/chat/completions",
+        json={
+            "model": "normal",
+            "messages": [{"role": "user", "content": "Hello!"}],
+            "conversation_id": str(conv.id),
+        },
+    )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -219,8 +244,14 @@ async def test_context_alert_moderate_in_metadata(client):
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
     conv.turns = []
-    for attr in ("capability_has_images", "capability_has_audio", "capability_has_pdf",
-                  "capability_has_video", "capability_has_tools", "capability_has_parallel_tools"):
+    for attr in (
+        "capability_has_images",
+        "capability_has_audio",
+        "capability_has_pdf",
+        "capability_has_video",
+        "capability_has_tools",
+        "capability_has_parallel_tools",
+    ):
         setattr(conv, attr, False)
     conv.max_tools_level = 0
     conv.images_described = 0
@@ -228,11 +259,14 @@ async def test_context_alert_moderate_in_metadata(client):
 
     mock_db.get = AsyncMock(return_value=conv)
 
-    resp = await ac.post("/v1/chat/completions", json={
-        "model": "normal",
-        "messages": [{"role": "user", "content": "Continue the work."}],
-        "conversation_id": str(conv.id),
-    })
+    resp = await ac.post(
+        "/v1/chat/completions",
+        json={
+            "model": "normal",
+            "messages": [{"role": "user", "content": "Continue the work."}],
+            "conversation_id": str(conv.id),
+        },
+    )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -257,8 +291,14 @@ async def test_context_alert_high_in_metadata(client):
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
     conv.turns = []
-    for attr in ("capability_has_images", "capability_has_audio", "capability_has_pdf",
-                  "capability_has_video", "capability_has_tools", "capability_has_parallel_tools"):
+    for attr in (
+        "capability_has_images",
+        "capability_has_audio",
+        "capability_has_pdf",
+        "capability_has_video",
+        "capability_has_tools",
+        "capability_has_parallel_tools",
+    ):
         setattr(conv, attr, False)
     conv.max_tools_level = 0
     conv.images_described = 0
@@ -266,11 +306,14 @@ async def test_context_alert_high_in_metadata(client):
 
     mock_db.get = AsyncMock(return_value=conv)
 
-    resp = await ac.post("/v1/chat/completions", json={
-        "model": "normal",
-        "messages": [{"role": "user", "content": "Keep going."}],
-        "conversation_id": str(conv.id),
-    })
+    resp = await ac.post(
+        "/v1/chat/completions",
+        json={
+            "model": "normal",
+            "messages": [{"role": "user", "content": "Keep going."}],
+            "conversation_id": str(conv.id),
+        },
+    )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -293,8 +336,14 @@ async def test_context_unusable_400_error(client):
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
     conv.turns = []
-    for attr in ("capability_has_images", "capability_has_audio", "capability_has_pdf",
-                  "capability_has_video", "capability_has_tools", "capability_has_parallel_tools"):
+    for attr in (
+        "capability_has_images",
+        "capability_has_audio",
+        "capability_has_pdf",
+        "capability_has_video",
+        "capability_has_tools",
+        "capability_has_parallel_tools",
+    ):
         setattr(conv, attr, False)
     conv.max_tools_level = 0
     conv.images_described = 0
@@ -302,11 +351,14 @@ async def test_context_unusable_400_error(client):
 
     mock_db.get = AsyncMock(return_value=conv)
 
-    resp = await ac.post("/v1/chat/completions", json={
-        "model": "normal",
-        "messages": [{"role": "user", "content": "This should fail."}],
-        "conversation_id": str(conv.id),
-    })
+    resp = await ac.post(
+        "/v1/chat/completions",
+        json={
+            "model": "normal",
+            "messages": [{"role": "user", "content": "This should fail."}],
+            "conversation_id": str(conv.id),
+        },
+    )
 
     assert resp.status_code == 400
     data = resp.json()
@@ -331,8 +383,14 @@ async def test_context_unusable_streaming_400(client):
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
     conv.turns = []
-    for attr in ("capability_has_images", "capability_has_audio", "capability_has_pdf",
-                  "capability_has_video", "capability_has_tools", "capability_has_parallel_tools"):
+    for attr in (
+        "capability_has_images",
+        "capability_has_audio",
+        "capability_has_pdf",
+        "capability_has_video",
+        "capability_has_tools",
+        "capability_has_parallel_tools",
+    ):
         setattr(conv, attr, False)
     conv.max_tools_level = 0
     conv.images_described = 0
@@ -340,12 +398,15 @@ async def test_context_unusable_streaming_400(client):
 
     mock_db.get = AsyncMock(return_value=conv)
 
-    resp = await ac.post("/v1/chat/completions", json={
-        "model": "normal",
-        "messages": [{"role": "user", "content": "Streaming fail."}],
-        "conversation_id": str(conv.id),
-        "stream": True,
-    })
+    resp = await ac.post(
+        "/v1/chat/completions",
+        json={
+            "model": "normal",
+            "messages": [{"role": "user", "content": "Streaming fail."}],
+            "conversation_id": str(conv.id),
+            "stream": True,
+        },
+    )
 
     assert resp.status_code == 400
     data = resp.json()
@@ -386,7 +447,9 @@ async def test_explicit_compaction_endpoint(client):
     turn.output_tokens = 800
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     resp = await ac.post(f"/conversations/{conv_id}/compact")
@@ -423,7 +486,9 @@ async def test_explicit_compaction_requires_turns(client):
 
     # No turns in DB
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     resp = await ac.post(f"/conversations/{conv_id}/compact")
@@ -469,7 +534,9 @@ async def test_explicit_compaction_chains_snapshots(client):
     turn.output_tokens = 300
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     # First compaction
@@ -495,6 +562,7 @@ async def test_explicit_compaction_chains_snapshots(client):
             s.__class__.__name__ = "ConversationSnapshot"
             return s
         return None
+
     mock_db.get = AsyncMock(side_effect=get_side_effect)
 
     # Second compaction
@@ -525,7 +593,9 @@ async def test_audit_log_includes_creation(client):
     mock_db.get = AsyncMock(return_value=conv)
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     resp = await ac.get(f"/conversations/{conv_id}/audit-log")
@@ -579,7 +649,9 @@ async def test_audit_log_tracks_switches_and_fallbacks(client):
     turn3.created_at = datetime(2026, 5, 24, 10, 15, 0)
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2, turn3]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     resp = await ac.get(f"/conversations/{conv_id}/audit-log")
@@ -589,10 +661,15 @@ async def test_audit_log_tracks_switches_and_fallbacks(client):
     events_by_type = {e["event_type"]: e for e in data["events"]}
     assert "pseudo_model_switched" in events_by_type
     assert events_by_type["pseudo_model_switched"]["details"]["from"] == "normal"
-    assert events_by_type["pseudo_model_switched"]["details"]["to"] == "tareas-avanzadas"
+    assert (
+        events_by_type["pseudo_model_switched"]["details"]["to"] == "tareas-avanzadas"
+    )
 
     assert "fallback_applied" in events_by_type
-    assert "ServiceUnavailableError" in events_by_type["fallback_applied"]["details"]["reason"]
+    assert (
+        "ServiceUnavailableError"
+        in events_by_type["fallback_applied"]["details"]["reason"]
+    )
 
 
 @pytest.mark.asyncio
@@ -620,7 +697,9 @@ async def test_audit_log_includes_compaction(client):
     turn.output_tokens = 300
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     # Run compaction
@@ -640,16 +719,22 @@ async def test_audit_log_includes_compaction(client):
 
     # Return empty turns and one snapshot
     scalar_turns = MagicMock()
-    scalar_turns.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    scalar_turns.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[]))
+    )
     scalar_snaps = MagicMock()
-    scalar_snaps.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[snap])))
+    scalar_snaps.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[snap]))
+    )
     mock_db.execute = AsyncMock(side_effect=[scalar_turns, scalar_snaps])
 
     resp = await ac.get(f"/conversations/{conv_id}/audit-log")
     assert resp.status_code == 200
     data = resp.json()
 
-    compaction_events = [e for e in data["events"] if e["event_type"] == "compaction_explicit"]
+    compaction_events = [
+        e for e in data["events"] if e["event_type"] == "compaction_explicit"
+    ]
     assert len(compaction_events) == 1
     assert compaction_events[0]["details"]["tokens_before"] == 120000
     assert compaction_events[0]["details"]["tokens_after"] == 350
@@ -671,7 +756,9 @@ async def test_compactador_model_selection_by_context_window(client):
 
     # Gemini 3.5 Flash has 1M ctx — should be selected for any reasonable size
     compactador_pm = config.pseudo_models.get("compactador")
-    gemini = next((m for m in compactador_pm.physical_models if "gemini" in m.model), None)
+    gemini = next(
+        (m for m in compactador_pm.physical_models if "gemini" in m.model), None
+    )
     assert gemini is not None
     assert model == gemini.model
 
@@ -690,8 +777,14 @@ async def test_streaming_response_includes_context_alert(client):
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
     conv.turns = []
-    for attr in ("capability_has_images", "capability_has_audio", "capability_has_pdf",
-                  "capability_has_video", "capability_has_tools", "capability_has_parallel_tools"):
+    for attr in (
+        "capability_has_images",
+        "capability_has_audio",
+        "capability_has_pdf",
+        "capability_has_video",
+        "capability_has_tools",
+        "capability_has_parallel_tools",
+    ):
         setattr(conv, attr, False)
     conv.max_tools_level = 0
     conv.images_described = 0
@@ -699,12 +792,15 @@ async def test_streaming_response_includes_context_alert(client):
 
     mock_db.get = AsyncMock(return_value=conv)
 
-    resp = await ac.post("/v1/chat/completions", json={
-        "model": "normal",
-        "messages": [{"role": "user", "content": "Stream test."}],
-        "conversation_id": str(conv.id),
-        "stream": True,
-    })
+    resp = await ac.post(
+        "/v1/chat/completions",
+        json={
+            "model": "normal",
+            "messages": [{"role": "user", "content": "Stream test."}],
+            "conversation_id": str(conv.id),
+            "stream": True,
+        },
+    )
 
     assert resp.status_code == 200
     body = resp.text
@@ -758,7 +854,9 @@ async def test_audit_log_events_chronological_order(client):
     turn1.created_at = datetime(2026, 5, 24, 10, 2, 0)
 
     scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2])))
+    scalar_result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2]))
+    )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
     resp = await ac.get(f"/conversations/{conv_id}/audit-log")

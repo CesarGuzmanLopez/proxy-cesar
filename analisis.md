@@ -226,7 +226,7 @@ pensamiento-profundo-caro:
       parallel_tools: true
       vision: true
     - provider: anthropic
-      model: claude-opus-4
+      model: claude-opus-4 #muy caro no usarlo nunca
       openai_tools_compatible: true # LiteLLM traduce transparentemente
       tools_strict: false
       parallel_tools: true

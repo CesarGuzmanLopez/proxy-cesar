@@ -12,7 +12,13 @@ from litellm.exceptions import RateLimitError, ServiceUnavailableError
 from src.config.settings import Settings
 
 # Re-export for fallback detection
-__all__ = ["setup_litellm", "call_litellm", "ServiceUnavailableError", "RateLimitError", "normalise_stream_chunk"]
+__all__ = [
+    "setup_litellm",
+    "call_litellm",
+    "ServiceUnavailableError",
+    "RateLimitError",
+    "normalise_stream_chunk",
+]
 
 
 def normalise_stream_chunk(chunk) -> None:
@@ -35,7 +41,10 @@ def normalise_stream_chunk(chunk) -> None:
             delta = choice.delta
             if delta is None:
                 continue
-            if delta.content is None and getattr(delta, "reasoning_content", None) is not None:
+            if (
+                delta.content is None
+                and getattr(delta, "reasoning_content", None) is not None
+            ):
                 delta.content = delta.reasoning_content
     except (AttributeError, TypeError, IndexError):
         pass  # Non-standard chunk format — leave untouched
@@ -101,6 +110,7 @@ async def call_litellm(
             async for chunk in response:
                 normalise_stream_chunk(chunk)
                 yield chunk
+
         return _normalised_stream()
 
     return response

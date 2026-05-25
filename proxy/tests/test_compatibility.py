@@ -12,10 +12,8 @@ from src.config.pseudo_models import load_config
 from src.domain.capabilities import (
     CompatibilityStatus,
     SessionCapabilities,
-    TurnCapabilities,
 )
 from src.service.compatibility import validate_switch
-from src.service.capability_detector import detect_turn_capabilities
 
 CONFIG = load_config()
 
@@ -47,8 +45,11 @@ def _make_caps(
 def test_normal_to_tareas_avanzadas_no_multimedia_no_tools():
     """normal → tareas-avanzadas (no multimedia, no tools) → SAFE."""
     result = validate_switch(
-        "normal", "tareas-avanzadas", CONFIG.pseudo_models["tareas-avanzadas"],
-        _make_caps(), CONFIG,
+        "normal",
+        "tareas-avanzadas",
+        CONFIG.pseudo_models["tareas-avanzadas"],
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -56,8 +57,11 @@ def test_normal_to_tareas_avanzadas_no_multimedia_no_tools():
 def test_normal_to_tareas_avanzadas_with_tools():
     """normal → tareas-avanzadas (tools, no parallel) → SAFE."""
     result = validate_switch(
-        "normal", "tareas-avanzadas", CONFIG.pseudo_models["tareas-avanzadas"],
-        _make_caps(has_tools=True), CONFIG,
+        "normal",
+        "tareas-avanzadas",
+        CONFIG.pseudo_models["tareas-avanzadas"],
+        _make_caps(has_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -65,9 +69,11 @@ def test_normal_to_tareas_avanzadas_with_tools():
 def test_normal_to_pensamiento_profundo():
     """normal → pensamiento-profundo-caro → SAFE (superset)."""
     result = validate_switch(
-        "normal", "pensamiento-profundo-caro",
+        "normal",
+        "pensamiento-profundo-caro",
         CONFIG.pseudo_models["pensamiento-profundo-caro"],
-        _make_caps(), CONFIG,
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -75,8 +81,11 @@ def test_normal_to_pensamiento_profundo():
 def test_tareas_avanzadas_to_normal_no_parallel():
     """tareas-avanzadas → normal (no parallel tools) → SAFE."""
     result = validate_switch(
-        "tareas-avanzadas", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(), CONFIG,
+        "tareas-avanzadas",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -84,9 +93,11 @@ def test_tareas_avanzadas_to_normal_no_parallel():
 def test_tareas_avanzadas_to_pensamiento_profundo():
     """tareas-avanzadas → pensamiento-profundo-caro → SAFE."""
     result = validate_switch(
-        "tareas-avanzadas", "pensamiento-profundo-caro",
+        "tareas-avanzadas",
+        "pensamiento-profundo-caro",
         CONFIG.pseudo_models["pensamiento-profundo-caro"],
-        _make_caps(), CONFIG,
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -94,9 +105,11 @@ def test_tareas_avanzadas_to_pensamiento_profundo():
 def test_pensamiento_profundo_to_tareas_avanzadas():
     """pensamiento-profundo-caro → tareas-avanzadas → SAFE."""
     result = validate_switch(
-        "pensamiento-profundo-caro", "tareas-avanzadas",
+        "pensamiento-profundo-caro",
+        "tareas-avanzadas",
         CONFIG.pseudo_models["tareas-avanzadas"],
-        _make_caps(), CONFIG,
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -104,9 +117,11 @@ def test_pensamiento_profundo_to_tareas_avanzadas():
 def test_flash_vision_to_avanzada_vision_with_images():
     """flash-vision → avanzada-vision (with images) → SAFE (upgrade)."""
     result = validate_switch(
-        "flash-vision", "avanzada-vision",
+        "flash-vision",
+        "avanzada-vision",
         CONFIG.pseudo_models["avanzada-vision"],
-        _make_caps(has_images=True), CONFIG,
+        _make_caps(has_images=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -114,8 +129,11 @@ def test_flash_vision_to_avanzada_vision_with_images():
 def test_deep_flash_to_normal():
     """deep-flash → normal (no multimedia) → SAFE."""
     result = validate_switch(
-        "deep-flash", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(), CONFIG,
+        "deep-flash",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -123,8 +141,11 @@ def test_deep_flash_to_normal():
 def test_flash_lowcost_to_normal():
     """flash-lowcost → normal → SAFE."""
     result = validate_switch(
-        "flash-lowcost", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(), CONFIG,
+        "flash-lowcost",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -132,7 +153,9 @@ def test_flash_lowcost_to_normal():
 def test_any_to_compactador():
     """Any → compactador → SAFE (it's an operation)."""
     result = validate_switch(
-        "normal", "compactador", CONFIG.pseudo_models["compactador"],
+        "normal",
+        "compactador",
+        CONFIG.pseudo_models["compactador"],
         _make_caps(has_images=True, has_tools=True, has_parallel_tools=True),
         CONFIG,
     )
@@ -145,8 +168,11 @@ def test_any_to_compactador():
 def test_normal_to_deep_flash_no_multimedia():
     """normal → deep-flash (no multimedia, no tools) → WARNING."""
     result = validate_switch(
-        "normal", "deep-flash", CONFIG.pseudo_models["deep-flash"],
-        _make_caps(), CONFIG,
+        "normal",
+        "deep-flash",
+        CONFIG.pseudo_models["deep-flash"],
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -154,8 +180,11 @@ def test_normal_to_deep_flash_no_multimedia():
 def test_normal_to_deep_flash_with_tools():
     """normal → deep-flash (with tools) → WARNING."""
     result = validate_switch(
-        "normal", "deep-flash", CONFIG.pseudo_models["deep-flash"],
-        _make_caps(has_tools=True), CONFIG,
+        "normal",
+        "deep-flash",
+        CONFIG.pseudo_models["deep-flash"],
+        _make_caps(has_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -163,8 +192,11 @@ def test_normal_to_deep_flash_with_tools():
 def test_normal_to_flash_lowcost():
     """normal → flash-lowcost → WARNING (capacity loss)."""
     result = validate_switch(
-        "normal", "flash-lowcost", CONFIG.pseudo_models["flash-lowcost"],
-        _make_caps(), CONFIG,
+        "normal",
+        "flash-lowcost",
+        CONFIG.pseudo_models["flash-lowcost"],
+        _make_caps(),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -172,8 +204,11 @@ def test_normal_to_flash_lowcost():
 def test_tareas_avanzadas_to_normal_with_parallel():
     """tareas-avanzadas → normal (parallel tools) → WARNING."""
     result = validate_switch(
-        "tareas-avanzadas", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(has_parallel_tools=True), CONFIG,
+        "tareas-avanzadas",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(has_parallel_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -181,8 +216,11 @@ def test_tareas_avanzadas_to_normal_with_parallel():
 def test_tareas_avanzadas_to_deep_flash_with_tools():
     """tareas-avanzadas → deep-flash (with tools) → WARNING."""
     result = validate_switch(
-        "tareas-avanzadas", "deep-flash", CONFIG.pseudo_models["deep-flash"],
-        _make_caps(has_tools=True), CONFIG,
+        "tareas-avanzadas",
+        "deep-flash",
+        CONFIG.pseudo_models["deep-flash"],
+        _make_caps(has_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -190,9 +228,11 @@ def test_tareas_avanzadas_to_deep_flash_with_tools():
 def test_pensamiento_profundo_to_deep_flash_with_tools():
     """pensamiento-profundo-caro → deep-flash (with tools) → WARNING."""
     result = validate_switch(
-        "pensamiento-profundo-caro", "deep-flash",
+        "pensamiento-profundo-caro",
+        "deep-flash",
         CONFIG.pseudo_models["deep-flash"],
-        _make_caps(has_tools=True), CONFIG,
+        _make_caps(has_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -200,8 +240,11 @@ def test_pensamiento_profundo_to_deep_flash_with_tools():
 def test_avanzada_vision_to_flash_vision_with_images():
     """avanzada-vision → flash-vision (with images) → WARNING."""
     result = validate_switch(
-        "avanzada-vision", "flash-vision", CONFIG.pseudo_models["flash-vision"],
-        _make_caps(has_images=True), CONFIG,
+        "avanzada-vision",
+        "flash-vision",
+        CONFIG.pseudo_models["flash-vision"],
+        _make_caps(has_images=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -209,8 +252,11 @@ def test_avanzada_vision_to_flash_vision_with_images():
 def test_avanzada_vision_to_flash_vision_auto_describe():
     """avanzada-vision → flash-vision (with images) → WARNING (reduced vision)."""
     result = validate_switch(
-        "avanzada-vision", "flash-vision", CONFIG.pseudo_models["flash-vision"],
-        _make_caps(has_images=True), CONFIG,
+        "avanzada-vision",
+        "flash-vision",
+        CONFIG.pseudo_models["flash-vision"],
+        _make_caps(has_images=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -220,9 +266,11 @@ def test_images_to_pensamiento_profundo_auto_describe():
     # pensamiento-profundo-caro has image_handling.on_downgrade: "auto_describe"
     # and no vision models, so images would be auto-described.
     result = validate_switch(
-        "normal", "pensamiento-profundo-caro",
+        "normal",
+        "pensamiento-profundo-caro",
         CONFIG.pseudo_models["pensamiento-profundo-caro"],
-        _make_caps(has_images=True), CONFIG,
+        _make_caps(has_images=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
     assert "auto-described" in result.reason
@@ -234,8 +282,11 @@ def test_images_to_pensamiento_profundo_auto_describe():
 def test_normal_to_flash_lowcost_parallel_tools():
     """normal → flash-lowcost (with parallel tools) → BLOCKED."""
     result = validate_switch(
-        "normal", "flash-lowcost", CONFIG.pseudo_models["flash-lowcost"],
-        _make_caps(has_parallel_tools=True), CONFIG,
+        "normal",
+        "flash-lowcost",
+        CONFIG.pseudo_models["flash-lowcost"],
+        _make_caps(has_parallel_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
 
@@ -243,8 +294,11 @@ def test_normal_to_flash_lowcost_parallel_tools():
 def test_avanzada_vision_to_normal_with_images_blocked():
     """avanzada-vision → normal (with images, auto_describe=false) → BLOCKED."""
     result = validate_switch(
-        "avanzada-vision", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(has_images=True), CONFIG,
+        "avanzada-vision",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(has_images=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
     assert len(result.remediation) > 0
@@ -253,8 +307,11 @@ def test_avanzada_vision_to_normal_with_images_blocked():
 def test_avanzada_vision_to_deep_flash_with_images():
     """avanzada-vision → deep-flash (with images) → BLOCKED."""
     result = validate_switch(
-        "avanzada-vision", "deep-flash", CONFIG.pseudo_models["deep-flash"],
-        _make_caps(has_images=True), CONFIG,
+        "avanzada-vision",
+        "deep-flash",
+        CONFIG.pseudo_models["deep-flash"],
+        _make_caps(has_images=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
 
@@ -262,8 +319,11 @@ def test_avanzada_vision_to_deep_flash_with_images():
 def test_context_exceeds_destination_window():
     """Context exceeds destination window → BLOCKED ('CONTEXT_TOO_LARGE')."""
     result = validate_switch(
-        "normal", "flash-vision", CONFIG.pseudo_models["flash-vision"],
-        _make_caps(total_tokens=999999), CONFIG,
+        "normal",
+        "flash-vision",
+        CONFIG.pseudo_models["flash-vision"],
+        _make_caps(total_tokens=999999),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
 
@@ -271,8 +331,11 @@ def test_context_exceeds_destination_window():
 def test_parallel_tools_no_parallel_in_destination():
     """Parallel tools → destination has no parallel models → BLOCKED."""
     result = validate_switch(
-        "normal", "flash-lowcost", CONFIG.pseudo_models["flash-lowcost"],
-        _make_caps(has_parallel_tools=True), CONFIG,
+        "normal",
+        "flash-lowcost",
+        CONFIG.pseudo_models["flash-lowcost"],
+        _make_caps(has_parallel_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
 
@@ -280,8 +343,11 @@ def test_parallel_tools_no_parallel_in_destination():
 def test_audio_in_history():
     """Audio in history → destination has no audio → BLOCKED."""
     result = validate_switch(
-        "normal", "deep-flash", CONFIG.pseudo_models["deep-flash"],
-        _make_caps(has_audio=True), CONFIG,
+        "normal",
+        "deep-flash",
+        CONFIG.pseudo_models["deep-flash"],
+        _make_caps(has_audio=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
 
@@ -289,8 +355,11 @@ def test_audio_in_history():
 def test_video_in_history():
     """Video in history → always BLOCKED."""
     result = validate_switch(
-        "normal", "tareas-avanzadas", CONFIG.pseudo_models["tareas-avanzadas"],
-        _make_caps(has_video=True), CONFIG,
+        "normal",
+        "tareas-avanzadas",
+        CONFIG.pseudo_models["tareas-avanzadas"],
+        _make_caps(has_video=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
 
@@ -298,8 +367,11 @@ def test_video_in_history():
 def test_pdf_in_history_no_vision_destination():
     """PDF in history → destination no vision → BLOCKED."""
     result = validate_switch(
-        "avanzada-vision", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(has_pdf=True), CONFIG,
+        "avanzada-vision",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(has_pdf=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
 
@@ -310,8 +382,11 @@ def test_pdf_in_history_no_vision_destination():
 def test_same_pseudo_model_safe():
     """Same pseudo-model → always SAFE (no switch)."""
     result = validate_switch(
-        "normal", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(has_images=True, has_parallel_tools=True), CONFIG,
+        "normal",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(has_images=True, has_parallel_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.SAFE
 
@@ -320,12 +395,18 @@ def test_determinism_same_inputs_same_result():
     """Determinism: same inputs → same result (run twice)."""
     caps = _make_caps(has_images=True, has_tools=True)
     result1 = validate_switch(
-        "avanzada-vision", "normal", CONFIG.pseudo_models["normal"],
-        caps, CONFIG,
+        "avanzada-vision",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        caps,
+        CONFIG,
     )
     result2 = validate_switch(
-        "avanzada-vision", "normal", CONFIG.pseudo_models["normal"],
-        caps, CONFIG,
+        "avanzada-vision",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        caps,
+        CONFIG,
     )
     assert result1.status == result2.status
     assert result1.reason == result2.reason
@@ -338,8 +419,11 @@ def test_warning_on_tools_strict_downgrade():
     # deep-flash has tools_strict: true on deepseek-v4-flash too
     # So let's test flash-lowcost which has NO strict models
     result = validate_switch(
-        "normal", "flash-lowcost", CONFIG.pseudo_models["flash-lowcost"],
-        _make_caps(has_tools=True), CONFIG,
+        "normal",
+        "flash-lowcost",
+        CONFIG.pseudo_models["flash-lowcost"],
+        _make_caps(has_tools=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.WARNING
 
@@ -347,8 +431,11 @@ def test_warning_on_tools_strict_downgrade():
 def test_blocked_with_remediation():
     """BLOCKED always includes remediation options."""
     result = validate_switch(
-        "avanzada-vision", "normal", CONFIG.pseudo_models["normal"],
-        _make_caps(has_images=True), CONFIG,
+        "avanzada-vision",
+        "normal",
+        CONFIG.pseudo_models["normal"],
+        _make_caps(has_images=True),
+        CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED
     assert len(result.remediation) > 0

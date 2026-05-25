@@ -21,7 +21,10 @@ def test_single_image_url():
             "role": "user",
             "content": [
                 {"type": "text", "text": "What's in this image?"},
-                {"type": "image_url", "image_url": {"url": "https://example.com/img.jpg"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/img.jpg"},
+                },
             ],
         }
     ]
@@ -37,8 +40,14 @@ def test_multiple_images_idempotent():
         {
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": "https://example.com/1.jpg"}},
-                {"type": "image_url", "image_url": {"url": "https://example.com/2.jpg"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/1.jpg"},
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/2.jpg"},
+                },
             ],
         }
     ]
@@ -53,7 +62,10 @@ def test_input_audio():
             "role": "user",
             "content": [
                 {"type": "text", "text": "Transcribe this:"},
-                {"type": "input_audio", "input_audio": {"data": "...", "format": "wav"}},
+                {
+                    "type": "input_audio",
+                    "input_audio": {"data": "...", "format": "wav"},
+                },
             ],
         }
     ]
@@ -103,7 +115,10 @@ def test_video_url_type():
         {
             "role": "user",
             "content": [
-                {"type": "video_url", "video_url": {"url": "https://example.com/vid.mp4"}}
+                {
+                    "type": "video_url",
+                    "video_url": {"url": "https://example.com/vid.mp4"},
+                }
             ],
         }
     ]
@@ -120,7 +135,10 @@ def test_tool_definitions_in_request():
             "function": {
                 "name": "search_codebase",
                 "description": "Search code",
-                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
             },
         }
     ]
@@ -193,13 +211,20 @@ def test_mixed_image_and_tools():
         {
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": "https://example.com/img.jpg"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/img.jpg"},
+                },
             ],
         },
         {
             "role": "assistant",
             "tool_calls": [
-                {"id": "call_1", "type": "function", "function": {"name": "analyze", "arguments": "{}"}},
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "analyze", "arguments": "{}"},
+                },
             ],
         },
     ]
@@ -271,7 +296,10 @@ def test_estimate_tokens_multimodal():
             "role": "user",
             "content": [
                 {"type": "text", "text": "Describe this image."},
-                {"type": "image_url", "image_url": {"url": "https://example.com/img.jpg"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/img.jpg"},
+                },
             ],
         }
     ]

@@ -73,8 +73,14 @@ async def vision_chat(model: str, data_url: str):
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": "Describe esta captura de pantalla en 1 frase corta"},
-                            {"type": "image_url", "image_url": {"url": data_url, "detail": "low"}},
+                            {
+                                "type": "text",
+                                "text": "Describe esta captura de pantalla en 1 frase corta",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": data_url, "detail": "low"},
+                            },
                         ],
                     }
                 ],
@@ -98,7 +104,10 @@ async def switch_chat(from_model: str, to_model: str, conv_id: str, data_url: st
                         "role": "user",
                         "content": [
                             {"type": "text", "text": "Describe esta imagen"},
-                            {"type": "image_url", "image_url": {"url": data_url, "detail": "low"}},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": data_url, "detail": "low"},
+                            },
                         ],
                     }
                 ],
@@ -127,13 +136,20 @@ async def switch_chat(from_model: str, to_model: str, conv_id: str, data_url: st
             json={
                 "model": to_model,
                 "conversation_id": conv_id,
-                "messages": [{"role": "user", "content": "What did you see in that image?"}],
+                "messages": [
+                    {"role": "user", "content": "What did you see in that image?"}
+                ],
                 "max_tokens": 300,
             },
         )
         data = resp3.json() if resp3.status_code == 200 else None
         meta = data.get("proxy_metadata", {}) if data else None
-        return resp3.status_code, resp3.json() if resp3.status_code != 200 else None, data, meta
+        return (
+            resp3.status_code,
+            resp3.json() if resp3.status_code != 200 else None,
+            data,
+            meta,
+        )
 
 
 async def streaming_chat(model: str, msg: str = "count 1 to 5"):
@@ -216,8 +232,17 @@ async def main():
     for m in MODELS:
         st, data = await simple_chat(m, "say hi in 1 word", 300)
         if st == 200:
-            c = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            log_test(f"  {m}", bool(c), f"HTTP {st} content={c[:60]!r} phys={data.get('proxy_metadata',{}).get('physical_model','?')}")
+            c = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+            log_test(
+                f"  {m}",
+                bool(c),
+                f"HTTP {st} content={c[:60]!r} phys={data.get('proxy_metadata', {}).get('physical_model', '?')}",
+            )
         else:
             err = data.get("detail", {}).get("error", str(data)[:100])
             log_test(f"  {m}", False, f"HTTP {st} error={err}")
@@ -228,8 +253,17 @@ async def main():
     for m in ["avanzada-vision", "flash-vision"]:
         st, data = await vision_chat(m, DATA_URL)
         if st == 200:
-            c = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            log_test(f"  {m} sees image", bool(c), f"content={c[:80]!r} phys={data.get('proxy_metadata',{}).get('physical_model','?')}")
+            c = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+            log_test(
+                f"  {m} sees image",
+                bool(c),
+                f"content={c[:80]!r} phys={data.get('proxy_metadata', {}).get('physical_model', '?')}",
+            )
         else:
             err = data.get("detail", {}).get("error", str(data)[:100])
             log_test(f"  {m} sees image", False, f"HTTP {st} error={err}")
@@ -240,7 +274,11 @@ async def main():
     for m in MODELS:
         has_content, has_done, chunk_count = await streaming_chat(m, "count 1 to 5")
         ok = has_content and has_done
-        log_test(f"  {m} streaming", ok, f"chunks={chunk_count} content_in_chunks={has_content} done={has_done}")
+        log_test(
+            f"  {m} streaming",
+            ok,
+            f"chunks={chunk_count} content_in_chunks={has_content} done={has_done}",
+        )
         time.sleep(0.5)
 
     # ── 5. Context preservation ─────────────────────────────────────────
@@ -253,7 +291,9 @@ async def main():
             json={
                 "model": "flash-lowcost",
                 "conversation_id": conv_ctx,
-                "messages": [{"role": "user", "content": "my secret word is ZEPHYR remember it"}],
+                "messages": [
+                    {"role": "user", "content": "my secret word is ZEPHYR remember it"}
+                ],
                 "max_tokens": 500,
             },
         )
@@ -277,20 +317,32 @@ async def main():
                 },
             )
             if r2.status_code == 200:
-                c = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "").lower()
+                c = (
+                    r2.json()
+                    .get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .lower()
+                )
                 has_secret = "zephyr" in c
-                log_test("  Context preserved", has_secret, f"content sample: {c[:80]!r}")
+                log_test(
+                    "  Context preserved", has_secret, f"content sample: {c[:80]!r}"
+                )
             else:
                 log_test("  Context preserved", False, f"HTTP {r2.status_code}")
 
     # ── 6. Switch vision → non-vision (auto-describe) ──────────────────
     print("\n[6] Auto-describe on pseudo-model switch")
     conv_switch = str(uuid.uuid4())
-    st, err_data, data, meta = await switch_chat("avanzada-vision", "pensamiento-profundo-caro", conv_switch, DATA_URL)
+    st, err_data, data, meta = await switch_chat(
+        "avanzada-vision", "pensamiento-profundo-caro", conv_switch, DATA_URL
+    )
 
     if st == 200 and data and meta:
         imgs = meta.get("images_described", 0)
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        content = (
+            data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        )
         log_test(
             "  Switch vision→non-vision",
             imgs > 0,
@@ -299,7 +351,11 @@ async def main():
     elif st == 200 and data:
         # Switch worked but auto-describe may not have triggered
         imgs = meta.get("images_described", 0) if meta else 0
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip() if data else ""
+        content = (
+            data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            if data
+            else ""
+        )
         log_test(
             "  Switch vision→non-vision",
             True,
@@ -328,7 +384,10 @@ async def main():
                         "role": "user",
                         "content": [
                             {"type": "text", "text": "What do you see?"},
-                            {"type": "image_url", "image_url": {"url": DATA_URL, "detail": "low"}},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": DATA_URL, "detail": "low"},
+                            },
                         ],
                     }
                 ],
@@ -342,13 +401,13 @@ async def main():
                 log_test(
                     "  POST /degrade-images",
                     True,
-                    f"images_described={data_d.get('images_described',0)} can_switch_to={data_d.get('can_now_switch_to',[])}",
+                    f"images_described={data_d.get('images_described', 0)} can_switch_to={data_d.get('can_now_switch_to', [])}",
                 )
             else:
                 log_test(
                     "  POST /degrade-images",
                     False,
-                    f"HTTP {st_d} error={data_d.get('detail',{}).get('error','?')}",
+                    f"HTTP {st_d} error={data_d.get('detail', {}).get('error', '?')}",
                 )
         else:
             log_test(
@@ -390,7 +449,10 @@ async def main():
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": "analyze"},
-                                {"type": "image_url", "image_url": {"url": DATA_URL, "detail": "low"}},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": DATA_URL, "detail": "low"},
+                                },
                             ],
                         }
                     ],
@@ -412,11 +474,21 @@ async def main():
                     log_test("  Blocked switch → 409", True, f"HTTP {r_b2.status_code}")
                 else:
                     d2 = r_b2.json()
-                    log_test("  Blocked switch → 409", False, f"HTTP {r_b2.status_code} {d2.get('detail',{}).get('error','?')}")
+                    log_test(
+                        "  Blocked switch → 409",
+                        False,
+                        f"HTTP {r_b2.status_code} {d2.get('detail', {}).get('error', '?')}",
+                    )
             else:
-                log_test("  Blocked switch → 409", False, "Could not add image to conversation")
+                log_test(
+                    "  Blocked switch → 409",
+                    False,
+                    "Could not add image to conversation",
+                )
         else:
-            log_test("  Blocked switch → 409", False, "Could not create initial conversation")
+            log_test(
+                "  Blocked switch → 409", False, "Could not create initial conversation"
+            )
 
     # ── Summary ─────────────────────────────────────────────────────────
     print()
