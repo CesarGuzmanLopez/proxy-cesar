@@ -361,18 +361,21 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-14: Delegación de imágenes a tools
+## HU-14: Contenido no soportado → Blob Vault
 
 **Como** usuario
-**Quiero** enviar una imagen a un modelo sin visión junto con una tool que sí puede procesarla
-**Para** que el modelo use la tool para procesar la imagen en vez de rechazar el request
+**Quiero** enviar una imagen/audio/PDF a un modelo que no lo soporta
+**Para** que el proxy guarde el archivo como blob, genere una descripción y se la pase al modelo
 
 **Criterios:**
-- POST con imagen + tool compatible + modelo sin visión → 200 (no error)
-- El `image_url` se reemplaza por texto URL + instrucción para la tool
-- POST con imagen + modelo sin visión + SIN tools → 400 `IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL`
+- POST con imagen + modelo sin visión → 200, el modelo recibe una descripción de la imagen
+- El base64 se almacena en Valkey y se reemplaza por `[BLOB:hash:mime | size | descripción]`
+- El modelo puede usar sus tools si quiere procesar el blob (`GET /blobs/{hash}`)
+- POST con imagen + tool + modelo sin visión → mismo comportamiento (el proxy no inspecciona tools)
+- POST con imagen + `imagen` (text-to-image) → 400 error (modelo especializado)
+- POST con imagen + `audio` (whisper) → 400 error (modelo especializado)
 
-**Comando online — imagen + tool + modelo sin visión (debe funcionar):**
+**Comando online — imagen a modelo sin visión (se blobifica):**
 ```bash
 curl -s -X POST http://localhost:9110/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -384,21 +387,21 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
     ]}],
     "tools":[{"function":{"name":"analyze_image","parameters":{"type":"object","properties":{"image_url":{"type":"string"}}}}}],
     "stream":false
-  }' | python3 -c "import sys,json;d=json.load(sys.stdin);print('HTTP 200:', d.get('id','')[:20])"
+  }' | python3 -c "import sys,json;d=json.load(sys.stdin);print('OK:', d.get('choices',[{}])[0].get('message',{}).get('content','')[:200] if 'choices' in d else d)"
 ```
 
-**Comando online — imagen sin tools (debe fallar con 400):**
+**Comando online — recuperar blob (tools):**
 ```bash
-curl -s -w "\nHTTP: %{http_code}" -X POST http://localhost:9110/v1/chat/completions \
+# Primero enviar un request que blobifique contenido
+CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+curl -s -X POST http://localhost:9110/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model":"normal",
-    "messages":[{"role":"user","content":[
-      {"type":"text","text":"Describe"},
-      {"type":"image_url","image_url":{"url":"https://example.com/img.png"}}
-    ]}],
-    "stream":false
-  }'
+  -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":[
+    {\"type\":\"text\",\"text\":\"hola\"},
+    {\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/QualzQAAAABJRU5ErkJggg==\"}}
+  ]}],\"conversation_id\":\"$CONV_ID\",\"stream\":false}"
+
+# Ver el mensaje que recibió el modelo (tiene blob reference)
 ```
 
 ---

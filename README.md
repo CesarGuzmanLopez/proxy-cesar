@@ -117,16 +117,33 @@ El LLM **nunca ve** las keys reales. El cliente **siempre ve** las keys reales.
 
 ---
 
-## Delegación de Imágenes a Tools
+## Blob Vault — Contenido no soportado
 
-Cuando el usuario envía una imagen a un pseudo-modelo sin visión:
+Cuando el usuario envía contenido (imagen, audio, PDF) a un pseudo-modelo que no lo soporta:
 
-| Escenario | Comportamiento |
-|---|---|
-| Imagen + modelo sin visión + **sin tools** | `400 IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL` |
-| Imagen + modelo sin visión + **con tools compatibles** | Se reemplaza `image_url` por texto URL + instrucción para que la tool procese la imagen |
+1. **Almacenamiento**: El base64 se guarda en Valkey con hash SHA-256 (24h TTL)
+2. **Descripción**: Se genera una descripción breve usando el modelo más barato disponible con la capacidad necesaria (visión para imágenes, whisper para audio, PyMuPDF para PDFs)
+3. **Referencia**: Se reemplaza el contenido por: `[The user sent an image. blob: BLOB:hash:mime | size KB\ndesc]`
+4. **Tools**: El modelo recibe sus tools sin modificar y decide si usarlas
+5. **Recuperación**: Las tools pueden obtener el blob real vía `GET /blobs/{hash}`
 
-La delegación escanea las definiciones de tools buscando un parámetro de tipo `string` que pueda aceptar la URL de la imagen. Si encuentra match, transforma el mensaje en vez de rechazar.
+El proxy **nunca inspecciona** las tools del usuario. Solo pasa el contenido no soportado a blob vault y deja que el modelo decida.
+
+### Comportamiento por tipo de contenido
+
+| Tipo | Modelo soporta | Modelo NO soporta |
+|---|---|---|
+| Imagen | Pasa directo al modelo con visión | Blob vault + descripción |
+| Audio | Pasa directo al modelo con audio | Blob vault + transcripción |
+| PDF | Pasa directo al modelo con visión | Blob vault + texto extraído (PyMuPDF) |
+| Video | No hay modelos con video en v1 | Blob vault + metadata |
+
+### Modelos especializados
+
+| Modelo | Propósito | Contenido incorrecto → |
+|---|---|---|
+| `imagen` | Generar imágenes desde texto | Error 400 |
+| `audio` | Transcribir audio a texto | Error 400 si se envía imagen |
 
 ---
 
