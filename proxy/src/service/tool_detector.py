@@ -151,7 +151,7 @@ async def _try_extract_pdf_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
-def _classify_content_parts(
+def _classify_content_parts(  # noqa: S3776 — 3 content types × multiple checks
     content: list,
 ) -> tuple[list[str], list[tuple[str, str, str, str]], list[tuple[str, str, str, str]], list[tuple[str, str, str, str]], list[dict]]:
     """Classify content parts into images, audio, files, and others."""
