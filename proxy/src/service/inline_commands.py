@@ -43,7 +43,6 @@ class InlineCommandResult:
 async def handle_inline_command(
     messages: list[dict],
     conversation_id: str | None,
-    config,
     db: AsyncSession,
 ) -> InlineCommandResult:
     last_msg = _find_last_user_message(messages)

@@ -132,7 +132,6 @@ async def chat_completions(
     cmd_result = await handle_inline_command(
         messages=messages,
         conversation_id=request.conversation_id,
-        config=config,
         db=db,
     )
     if cmd_result.handled and cmd_result.skip_llm:
