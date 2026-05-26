@@ -15,11 +15,7 @@ logger = logging.getLogger(__name__)
 BLOB_PREFIX = "BLOB"
 BLOB_TTL = 86400  # 24 hours
 _MAX_BLOB_SIZE = 10 * 1024 * 1024  # 10 MB
-_DESCRIBE_PROMPT = (
-    "Describe this image in one brief paragraph (max 3 sentences). "
-    "Focus on what a developer would need to know: "
-    "what is shown, any text/code visible, and the overall context."
-)
+_CONTENT_PREVIEW_MAX = 500  # max chars for content preview in description
 
 
 def _hash_content(data: str) -> str:
@@ -177,9 +173,9 @@ async def _describe_content(raw_data: str, mime: str, config, ptype: str) -> str
 def _try_extract_pdf_text(base64_data: str) -> str:
     """Try to extract text from a base64-encoded PDF using Python libraries.
 
-    Returns the extracted text if successful, or metadata about the PDF
-    (page count, size) if text extraction fails, so the model can decide
-    whether to use a tool to process it further.
+    Returns extracted text (truncated with ...{N} more if large),
+    or metadata about the PDF (page count, size) if extraction fails,
+    so the model can decide whether to use a tool to process it further.
     """
     try:
         import fitz  # PyMuPDF
@@ -192,17 +188,24 @@ def _try_extract_pdf_text(base64_data: str) -> str:
         doc.close()
 
         text = text.strip()
+        size_kb = len(pdf_bytes) // 1024
+        meta = f"[PDF: {page_count} pages, {size_kb} KB."
+
         if text:
-            return text[:1000]
-        return f"[PDF with {page_count} pages — no extractable text found. Try a vision model or OCR tool.]"
+            if len(text) > _CONTENT_PREVIEW_MAX:
+                remainder = len(text) - _CONTENT_PREVIEW_MAX
+                text = text[:_CONTENT_PREVIEW_MAX]
+                return f"{meta}\n\n{text}\n...{{{remainder} more chars}}]"
+            return f"{meta}\n\n{text}]"
+
+        return f"{meta} No extractable text found. Try a vision model or OCR tool.]"
     except ImportError:
         import base64
-
         pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
         size_kb = len(pdf_bytes) // 1024
-        return f"[PDF file ({size_kb} KB). PyMuPDF not available. Use a tool to process this PDF.]"
+        return f"[PDF: {size_kb} KB. PyMuPDF not available for text extraction. Use a tool to process this PDF.]"
     except Exception as exc:
-        return f"[PDF file — could not parse: {str(exc)[:100]}]"
+        return f"[PDF — could not parse: {str(exc)[:100]}]"
 
 
 async def _store_blob_with_description(
@@ -253,18 +256,20 @@ async def replace_base64_with_blob_refs(
     valkey=None,
     config=None,
 ) -> list[dict[str, Any]]:
-    """Replace base64 content parts with [BLOB:hash:mime:description] references.
+    """Replace base64 content parts with [BLOB:hash:mime] references.
 
     Stores the actual base64 data in Valkey, generates a brief description
     using the cheapest capable model, and includes it in the reference so
     the main model knows what the content contains without needing vision.
 
-    The model receives:
-      [The user sent an image. blob: BLOB:hash:mime | description: ...]
-      [The user sent an audio file. blob: BLOB:hash:mime | description: ...]
-      [The user sent a file. blob: BLOB:hash:mime | description: ...]
+    Real URLs pass through unchanged so the model can download them.
 
-    Real URLs (non-base64) pass through unchanged.
+    Format examples:
+      [The user sent an image. blob: BLOB:hash:image/png | screenshot of login]
+      [The user sent an audio file. blob: BLOB:hash:audio/wav | meeting notes...]
+      [PDF: 12 pages, 240 KB.
+       Introduction to machine learning...
+       ...{3450 more chars}]
     """
     if valkey is None:
         return messages
@@ -291,8 +296,8 @@ async def replace_base64_with_blob_refs(
             ptype = part.get("type", "")
             raw: str = ""
             label = ""
+            url_path: str | None = None
 
-            # Extract raw data from whichever content type
             if ptype == "image_url":
                 raw = part.get("image_url", {}).get("url", "")
                 label = "image"
@@ -303,24 +308,35 @@ async def replace_base64_with_blob_refs(
             elif ptype == "file":
                 file_data = part.get("file", {})
                 raw = file_data.get("data", "") or file_data.get("url", "")
+                url_path = file_data.get("url", None)
                 label = "file"
 
-            if raw and raw.startswith("data:"):
-                h = _hash_content(raw)
-                mime = _extract_mime(raw) or f"{ptype}/unknown"
-                blob_key = f"{prefix}:{h}"
-                desc_key = f"{prefix}:{h}:desc"
-                description = await _store_blob_with_description(
-                    valkey, blob_key, desc_key, raw, mime, ptype, config
-                )
-                ref = f"{BLOB_PREFIX}:{h}:{mime}"
-                text = f"[The user sent an {label}. blob: {ref}"
-                if description:
-                    text += f" | {description}"
-                text += "]"
-                new_content.append({"type": "text", "text": text})
-            else:
+            if not raw:
                 new_content.append(part)
+                continue
+
+            # Real URL → pass through, model can download it
+            if not raw.startswith("data:"):
+                new_content.append(part)
+                continue
+
+            # Base64 → store as blob reference
+            h = _hash_content(raw)
+            mime = _extract_mime(raw) or f"{ptype}/unknown"
+            blob_key = f"{prefix}:{h}"
+            desc_key = f"{prefix}:{h}:desc"
+            size_kb = len(raw) // 1024
+
+            description = await _store_blob_with_description(
+                valkey, blob_key, desc_key, raw, mime, ptype, config
+            )
+
+            ref = f"{BLOB_PREFIX}:{h}:{mime}"
+            text = f"[The user sent an {label}. blob: {ref} | {size_kb} KB"
+            if description:
+                text += f"\n{description}"
+            text += "]"
+            new_content.append({"type": "text", "text": text})
 
         new_messages.append({**msg, "content": new_content})
 
