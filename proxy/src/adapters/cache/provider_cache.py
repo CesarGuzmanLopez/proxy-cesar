@@ -157,7 +157,7 @@ def build_cache_metadata(
     # OpenAI / DeepSeek format
     details = usage.get("prompt_tokens_details", {})
     if details and isinstance(details, dict):
-        cached = details.get("cached_tokens", 0)
+        cached = details.get("cached_tokens", 0) or 0
         if cached > 0:
             metadata["provider_cache_hit"] = True
             metadata["cached_tokens"] = cached

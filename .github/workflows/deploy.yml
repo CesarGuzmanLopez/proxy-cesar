@@ -13,6 +13,8 @@
 #   OPENROUTER_API_KEY
 #   ZHIPUAI_API_KEY
 #   ZAI_API_KEY
+#   OPENCODE_API_KEY  — OpenCode Go API key
+#   PRUNA_API_KEY
 
 name: Deploy to plata
 
@@ -35,6 +37,8 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ZHIPUAI_API_KEY: ${{ secrets.ZHIPUAI_API_KEY }}
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      PRUNA_API_KEY: ${{ secrets.PRUNA_API_KEY }}
 
     steps:
       - name: Checkout
@@ -49,7 +53,8 @@ jobs:
           key: ${{ secrets.PLATA_SSH_KEY }}
           envs: >-
             PROXY_API_KEY,ANTHROPIC_API_KEY,DEEPSEEK_API_KEY,GOOGLE_API_KEY,GROQ_API_KEY,
-            OPENROUTER_API_KEY,ZHIPUAI_API_KEY,ZAI_API_KEY
+            OPENROUTER_API_KEY,ZHIPUAI_API_KEY,ZAI_API_KEY,
+            OPENCODE_API_KEY,PRUNA_API_KEY
           script: |
             set -euo pipefail
 
@@ -97,6 +102,8 @@ jobs:
             OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
             ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY}
             ZAI_API_KEY=${ZAI_API_KEY}
+            OPENCODE_API_KEY=${OPENCODE_API_KEY}
+            PRUNA_API_KEY=${PRUNA_API_KEY}
             EOF
 
             chmod 600 .env
