@@ -29,36 +29,6 @@
             "parallel_tool_calls": true
           }
         },
-        "normal": {
-          "name": "normal",
-          "capabilities": {
-            "tools": true,
-            "vision": false,
-            "streaming": true,
-            "function_calling": true,
-            "parallel_tool_calls": false
-          }
-        },
-        "deep-flash": {
-          "name": "deep-flash",
-          "capabilities": {
-            "tools": true,
-            "vision": false,
-            "streaming": true,
-            "function_calling": true,
-            "parallel_tool_calls": false
-          }
-        },
-        "flash-lowcost": {
-          "name": "flash-lowcost",
-          "capabilities": {
-            "tools": false,
-            "vision": false,
-            "streaming": true,
-            "function_calling": false,
-            "parallel_tool_calls": false
-          }
-        },
         "vision": {
           "name": "vision",
           "capabilities": {
@@ -66,11 +36,51 @@
             "vision": true,
             "streaming": true,
             "function_calling": true,
+            "parallel_tool_calls": false
+          }
+        },
+        "normal": {
+          "name": "normal",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
             "parallel_tool_calls": true
           }
         },
         "normal-gratis": {
           "name": "normal-gratis",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": false
+          }
+        },
+        "massive-fast": {
+          "name": "massive-fast",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": true
+          }
+        },
+        "flash-lowcost": {
+          "name": "flash-lowcost",
+          "capabilities": {
+            "tools": true,
+            "vision": false,
+            "streaming": true,
+            "function_calling": true,
+            "parallel_tool_calls": true
+          }
+        },
+        "compactador": {
+          "name": "compactador",
           "capabilities": {
             "tools": true,
             "vision": false,
