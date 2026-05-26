@@ -48,17 +48,19 @@ def _ensure_ssl_cert_file() -> None:
 
     On NixOS, Python reads NIX_SSL_CERT_FILE but httpx reads SSL_CERT_FILE.
     If SSL_CERT_FILE is missing but a NixOS cert bundle exists, bridge them.
+    Also checks KeyClaw's combined CA bundle if available.
     """
     if os.environ.get("SSL_CERT_FILE"):
         return
+    _keyclaw_combined = _KEYCLAW_HOME / "combined-ca.pem"
     for candidate in (
         os.environ.get("NIX_SSL_CERT_FILE", ""),
+        str(_keyclaw_combined) if _keyclaw_combined.exists() else "",
         _CA_CERT_FILE,
         _SSL_CERT_FILE,
     ):
         if candidate and Path(candidate).exists():
             os.environ["SSL_CERT_FILE"] = candidate
-            print(f"SSL_CERT_FILE set to {candidate}")
             return
 
 
@@ -102,7 +104,9 @@ def _setup_keyclaw_proxy() -> None:
     os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1,::1,.local")
 
     if combined.exists():
-        os.environ.setdefault("SSL_CERT_FILE", str(combined))
+        # Force SSL_CERT_FILE to combined bundle (system CA + KeyClaw CA)
+        # so httpx clients created after this point can verify KeyClaw's MITM certs.
+        os.environ["SSL_CERT_FILE"] = str(combined)
         os.environ.setdefault("REQUESTS_CA_BUNDLE", str(combined))
         os.environ.setdefault("NODE_EXTRA_CA_CERTS", str(keyclaw_ca))
 

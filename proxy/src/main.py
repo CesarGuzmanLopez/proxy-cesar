@@ -8,9 +8,12 @@ import os
 from pathlib import Path
 
 # ── SSL_CERT_FILE must be set *before* any module imports httpx/litellm ────
+# Check KeyClaw combined CA first, then system CA
+_keyclaw_combined = Path.home() / ".keyclaw" / "combined-ca.pem"
 if not os.environ.get("SSL_CERT_FILE"):
     for candidate in (
         os.environ.get("NIX_SSL_CERT_FILE", ""),
+        str(_keyclaw_combined) if _keyclaw_combined.exists() else "",
         "/etc/ssl/certs/ca-certificates.crt",
         "/etc/ssl/cert.pem",
     ):
