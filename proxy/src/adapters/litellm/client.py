@@ -152,9 +152,6 @@ def setup_litellm(settings: Settings) -> None:
     os.environ.setdefault("PRUNA_API_KEY", settings.pruna_api_key)
     os.environ.setdefault("PRUNA_API_BASE", "https://api.pruna.ai/v1")
     os.environ.setdefault("OPENCODE_API_KEY", settings.opencode_api_key)
-    # LiteLLM usa OPENAI_API_KEY para modelos con prefijo openai/ (Go models)
-    if settings.opencode_api_key:
-        os.environ.setdefault("OPENAI_API_KEY", settings.opencode_api_key)
 
     if not settings.keyclaw_enabled:
         litellm.suppress_debug_info = True
