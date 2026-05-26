@@ -176,20 +176,29 @@ async def _process_msg_blobs(
             other_parts.append(part)
             continue
         ptype = part.get("type", "")
-        raw = {"image_url": lambda p: p.get("image_url", {}).get("url", ""),
-               "input_audio": lambda p: (p.get("input_audio", {}) or {}).get("data", ""),
-               "file": lambda p: (p.get("file", {}) or {}).get("data", "")}.get(ptype, lambda p: "")(part)
+        raw = ""
+        if ptype == "image_url":
+            raw = part.get("image_url", {}).get("url", "")
+        elif ptype == "input_audio":
+            raw = (part.get("input_audio", {}) or {}).get("data", "")
+        elif ptype == "file":
+            raw = (part.get("file", {}) or {}).get("data", "")
+        else:
+            other_parts.append(part)
+            continue
         if not raw or not raw.startswith("data:"):
             other_parts.append(part)
             continue
-
         h = _hash_content(raw)
         mime = _extract_mime(raw) or f"{ptype}/unknown"
         sz = str(len(raw) // 1024)
         store_tasks.append(_store_blob_if_missing(valkey, f"{prefix}:{h}", raw))
-
-        target = {"image_url": image_blobs, "input_audio": audio_blobs, "file": file_blobs}
-        target.get(ptype, []).append((h, raw, mime, sz))
+        if ptype == "image_url":
+            image_blobs.append((h, raw, mime, sz))
+        elif ptype == "input_audio":
+            audio_blobs.append((h, raw, mime, sz))
+        elif ptype == "file":
+            file_blobs.append((h, raw, mime, sz))
 
     if store_tasks:
         await asyncio.gather(*store_tasks)
