@@ -5,6 +5,7 @@ delegate image processing to a tool instead of rejecting the request.
 Unsupported content types are transformed to text URL references.
 """
 
+import re
 from typing import Any
 
 _CONTENT_TYPE_LABELS: dict[str, str] = {
@@ -42,9 +43,65 @@ def find_image_compatible_tool(tools: list[dict] | None) -> tuple[str, str] | No
     return None
 
 
-def _content_type_label(content_type: str) -> str:
-    """Return human-readable label for a content type."""
-    return _CONTENT_TYPE_LABELS.get(content_type, content_type)
+def _extract_mime(raw_path: str) -> str | None:
+    """Extract MIME type from a data URI prefix.
+
+    e.g. 'data:image/png;base64,...' → 'image/png'
+    """
+    match = re.match(r"data:([a-z]+/[a-z0-9+-.]+)", raw_path)
+    return match.group(1) if match else None
+
+
+def _format_content_part(part: dict) -> str:
+    """Format a content part dict into a text explanation for the model.
+
+    If the content is a real URL, include the path.
+    If it's base64 data, extract and include the MIME type so the model
+    knows what kind of content the user provided.
+    """
+    ptype = part.get("type", "")
+    label = _CONTENT_TYPE_LABELS.get(ptype, ptype)
+
+    # Extract raw path/data
+    if ptype == "image_url":
+        img_data = part.get("image_url", {})
+        raw_path = img_data.get("url", "")
+        detail = img_data.get("detail", "")
+    elif ptype == "input_audio":
+        audio_data = part.get("input_audio", {})
+        raw_path = audio_data.get("url", "") or audio_data.get("data", "")
+        audio_format = audio_data.get("format", "")
+    elif ptype == "file":
+        file_data = part.get("file", {})
+        raw_path = file_data.get("url", "") or file_data.get("data", "")
+        filename = file_data.get("filename", "")
+        mime = file_data.get("mime_type", "")
+    else:
+        return ""
+
+    if not raw_path:
+        return f"[The user sent an {label}. (no path provided)]"
+
+    # Real URL → include the path
+    if not raw_path.startswith("data:"):
+        return f"[The user sent an {label}. path: {raw_path}]"
+
+    # Base64 inline data → extract MIME and metadata
+    mime_type = _extract_mime(raw_path) or "unknown"
+    meta_parts = [f"type: {mime_type}"]
+
+    if ptype == "image_url" and detail and detail != "auto":
+        meta_parts.append(f"detail: {detail}")
+    if ptype == "input_audio" and audio_format:
+        meta_parts.append(f"format: {audio_format}")
+    if ptype == "file":
+        if filename:
+            meta_parts.append(f"filename: {filename}")
+        if mime:
+            meta_parts.append(f"mime: {mime}")
+
+    meta_str = ", ".join(meta_parts)
+    return f"[The user sent an {label} as base64. {meta_str}]"
 
 
 def transform_unsupported_content(
@@ -53,13 +110,17 @@ def transform_unsupported_content(
     """Replace unsupported content types with text explanations.
 
     For each user message containing content types the model can't process
-    (image_url, input_audio, file), extracts the path and replaces the
-    content part with a text explanation so the model knows what the
-    user sent and can respond appropriately.
+    (image_url, input_audio, file), replaces the content part with a text
+    explanation so the model knows what the user sent.
 
-    The model receives something like:
-      [The user sent an image. path: https://...]
-      [The user sent an audio file. path: data:audio/wav;base64,...]
+    Real URLs are passed as-is. Base64 inline data is described by its
+    MIME type and metadata (format, dimensions, filename, etc.) instead
+    of the raw blob.
+
+    Examples:
+      [The user sent an image. path: https://example.com/img.png]
+      [The user sent an image as base64. type: image/png]
+      [The user sent an audio file as base64. type: audio/wav, format: wav]
     """
     new_messages: list[dict[str, Any]] = []
     for msg in messages:
@@ -74,50 +135,12 @@ def transform_unsupported_content(
 
         new_content: list[dict[str, Any]] = []
         for part in content:
-            if not isinstance(part, dict):
-                new_content.append(part)
-                continue
-
-            ptype = part.get("type", "")
-
-            # image_url → extract content path
-            if ptype == "image_url":
-                url = part.get("image_url", {}).get("url", "")
-                label = _content_type_label(ptype)
-                new_content.append({
-                    "type": "text",
-                    "text": (
-                        f"[The user sent an {label}. "
-                        f"path: {url}]"
-                    ),
-                })
-
-            # input_audio → extract URL/data
-            elif ptype == "input_audio":
-                audio_data = part.get("input_audio", {})
-                url = audio_data.get("url", "") or audio_data.get("data", "")
-                label = _content_type_label(ptype)
-                new_content.append({
-                    "type": "text",
-                    "text": (
-                        f"[The user sent an {label}. "
-                        f"path: {url}]"
-                    ),
-                })
-
-            # file (PDF/video) → extract URL
-            elif ptype == "file":
-                file_data = part.get("file", {})
-                url = file_data.get("url", "") or file_data.get("data", "")
-                label = _content_type_label(ptype)
-                new_content.append({
-                    "type": "text",
-                    "text": (
-                        f"[The user sent a {label}. "
-                        f"path: {url}]"
-                    ),
-                })
-
+            if isinstance(part, dict) and part.get("type") in (
+                "image_url",
+                "input_audio",
+                "file",
+            ):
+                new_content.append({"type": "text", "text": _format_content_part(part)})
             else:
                 new_content.append(part)
 
