@@ -52,10 +52,7 @@ from src.adapters.cache.provider_cache import (
     should_apply_cache_control,
 )
 from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
-from src.service.compatibility import (
-    validate_incoming_content,
-    validate_switch,
-)
+from src.service.compatibility import validate_incoming_content
 from src.service.context_alert import ContextAlert, get_context_alert
 from src.service.model_resolver import (
     build_passthrough_pseudo_model,
@@ -132,7 +129,6 @@ async def process_chat_request(
     (
         existing_affinity,
         session_caps,
-        compatibility,
         physical_model,
         provider,
         tools_filter,
@@ -242,7 +238,6 @@ async def process_chat_request(
             session_caps=session_caps,
             tools=tools,
             tool_choice=tool_choice,
-            compatibility=compatibility,
             tools_filter=tools_filter,
             images_described=images_described,
             images_described_by=images_described_by,
@@ -312,32 +307,6 @@ async def _resolve_session_conv_and_models(
 
     # Load session capabilities (uses identity-mapped conv, no extra DB trip)
     session_caps = await load_session_capabilities(db, conv_uuid)
-    compatibility_warning: str | None = None
-    compatibility_details: dict | None = None
-
-    if conv is not None and conv.pseudo_model != pseudo_model_name:
-        switch_result = validate_switch(
-            from_pseudo_name=conv.pseudo_model,
-            to_pseudo_name=pseudo_model_name,
-            to_pseudo=pm_schema,
-            caps=session_caps,
-            config=config,
-        )
-        if switch_result.status.value == "blocked":
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "PSEUDO_MODEL_INCOMPATIBLE",
-                    "message": switch_result.reason,
-                    "remediation": switch_result.remediation,
-                    "details": switch_result.details,
-                    "from_pseudo_model": conv.pseudo_model,
-                    "to_pseudo_model": pseudo_model_name,
-                },
-            )
-        if switch_result.status.value == "warning":
-            compatibility_warning = switch_result.reason
-            compatibility_details = switch_result.details
 
     eligible = get_eligible_models(pm_schema.physical_models, session_caps)
     tools_filter_applied = bool(
@@ -379,7 +348,6 @@ async def _resolve_session_conv_and_models(
     return (
         existing_affinity,
         session_caps,
-        {"warning": compatibility_warning, "details": compatibility_details},
         physical,
         provider,
         {"applied": tools_filter_applied, "reason": tools_filter_reason},

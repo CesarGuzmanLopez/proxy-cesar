@@ -37,7 +37,7 @@ from src.service.capability_detector import (
     estimate_tokens,
     load_session_capabilities,
 )
-from src.service.compatibility import validate_incoming_content, validate_switch
+from src.service.compatibility import validate_incoming_content
 from src.service.model_resolver import (
     build_passthrough_pseudo_model,
     normalize_model_name,
@@ -331,59 +331,21 @@ def _resolve_physical_model(
     return selected_phys.model, selected_phys.provider
 
 
-def _validate_switch_and_filter_pool(
-    conv,
-    resolved_model: str,
+def _filter_eligible_models(
     pm_schema,
     session_caps,
-    config,
-) -> tuple[str | None, dict | None, list, bool, str | None]:
-    """Validate pseudo-model switch compatibility and filter eligible models.
+) -> tuple[list, bool, str | None]:
+    """Filter eligible physical models based on session capabilities (parallel tools).
 
     Returns:
-        Tuple of (compatibility_warning, compatibility_details,
-                  eligible_models, tools_filter_applied, tools_filter_reason).
+        Tuple of (eligible_models, tools_filter_applied, tools_filter_reason).
     """
-    compatibility_warning: str | None = None
-    compatibility_details: dict | None = None
-
-    if conv is not None and conv.pseudo_model != resolved_model:
-        switch_result = validate_switch(
-            from_pseudo_name=conv.pseudo_model,
-            to_pseudo_name=resolved_model,
-            to_pseudo=pm_schema,
-            caps=session_caps,
-            config=config,
-        )
-        if switch_result.status.value == "blocked":
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "PSEUDO_MODEL_INCOMPATIBLE",
-                    "message": switch_result.reason,
-                    "remediation": switch_result.remediation,
-                    "details": switch_result.details,
-                    "from_pseudo_model": conv.pseudo_model,
-                    "to_pseudo_model": resolved_model,
-                },
-            )
-        if switch_result.status.value == "warning":
-            compatibility_warning = switch_result.reason
-            compatibility_details = switch_result.details
-
     eligible_models = get_eligible_models(pm_schema.physical_models, session_caps)
     tools_filter_applied = session_caps.has_parallel_tools and len(
         eligible_models
     ) < len(pm_schema.physical_models)
     tools_filter_reason = "parallel_tools_required" if tools_filter_applied else None
-
-    return (
-        compatibility_warning,
-        compatibility_details,
-        eligible_models,
-        tools_filter_applied,
-        tools_filter_reason,
-    )
+    return eligible_models, tools_filter_applied, tools_filter_reason
 
 
 async def _handle_streaming_with_db(
@@ -431,19 +393,14 @@ async def _handle_streaming_with_db(
     # Load session capabilities (uses identity-mapped conv, no extra DB trip)
     session_caps = await load_session_capabilities(db, conv_uuid)
 
-    # Validate pseudo-model switch and filter eligible models
+    # Filter eligible models based on session capabilities
     (
-        compatibility_warning,
-        compatibility_details,
         eligible_models,
         tools_filter_applied,
         tools_filter_reason,
-    ) = _validate_switch_and_filter_pool(
-        conv=conv,
-        resolved_model=resolved_model,
+    ) = _filter_eligible_models(
         pm_schema=pm_schema,
         session_caps=session_caps,
-        config=config,
     )
 
     # Check input threshold
@@ -560,8 +517,8 @@ async def _handle_streaming_with_db(
                 affinity_maintained=not is_new and existing_affinity == physical_model,
                 context_window=pm_schema.context_window,
                 session_caps=session_caps,
-                compatibility_warning=compatibility_warning,
-                compatibility_details=compatibility_details,
+                compatibility_warning=None,
+                compatibility_details=None,
                 tools_filter_applied=tools_filter_applied,
                 tools_filter_reason=tools_filter_reason,
                 images_described=images_described,

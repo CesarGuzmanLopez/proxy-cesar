@@ -14,8 +14,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
 from src.schemas.tools import NormalizeToolsRequest, NormalizeToolsResponse
-from src.service.capability_detector import load_session_capabilities
-from src.service.compatibility import validate_switch
 from src.service.compactor.explicit import compact_conversation
 from src.service.tools_normalizer import generate_preview, normalize_history
 
@@ -124,10 +122,7 @@ async def get_compatible_models(
                 },
             )
 
-        # Build session capabilities from DB
-        caps = await load_session_capabilities(db, conv_uuid, conv.total_tokens)
-
-        # Evaluate every pseudo-model
+        # Evaluate every pseudo-model — all are safe (switch validation removed)
         compatible_models = []
         current_pseudo = conv.pseudo_model
 
@@ -143,32 +138,18 @@ async def get_compatible_models(
                 )
                 continue
 
-            result = validate_switch(
-                from_pseudo_name=current_pseudo,
-                to_pseudo_name=name,
-                to_pseudo=pm,
-                caps=caps,
-                config=config,
-            )
-
             compatible_models.append(
                 {
                     "pseudo_model": name,
                     "display_name": pm.display_name,
-                    "status": result.status.value,
-                    "reason": result.reason,
-                    "remediation": result.remediation if result.remediation else None,
+                    "status": "safe",
+                    "reason": "All pseudo-models are compatible.",
                 }
             )
 
         return {
             "conversation_id": conversation_id,
             "current_pseudo_model": current_pseudo,
-            "capabilities": {
-                "has_images": caps.has_images,
-                "has_tools": caps.has_tools,
-                "has_parallel_tools": caps.has_parallel_tools,
-            },
             "compatible_models": compatible_models,
         }
     finally:
