@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     groq_api_key: str = ""
     pruna_api_key: str = ""
+    opencode_api_key: str = ""
+    """API key for OpenCode client authentication. Also used by AuthMiddleware."""
     keyclaw_enabled: bool = True
     """Set to false to disable KeyClaw secret-filtering proxy even if installed."""
 

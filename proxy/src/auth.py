@@ -1,7 +1,9 @@
 """Bearer token authentication middleware.
 
 Sprint 8 §2: validates PROXY_API_KEY on all non-public endpoints.
-When PROXY_API_KEY is empty/missing → dev mode (auth disabled).
+Accepts OPENCODE_API_KEY as an additional valid credential so OpenCode
+clients can authenticate without a separate PROXY_API_KEY env var.
+When neither key is set → dev mode (auth disabled).
 """
 
 import logging
@@ -24,6 +26,16 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
 )
 
 
+def _valid_api_keys() -> list[str]:
+    """Return all accepted API keys (non-empty values only)."""
+    return [
+        k for k in [
+            os.getenv("PROXY_API_KEY", ""),
+            os.getenv("OPENCODE_API_KEY", ""),
+        ] if k
+    ]
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Validate Bearer token on all non-public endpoints.
 
@@ -36,9 +48,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if normalized_path in PUBLIC_PATHS:
             return await call_next(request)
 
-        # Dev mode — auth disabled if PROXY_API_KEY is not set
-        api_key = os.getenv("PROXY_API_KEY", "")
-        if not api_key:
+        # Dev mode — auth disabled if no API key is configured
+        valid_keys = _valid_api_keys()
+        if not valid_keys:
             return await call_next(request)
 
         # Validate Bearer token
@@ -61,7 +73,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         token = auth_header.removeprefix("Bearer ").strip()
-        if token != api_key:
+        if token not in valid_keys:
             logger.warning(
                 "auth_failure | path=%s ip=%s reason=invalid_key",
                 request.url.path,
