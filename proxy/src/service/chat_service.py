@@ -119,15 +119,21 @@ async def process_chat_request(
         tools,
         config,
     )
-    # Apply image→tool delegation if needed
-    if delegation and delegation.get("action") == "delegate_images":
-        from src.service.tool_detector import delegate_images_to_tool
-
-        messages = delegate_images_to_tool(
-            messages,
-            delegation["tool_name"],
-            delegation["param_name"],
+    # Apply image→tool delegation or unsupported content transformation
+    if delegation:
+        from src.service.tool_detector import (
+            delegate_images_to_tool,
+            transform_unsupported_content,
         )
+
+        if delegation.get("action") == "delegate_images":
+            messages = delegate_images_to_tool(
+                messages,
+                delegation["tool_name"],
+                delegation["param_name"],
+            )
+        elif delegation.get("action") == "transform_unsupported":
+            messages = transform_unsupported_content(messages)
     # Sprint 8: track request metrics
     metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())

@@ -407,20 +407,26 @@ async def _handle_streaming_with_db(
     # Detect capabilities in incoming messages
     turn_caps = detect_turn_capabilities(messages, tools)
 
-    # Validate incoming content (may return delegation signal)
+    # Validate incoming content (may return delegation or transform signal)
     delegation = validate_incoming_content(
         turn_caps, pm_schema, resolved_model, config, tools
     )
 
-    # Apply image→tool delegation if needed
-    if delegation and delegation.get("action") == "delegate_images":
-        from src.service.tool_detector import delegate_images_to_tool
-
-        messages = delegate_images_to_tool(
-            messages,
-            delegation["tool_name"],
-            delegation["param_name"],
+    # Apply delegation or unsupported content transformation
+    if delegation:
+        from src.service.tool_detector import (
+            delegate_images_to_tool,
+            transform_unsupported_content,
         )
+
+        if delegation.get("action") == "delegate_images":
+            messages = delegate_images_to_tool(
+                messages,
+                delegation["tool_name"],
+                delegation["param_name"],
+            )
+        elif delegation.get("action") == "transform_unsupported":
+            messages = transform_unsupported_content(messages)
 
     # Resolve conversation ID
     try:

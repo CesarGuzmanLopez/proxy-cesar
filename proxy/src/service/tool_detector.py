@@ -2,9 +2,16 @@
 
 When the user sends images to a model without vision, the proxy can
 delegate image processing to a tool instead of rejecting the request.
+Unsupported content types are transformed to text URL references.
 """
 
 from typing import Any
+
+_CONTENT_TYPE_LABELS: dict[str, str] = {
+    "image_url": "image",
+    "input_audio": "audio file",
+    "file": "file (PDF/video)",
+}
 
 
 def find_image_compatible_tool(tools: list[dict] | None) -> tuple[str, str] | None:
@@ -33,6 +40,90 @@ def find_image_compatible_tool(tools: list[dict] | None) -> tuple[str, str] | No
                     return (name, param_name)
 
     return None
+
+
+def _content_type_label(content_type: str) -> str:
+    """Return human-readable label for a content type."""
+    return _CONTENT_TYPE_LABELS.get(content_type, content_type)
+
+
+def transform_unsupported_content(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Replace unsupported content types with text explanations.
+
+    For each user message containing content types the model can't process
+    (image_url, input_audio, file), extracts the URL and replaces the
+    content part with a text explanation so the model knows what the
+    user sent and can respond appropriately.
+
+    The model receives something like:
+      [The user sent an image. URL: https://...]
+      [The user sent an audio file. URL: data:audio/wav;base64,...]
+    """
+    new_messages: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") != "user":
+            new_messages.append(msg)
+            continue
+
+        content = msg.get("content", "")
+        if not isinstance(content, list):
+            new_messages.append(msg)
+            continue
+
+        new_content: list[dict[str, Any]] = []
+        for part in content:
+            if not isinstance(part, dict):
+                new_content.append(part)
+                continue
+
+            ptype = part.get("type", "")
+
+            # image_url → extract URL
+            if ptype == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                label = _content_type_label(ptype)
+                new_content.append({
+                    "type": "text",
+                    "text": (
+                        f"[The user sent an {label}. "
+                        f"URL: {url}]"
+                    ),
+                })
+
+            # input_audio → extract URL/data
+            elif ptype == "input_audio":
+                audio_data = part.get("input_audio", {})
+                url = audio_data.get("url", "") or audio_data.get("data", "")
+                label = _content_type_label(ptype)
+                new_content.append({
+                    "type": "text",
+                    "text": (
+                        f"[The user sent an {label}. "
+                        f"URL: {url}]"
+                    ),
+                })
+
+            # file (PDF/video) → extract URL
+            elif ptype == "file":
+                file_data = part.get("file", {})
+                url = file_data.get("url", "") or file_data.get("data", "")
+                label = _content_type_label(ptype)
+                new_content.append({
+                    "type": "text",
+                    "text": (
+                        f"[The user sent a {label}. "
+                        f"URL: {url}]"
+                    ),
+                })
+
+            else:
+                new_content.append(part)
+
+        new_messages.append({**msg, "content": new_content})
+
+    return new_messages
 
 
 def delegate_images_to_tool(
@@ -72,15 +163,13 @@ def delegate_images_to_tool(
         for part in content:
             if isinstance(part, dict) and part.get("type") == "image_url":
                 url = part.get("image_url", {}).get("url", "")
-                new_content.append(
-                    {
-                        "type": "text",
-                        "text": (
-                            f"[Image URL delegated to tool '{tool_name}' "
-                            f"as parameter '{param_name}']: {url}"
-                        ),
-                    }
-                )
+                new_content.append({
+                    "type": "text",
+                    "text": (
+                        f"[Image URL delegated to tool '{tool_name}' "
+                        f"as parameter '{param_name}']: {url}"
+                    ),
+                })
             else:
                 new_content.append(part)
 

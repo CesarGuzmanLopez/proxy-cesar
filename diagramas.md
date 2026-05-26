@@ -173,17 +173,23 @@ flowchart TB
     
     ContentValid --> HasImages{¿Tiene imágenes?}
     HasImages -->|Sí, sin visión + tools| DelegateTool[Delegar a tool:<br/>reemplaza image_url por texto URL]
-    HasImages -->|Sí, sin visión + sin tools| Images400[400 IMAGES_NOT_SUPPORTED<br/>Usa modelo con visión]
+    HasImages -->|Sí, sin visión + sin tools| TransformImg[Transformar a texto:<br/>explica qué es + URL]
     HasImages -->|Sí, con visión| InlineCmd
     HasImages -->|No| InlineCmd
     
     DelegateTool --> InlineCmd
+    TransformImg --> InlineCmd
     
     ContentValid --> HasAudio{¿Tiene audio?}
-    HasAudio -->|Sí| Audio400[400 AUDIO_NOT_SUPPORTED]
+    HasAudio -->|Sí, sin audio model| TransformAudio[Transformar a texto:<br/>explica qué es + URL]
+    HasAudio -->|Sí, con audio model| InlineCmd
+    
+    TransformAudio --> InlineCmd
     
     ContentValid --> HasVideo{¿Tiene video?}
-    HasVideo -->|Sí| Video400[400 VIDEO_NOT_SUPPORTED]
+    HasVideo -->|Sí| TransformVideo[Transformar a texto:<br/>explica qué es + URL]
+    
+    TransformVideo --> InlineCmd
     
     InlineCmd[4. Verificar comando inline] --> IsCmd{¿status o help?}
     IsCmd -->|Sí| CmdHandled{skip_llm?}
@@ -633,11 +639,7 @@ flowchart TD
 ```mermaid
 graph TD
     subgraph Errores["Errores del Sistema"]
-        E1["400 IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL<br/>Imágenes sin modelo visión ni tools"]
-        E2["400 AUDIO_NOT_SUPPORTED_BY_PSEUDO_MODEL<br/>Audio sin modelo con soporte de audio"]
-        E3["400 PDF_NOT_SUPPORTED<br/>PDF sin modelo visión"]
-        E4["400 VIDEO_NOT_SUPPORTED_BY_PSEUDO_MODEL<br/>Video sin modelo con soporte de video"]
-        E5["400 PARALLEL_TOOLS_NOT_SUPPORTED<br/>Tools paralelas sin soporte"]
+        E1["400 PARALLEL_TOOLS_NOT_SUPPORTED<br/>Tools paralelas sin soporte (único error 400 de contenido)"]
         E6["400 INPUT_EXCEEDS_THRESHOLD<br/>Input supera límite del pseudo-modelo<br/>Usa POST /compact"]
         E7["400 CONTEXT_UNUSABLE<br/>Contexto al 100%"]
         E8["401 UNAUTHORIZED<br/>Token inválido o faltante"]

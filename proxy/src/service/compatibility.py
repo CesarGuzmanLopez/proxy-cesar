@@ -312,14 +312,14 @@ def validate_incoming_content(
     """Validate that the current pseudo-model can handle the incoming content.
 
     This check runs on EVERY turn, not just on pseudo-model switches.
-    It prevents silent data loss when the client sends content the model
-    can't process.
 
     Returns:
       - None if everything is OK
       - {"action": "delegate_images", "tool_name": "...", "param_name": "..."}
         if images can be delegated to a compatible tool
-    Raises HTTPException with descriptive error and remediation on failure.
+      - {"action": "transform_unsupported"}
+        if content type is not supported and should be transformed to text URL
+    Raises HTTPException on unrecoverable errors (parallel tools, etc.).
     """
     physical_models = pseudo_model.physical_models
 
@@ -327,7 +327,7 @@ def validate_incoming_content(
     if turn_caps.has_images:
         has_vision_model = any(m.vision for m in physical_models)
         if not has_vision_model:
-            # Try tool delegation before error
+            # Try tool delegation first
             from src.service.tool_detector import find_image_compatible_tool
 
             match = find_image_compatible_tool(tools)
@@ -339,103 +339,26 @@ def validate_incoming_content(
                     "param_name": param_name,
                 }
 
-            vision_pseudos = [
-                name
-                for name, pm in config.pseudo_models.items()
-                if any(m.vision for m in pm.physical_models)
-            ]
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL",
-                    "message": (
-                        f"Pseudo-model '{pseudo_model_name}' "
-                        f"({pseudo_model.display_name}) has no vision-capable "
-                        f"physical models. The incoming request contains images "
-                        f"that cannot be processed. No content was lost — "
-                        f"the request was rejected with this error."
-                    ),
-                    "remediation": [
-                        f"Switch to a vision-capable pseudo-model: {vision_pseudos}",
-                        "Use auto_describe to downgrade images to text (Sprint 5)",
-                    ],
-                    "current_pseudo_model": pseudo_model_name,
-                    "vision_capable_pseudo_models": vision_pseudos,
-                },
-            )
+            # No tools → transform image_url to text URL explanation
+            return {"action": "transform_unsupported"}
 
     # ---- CHECK: Audio → model without audio support ----
     if turn_caps.has_audio:
         has_audio_model = any(getattr(m, "audio", False) for m in physical_models)
         if not has_audio_model:
-            audio_pseudos = [
-                name
-                for name, pm in config.pseudo_models.items()
-                if any(getattr(m, "audio", False) for m in pm.physical_models)
-            ]
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "AUDIO_NOT_SUPPORTED_BY_PSEUDO_MODEL",
-                    "message": (
-                        f"Pseudo-model '{pseudo_model_name}' "
-                        f"({pseudo_model.display_name}) has no audio-capable "
-                        f"physical models. The incoming request contains audio "
-                        f"content that cannot be processed."
-                    ),
-                    "remediation": [
-                        f"Switch to an audio-capable pseudo-model: {audio_pseudos}",
-                    ],
-                    "current_pseudo_model": pseudo_model_name,
-                    "audio_capable_pseudo_models": audio_pseudos,
-                },
-            )
+            return {"action": "transform_unsupported"}
 
     # ---- CHECK: PDF → model without vision ----
     if turn_caps.has_pdf:
         has_vision_model = any(m.vision for m in physical_models)
         if not has_vision_model:
-            vision_pseudos = [
-                name
-                for name, pm in config.pseudo_models.items()
-                if any(m.vision for m in pm.physical_models)
-            ]
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "PDF_NOT_SUPPORTED",
-                    "message": (
-                        f"Pseudo-model '{pseudo_model_name}' has no vision-capable "
-                        f"physical models. PDFs are treated as images in v1 and "
-                        f"require a vision model. The request was rejected — "
-                        f"no content was silently lost."
-                    ),
-                    "remediation": [
-                        f"Switch to a vision-capable pseudo-model: {vision_pseudos}",
-                        "Extract text from the PDF before sending (manual, or v2 feature)",
-                    ],
-                },
-            )
+            return {"action": "transform_unsupported"}
 
     # ---- CHECK: Video → model without video support ----
     if turn_caps.has_video:
         has_video_model = any(getattr(m, "video", False) for m in physical_models)
         if not has_video_model:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "VIDEO_NOT_SUPPORTED_BY_PSEUDO_MODEL",
-                    "message": (
-                        f"Pseudo-model '{pseudo_model_name}' has no video-capable "
-                        f"physical models. Video content is not supported in any "
-                        f"pseudo-model in v1."
-                    ),
-                    "remediation": [
-                        "Extract key frames as images and send those instead",
-                        "Video frame extraction is planned for v2",
-                    ],
-                },
-            )
+            return {"action": "transform_unsupported"}
 
     # ---- CHECK: Parallel tools → model without parallel support ----
     if turn_caps.has_parallel_tools:
