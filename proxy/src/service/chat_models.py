@@ -73,7 +73,7 @@ class SaveContext:
     session_caps: SessionCapabilities
     tools: list[dict] | None
     tool_choice: str | dict | None
-    compatibility: dict
+    compatibility: dict = field(default_factory=dict)
     tools_filter: dict
     images_described: int = 0
     images_described_by: str | None = None
