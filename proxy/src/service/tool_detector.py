@@ -52,6 +52,12 @@ def _find_model_with_capability(config, cap: str = "vision") -> str | None:
 
     Provider-agnostic: scans ALL pseudo-models for the first model
     with the required capability (vision, audio, etc.).
+
+    TODO: This currently returns the FIRST model found, not the cheapest.
+    For production, sort by cost/performance and pick the most economical
+    one. E.g. for descriptions, a fast cheap model like Groq's
+    llama-4-scout is better than an expensive reasoning model.
+    Cost data is in pseudo_models.yaml notes for each physical model.
     """
     for pm in config.pseudo_models.values():
         for phys in pm.physical_models:
