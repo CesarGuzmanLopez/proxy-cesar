@@ -12,6 +12,16 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
+      - provider: opencode-go
+        model: anthropic/qwen3.7-max
+        api_base: https://opencode.ai/zen/go
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 1000000
+        note: "Go primary: Qwen3.7 Max vía Anthropic /messages. Premium reasoning (~4.770 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
         openai_tools_compatible: true
@@ -19,7 +29,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Primary: DeepSeek V4 Pro directo. Razonamiento profundo."
+        note: "Fallback: DeepSeek V4 Pro directo. Razonamiento profundo."
     fallback_strategy: sequential
 
   # ── Razonamiento ligero (NUEVO) ────────────────────────────────────────────
