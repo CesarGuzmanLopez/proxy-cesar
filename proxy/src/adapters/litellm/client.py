@@ -151,8 +151,6 @@ def setup_litellm(settings: Settings) -> None:
     os.environ.setdefault("GROQ_API_KEY", settings.groq_api_key)
     os.environ.setdefault("PRUNA_API_KEY", settings.pruna_api_key)
     os.environ.setdefault("PRUNA_API_BASE", "https://api.pruna.ai/v1")
-    # OpenCode client auth key (also accepted by AuthMiddleware)
-    os.environ.setdefault("OPENCODE_API_KEY", settings.opencode_api_key)
 
     if not settings.keyclaw_enabled:
         litellm.suppress_debug_info = True
