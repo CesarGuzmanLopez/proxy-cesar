@@ -225,7 +225,7 @@ def test_pensamiento_profundo_to_flash_lowcost_with_tools():
 
 
 def test_normal_to_vision_with_images_safe():
-    """normal → vision (with images) → WARNING (context shrink 500K→120K)."""
+    """normal → vision (with images) → SAFE (vision handles images)."""
     result = validate_switch(
         "normal",
         "vision",
@@ -233,8 +233,7 @@ def test_normal_to_vision_with_images_safe():
         _make_caps(has_images=True),
         CONFIG,
     )
-    assert result.status == CompatibilityStatus.WARNING
-    assert "context" in result.reason.lower()
+    assert result.status == CompatibilityStatus.SAFE
 
 
 def test_vision_to_tareas_avanzadas_images_blocked():

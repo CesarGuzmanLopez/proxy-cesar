@@ -77,7 +77,7 @@ pseudo_models:
 
   normal:
     display_name: Normal
-    description: "Punto de entrada recomendado. Coding extenso. Límite 500K tokens — usa compactalo si lo superas."
+    description: "Punto de entrada recomendado. Coding extenso. Límite 500K tokens — usa /compact si lo superas."
     input_token_threshold: 500000
     context_window: 500000
     router_llm:
@@ -92,15 +92,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Primary: rápido, 1M contexto, tools estrictas."
-      - provider: openrouter
-        model: openrouter/google/gemini-3.1-flash-lite
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: true
-        context_window: 1000000
-        note: "Fallback barato vía OpenRouter. 1M contexto, visión+audio."
+        note: "Rápido, 1M contexto, tools estrictas."
     fallback_strategy: sequential
 
   normal-gratis:

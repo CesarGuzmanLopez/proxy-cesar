@@ -1,6 +1,7 @@
 """Tests for fallback within pseudo-model.
 
 sprint §13.5 — minimum 6 test cases.
+Uses 'tareas-avanzadas' which has 2 physical models (deepseek-v4-pro → deepseek-v4-flash).
 """
 
 from unittest.mock import MagicMock
@@ -10,13 +11,16 @@ from httpx import AsyncClient
 from litellm.exceptions import RateLimitError, ServiceUnavailableError
 
 
+FALLBACK_MODEL = "tareas-avanzadas"
+
+
 @pytest.mark.asyncio
 async def test_1_primary_succeeds(async_client: AsyncClient, mock_litellm):
     """Primary model succeeds → no fallback, fallback_applied: false."""
     response = await async_client.post(
         "/v1/chat/completions",
         json={
-            "model": "normal",
+            "model": FALLBACK_MODEL,
             "messages": [{"role": "user", "content": "Hello"}],
             "conversation_id": "conv-fb-1",
         },
@@ -52,7 +56,7 @@ async def test_2_primary_503_fallback(async_client: AsyncClient, mock_litellm):
     response = await async_client.post(
         "/v1/chat/completions",
         json={
-            "model": "normal",
+            "model": FALLBACK_MODEL,
             "messages": [{"role": "user", "content": "Hello"}],
             "conversation_id": "conv-fb-2",
         },
@@ -73,7 +77,7 @@ async def test_3_all_models_fail(async_client: AsyncClient, mock_litellm):
     response = await async_client.post(
         "/v1/chat/completions",
         json={
-            "model": "normal",
+            "model": FALLBACK_MODEL,
             "messages": [{"role": "user", "content": "Hello"}],
             "conversation_id": "conv-fb-3",
         },
@@ -106,7 +110,7 @@ async def test_4_primary_429_fallback(async_client: AsyncClient, mock_litellm):
     response = await async_client.post(
         "/v1/chat/completions",
         json={
-            "model": "normal",
+            "model": FALLBACK_MODEL,
             "messages": [{"role": "user", "content": "Hello"}],
             "conversation_id": "conv-fb-4",
         },
@@ -128,7 +132,7 @@ async def test_5_non_retryable_error(async_client: AsyncClient, mock_litellm):
     response = await async_client.post(
         "/v1/chat/completions",
         json={
-            "model": "normal",
+            "model": FALLBACK_MODEL,
             "messages": [{"role": "user", "content": "Hello"}],
             "conversation_id": "conv-fb-5",
         },
@@ -161,7 +165,7 @@ async def test_6_fallback_reason_explains(async_client: AsyncClient, mock_litell
     response = await async_client.post(
         "/v1/chat/completions",
         json={
-            "model": "normal",
+            "model": FALLBACK_MODEL,
             "messages": [{"role": "user", "content": "Hello"}],
             "conversation_id": "conv-fb-6",
         },
