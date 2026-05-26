@@ -443,7 +443,10 @@ async def compact_conversation_endpoint(
 
 @router.get(
     "/conversations/{conversation_id}/audit-log",
-    responses={404: {"description": "Conversation not found"}},
+    responses={
+        404: {"description": "Conversation not found"},
+        500: {"description": "Audit log retrieval failed"},
+    },
 )
 async def audit_log(
     conversation_id: str,
@@ -572,7 +575,14 @@ async def audit_log(
 # ── Blob retrieval ────────────────────────────────────────────────────────────
 
 
-@router.get("/blobs/{blob_hash}")
+@router.get(
+    "/blobs/{blob_hash}",
+    responses={
+        200: {"description": "Base64 blob data"},
+        404: {"description": "Blob not found"},
+        503: {"description": "Blob store unavailable or error"},
+    },
+)
 async def get_blob(blob_hash: str, request: Request):
     """Retrieve a stored base64 blob by hash.
 
