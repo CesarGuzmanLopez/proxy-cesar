@@ -7,6 +7,9 @@ analisis.md: LiteLLM handles all provider translation. Proxy never translates.
 import os
 from pathlib import Path
 
+_SSL_CERT_FILE = "/etc/ssl/cert.pem"
+_CA_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt"
+
 # ── SSL_CERT_FILE must be set *before* httpx/litellm are imported ────────
 # On NixOS, Python reads NIX_SSL_CERT_FILE but httpx reads SSL_CERT_FILE.
 # httpx caches its default SSL context at import time, so the env var must
@@ -14,17 +17,17 @@ from pathlib import Path
 if not os.environ.get("SSL_CERT_FILE"):
     for candidate in (
         os.environ.get("NIX_SSL_CERT_FILE", ""),
-        "/etc/ssl/certs/ca-certificates.crt",
-        "/etc/ssl/cert.pem",
+        _CA_CERT_FILE,
+        _SSL_CERT_FILE,
     ):
         if candidate and Path(candidate).exists():
             os.environ["SSL_CERT_FILE"] = candidate
             break
 
-import litellm
-from litellm.exceptions import RateLimitError, ServiceUnavailableError
+import litellm  # noqa: E402 — SSL_CERT_FILE must be set before import
+from litellm.exceptions import RateLimitError, ServiceUnavailableError  # noqa: E402
 
-from src.config.settings import Settings
+from src.config.settings import Settings  # noqa: E402
 
 # Re-export for fallback detection
 __all__ = [
@@ -50,8 +53,8 @@ def _ensure_ssl_cert_file() -> None:
         return
     for candidate in (
         os.environ.get("NIX_SSL_CERT_FILE", ""),
-        "/etc/ssl/certs/ca-certificates.crt",
-        "/etc/ssl/cert.pem",
+        _CA_CERT_FILE,
+        _SSL_CERT_FILE,
     ):
         if candidate and Path(candidate).exists():
             os.environ["SSL_CERT_FILE"] = candidate
@@ -68,7 +71,7 @@ def _keyclaw_is_running() -> bool:
         # Send signal 0 to test liveness
         os.kill(int(pid_text), 0)
         return True
-    except (FileNotFoundError, OSError, ValueError):
+    except (OSError, ValueError):
         return False
 
 
@@ -89,7 +92,7 @@ def _setup_keyclaw_proxy() -> None:
 
     keyclaw_ca = _KEYCLAW_CA_CERT
     combined = _KEYCLAW_HOME / "combined-ca.pem"
-    system_bundle = Path("/etc/ssl/cert.pem")
+    system_bundle = Path(_SSL_CERT_FILE)
 
     if not combined.exists() and keyclaw_ca.exists() and system_bundle.exists():
         combined.write_text(system_bundle.read_text() + "\n" + keyclaw_ca.read_text())

@@ -84,10 +84,32 @@ def _build_compaction_history(turns: list[ConversationTurn]) -> list[dict]:
     return all_messages
 
 
+def _parse_compactor_response(response, total_tokens: int) -> tuple[str, int]:
+    """Extract snapshot content and token count from compactor API response."""
+    response_dict = (
+        response.model_dump() if hasattr(response, "model_dump") else response
+    )
+    if isinstance(response_dict, dict):
+        choices = response_dict.get("choices", [])
+        snapshot_content = (
+            choices[0].get("message", {}).get("content", "") if choices else ""
+        )
+        usage = response_dict.get("usage", {})
+        snapshot_tokens = usage.get("completion_tokens", 0) or 0
+    else:
+        snapshot_content = response.choices[0].message.content
+        snapshot_tokens = getattr(response.usage, "completion_tokens", 0)
+
+    if not snapshot_tokens:
+        snapshot_tokens = estimate_tokens(
+            [{"role": "user", "content": snapshot_content or ""}]
+        )
+    return snapshot_content or "", snapshot_tokens
+
+
 async def _run_compaction_sync(
     conversation_id: str,
     compactor_model: str,
-    compactor_ctx: int | None,
     all_messages: list[dict],
     total_tokens: int,
     db: AsyncSession,
@@ -153,24 +175,9 @@ async def _run_compaction_sync(
             max_tokens=_compaction_max_tokens(total_tokens),
             temperature=0.1,
         )
-        response_dict = (
-            response.model_dump() if hasattr(response, "model_dump") else response
+        snapshot_content, snapshot_tokens = _parse_compactor_response(
+            response, total_tokens
         )
-        if isinstance(response_dict, dict):
-            choices = response_dict.get("choices", [])
-            snapshot_content = (
-                choices[0].get("message", {}).get("content", "") if choices else ""
-            )
-            usage = response_dict.get("usage", {})
-            snapshot_tokens = usage.get("completion_tokens", 0) or 0
-        else:
-            snapshot_content = response.choices[0].message.content
-            snapshot_tokens = getattr(response.usage, "completion_tokens", 0)
-
-        if not snapshot_tokens:
-            snapshot_tokens = estimate_tokens(
-                [{"role": "user", "content": snapshot_content or ""}]
-            )
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -312,7 +319,6 @@ async def compact_conversation(
     return await _run_compaction_sync(
         conversation_id=conversation_id,
         compactor_model=compactor_model,
-        compactor_ctx=compactor_ctx,
         all_messages=all_messages,
         total_tokens=total_tokens,
         db=db,
@@ -371,7 +377,6 @@ async def _compact_async(
         return await _run_compaction_sync(
             conversation_id=conversation_id,
             compactor_model=compactor_model,
-            compactor_ctx=compactor_ctx,
             all_messages=all_messages,
             total_tokens=total_tokens,
             db=db,
@@ -382,31 +387,39 @@ async def _compact_async(
         await db.close()
 
 
-async def _prepare_multimedia_for_compaction(history: list[dict], config) -> list[dict]:
-    """Describe images using any available vision model before compaction."""
-    from src.service.multimedia.image_describer import auto_describe_images
-
-    has_images = False
+def _history_has_images(history: list[dict]) -> bool:
+    """Check if any message in history contains an image_url content part."""
     for msg in history:
         content = msg.get("content")
         if isinstance(content, list):
             for part in content:
                 if isinstance(part, dict) and part.get("type") == "image_url":
-                    has_images = True
-                    break
-        if has_images:
-            break
+                    return True
+    return False
 
-    if not has_images:
-        return history
 
+def _find_vision_model(config) -> str | None:
+    """Find any configured physical model with vision capability."""
     for pm in config.pseudo_models.values():
         for phys in pm.physical_models:
             if getattr(phys, "vision", False):
-                try:
-                    described, _meta = await auto_describe_images(history, phys.model)
-                    return described
-                except Exception:
-                    continue
+                return phys.model
+    return None
 
-    return history
+
+async def _prepare_multimedia_for_compaction(history: list[dict], config) -> list[dict]:
+    """Describe images using any available vision model before compaction."""
+    if not _history_has_images(history):
+        return history
+
+    vision_model = _find_vision_model(config)
+    if vision_model is None:
+        return history
+
+    from src.service.multimedia.image_describer import auto_describe_images
+
+    try:
+        described, _meta = await auto_describe_images(history, vision_model)
+        return described
+    except Exception:
+        return history

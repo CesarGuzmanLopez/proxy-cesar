@@ -24,6 +24,47 @@ _PROVIDERS_WITH_AUTO_CACHE = frozenset({"openai", "deepseek", "groq"})
 # ── Anthropic cache_control ──────────────────────────────────────────────────
 
 
+def _ensure_content_list(msg: dict) -> dict:
+    """Ensure message content is a list of content items (Anthropic format)."""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        msg["content"] = [{"type": "text", "text": content}]
+    return msg
+
+
+def _add_cache_control_to_last_content(msg: dict) -> dict:
+    """Add cache_control to the last content item of a message."""
+    content = msg.get("content", [])
+    if isinstance(content, list) and content:
+        last = content[-1]
+        if isinstance(last, dict):
+            last["cache_control"] = {"type": "ephemeral"}
+    return msg
+
+
+def _place_breakpoint_on_system_msg(modified: list[dict]) -> int:
+    """Place breakpoint 1 on the first system message. Returns breakpoints placed."""
+    for i, msg in enumerate(modified):
+        if msg.get("role") == "system":
+            modified[i] = _add_cache_control_to_last_content(_ensure_content_list(msg))
+            return 1
+    return 0
+
+
+def _place_breakpoint_before_last(modified: list[dict]) -> int:
+    """Place breakpoint 2 on the message before the final user query. Returns 1 if placed."""
+    msg_count = len(modified)
+    if msg_count < 2:
+        return 0
+    bp_idx = msg_count - 2
+    if bp_idx >= 0 and modified[bp_idx].get("role") != "system":
+        modified[bp_idx] = _add_cache_control_to_last_content(
+            _ensure_content_list(modified[bp_idx])
+        )
+        return 1
+    return 0
+
+
 def apply_anthropic_cache_control(messages: list[dict]) -> list[dict]:
     """Add cache_control breakpoints to messages for Anthropic provider.
 
@@ -31,7 +72,6 @@ def apply_anthropic_cache_control(messages: list[dict]) -> list[dict]:
       - Breakpoint 1: after system message (caches system prompt)
       - Breakpoint 2: at the last message before the final user query
         (caches conversation history prefix)
-      - Breakpoint 3-4: reserved for future use
 
     Max 4 breakpoints per Anthropic's limits.
     Only works with messages in canonical order (system first).
@@ -46,53 +86,23 @@ def apply_anthropic_cache_control(messages: list[dict]) -> list[dict]:
     Returns a deep copy with cache_control annotations added.
     """
     modified = deepcopy(messages)
-    breakpoints_placed = 0
-    msg_count = len(modified)
-
-    if msg_count < 2:
+    if len(modified) < 2:
         return modified
 
-    # Helper: ensure content is a list of content items (Anthropic format)
-    def _ensure_content_list(msg: dict) -> dict:
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            msg["content"] = [{"type": "text", "text": content}]
-        elif isinstance(content, list):
-            pass  # already in Anthropic format
-        return msg
-
-    # Helper: add cache_control to the last content item
-    def _add_cache_control_to_last_content(msg: dict) -> dict:
-        content = msg.get("content", [])
-        if isinstance(content, list) and content:
-            last = content[-1]
-            if isinstance(last, dict):
-                last["cache_control"] = {"type": "ephemeral"}
-        return msg
+    breakpoints = 0
 
     # Breakpoint 1: on the first system message
-    for i, msg in enumerate(modified):
-        if breakpoints_placed >= 4:
-            break
-        if msg.get("role") == "system" and breakpoints_placed == 0:
-            msg = _ensure_content_list(msg)
-            msg = _add_cache_control_to_last_content(msg)
-            modified[i] = msg
-            breakpoints_placed += 1
-            break
+    breakpoints += _place_breakpoint_on_system_msg(modified)
 
     # Breakpoint 2: on the last message before the final user query
-    if breakpoints_placed < 4 and msg_count >= 2:
-        bp_idx = msg_count - 2
-        if bp_idx >= 0 and modified[bp_idx].get("role") != "system":
-            modified[bp_idx] = _ensure_content_list(modified[bp_idx])
-            modified[bp_idx] = _add_cache_control_to_last_content(modified[bp_idx])
-            breakpoints_placed += 1
-        logger.debug(
-            "anthropic_cache_control placed=%d messages=%d",
-            breakpoints_placed,
-            len(modified),
-        )
+    if breakpoints < 4:
+        breakpoints += _place_breakpoint_before_last(modified)
+
+    logger.debug(
+        "anthropic_cache_control placed=%d messages=%d",
+        breakpoints,
+        len(modified),
+    )
 
     return modified
 
@@ -110,13 +120,7 @@ def provider_supports_cache(provider: str) -> bool:
 # ── Gemini CachedContent (deprecated — Google models removed) ──────────────
 
 
-async def manage_gemini_cache(
-    conversation_id: str,
-    valkey_client,
-    system_prompt: str,
-    tool_definitions: list[dict] | None,
-    provider: str,
-) -> str | None:
+def manage_gemini_cache() -> None:
     """Stub — Google models have been removed from the proxy configuration."""
     return None
 

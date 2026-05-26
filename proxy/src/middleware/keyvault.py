@@ -104,7 +104,7 @@ def _make_placeholder(hash_val: str) -> str:
 
 
 def _mask_text(text: str, secrets: dict[str, str]) -> str:
-    """Find secrets in text and replace with placeholders. Returns (masked_text, updated_secrets)."""
+    """Find secrets in text and replace with placeholders. Returns masked text with updated secrets."""
     for pattern, kind in _SECRET_PATTERNS:
         matches = list(re.finditer(pattern, text))
         for match in reversed(matches):
@@ -144,6 +144,94 @@ def _re_inject(text: str, secrets: dict[str, str]) -> str:
     return text
 
 
+# ── Request helpers ──────────────────────────────────────────────────────────
+
+
+def _mask_messages(body: dict, secrets: dict[str, str]) -> None:
+    """Scan messages in body for secrets and replace with placeholders in-place."""
+    messages = body.get("messages", [])
+    if not isinstance(messages, list):
+        return
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str):
+            msg["content"] = _mask_text(content, secrets)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    part["text"] = _mask_text(str(part.get("text", "")), secrets)
+
+
+async def _store_secrets(valkey, conversation_id: str, secrets: dict[str, str]) -> None:
+    """Store detected secrets in Valkey with TTL."""
+    for secret_hash, secret_value in secrets.items():
+        try:
+            await valkey.set(
+                f"keyvault:{conversation_id}:{secret_hash}",
+                secret_value,
+                ex=KEYVAULT_TTL,
+            )
+            logger.debug(
+                "keyvault_store conv=%s hash=%s", conversation_id[:12], secret_hash
+            )
+        except Exception:
+            continue
+
+
+# ── Response helpers ─────────────────────────────────────────────────────────
+
+
+def _re_inject_recursive(obj: Any, secrets: dict[str, str]) -> Any:
+    """Recursively re-inject secrets into a JSON-like structure."""
+    if isinstance(obj, str):
+        return _re_inject(obj, secrets)
+    if isinstance(obj, dict):
+        return {k: _re_inject_recursive(v, secrets) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_re_inject_recursive(item, secrets) for item in obj]
+    return obj
+
+
+async def _re_inject_non_streaming(response, secrets: dict[str, str]) -> JSONResponse:
+    """Re-inject secrets into a non-streaming JSON response."""
+    try:
+        body_bytes = b""
+        async for chunk in response.body_iterator:
+            body_bytes += chunk
+
+        resp_json = json.loads(body_bytes)
+        resp_json = _re_inject_recursive(resp_json, secrets)
+        return JSONResponse(
+            content=resp_json,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
+    except Exception:
+        return response
+
+
+def _build_re_inject_stream(original_iterator, secrets: dict[str, str]):
+    """Wrap a streaming response body iterator to re-inject secrets on each chunk."""
+
+    async def _wrapper():
+        try:
+            async for chunk in original_iterator:
+                if isinstance(chunk, bytes):
+                    yield _re_inject(
+                        chunk.decode("utf-8", errors="replace"),
+                        secrets,
+                    ).encode("utf-8")
+                else:
+                    yield _re_inject(str(chunk), secrets)
+        except Exception:
+            pass
+
+    return _wrapper
+
+
+# ── Middleware ────────────────────────────────────────────────────────────────
+
+
 class KeyVaultMiddleware(BaseHTTPMiddleware):
     """Transparent secret vault middleware.
 
@@ -163,102 +251,39 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         try:
             body_bytes = await request.body()
             body = json.loads(body_bytes)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             return await call_next(request)
 
         conversation_id = body.get("conversation_id") or "anon"
         secrets: dict[str, str] = {}
 
-        messages = body.get("messages", [])
-        if isinstance(messages, list):
-            for msg in messages:
-                content = msg.get("content")
-                if isinstance(content, str):
-                    msg["content"] = _mask_text(content, secrets)
-                elif isinstance(content, list):
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            part["text"] = _mask_text(
-                                str(part.get("text", "")), secrets
-                            )
-
-        # Store secrets in Valkey
-        for secret_hash, secret_value in secrets.items():
-            try:
-                await valkey.set(
-                    f"keyvault:{conversation_id}:{secret_hash}",
-                    secret_value,
-                    ex=KEYVAULT_TTL,
-                )
-                logger.debug(
-                    "keyvault_store conv=%s hash=%s", conversation_id[:12], secret_hash
-                )
-            except Exception:
-                continue
+        _mask_messages(body, secrets)
 
         if secrets:
-            messages.insert(0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
+            await _store_secrets(valkey, conversation_id, secrets)
+            body.setdefault("messages", []).insert(
+                0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT}
+            )
             logger.info(
                 "keyvault_active conv=%s secrets=%d", conversation_id[:12], len(secrets)
             )
 
-        # Reconstruct body for downstream — set cached body directly
-        # instead of overriding _receive, to avoid _stream_consumed issues.
+        # Set cached body directly for downstream handler
         request._body = json.dumps(body).encode()
 
         # ── Call handler ─────────────────────────────────────────────────
         response = await call_next(request)
 
         # ── Response: re-inject real values ────────────────────────────────
-        if secrets:
-            if isinstance(response, StreamingResponse):
-                original_iterator = response.body_iterator
+        if not secrets:
+            return response
 
-                async def _re_inject_stream(secrets=secrets):
-                    try:
-                        async for chunk in original_iterator:
-                            if isinstance(chunk, bytes):
-                                yield _re_inject(
-                                    chunk.decode("utf-8", errors="replace"),
-                                    secrets,
-                                ).encode("utf-8")
-                            else:
-                                yield _re_inject(str(chunk), secrets)
-                    except Exception:
-                        pass
+        if isinstance(response, StreamingResponse):
+            return StreamingResponse(
+                content=_build_re_inject_stream(response.body_iterator, secrets)(),
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
 
-                return StreamingResponse(
-                    content=_re_inject_stream(),
-                    status_code=response.status_code,
-                    headers=dict(response.headers),
-                    media_type=response.media_type,
-                )
-            else:
-                try:
-                    body_bytes_resp = b""
-                    async for chunk in response.body_iterator:
-                        body_bytes_resp += chunk
-
-                    resp_json = json.loads(body_bytes_resp)
-
-                    def _re_inject_recursive(obj: Any) -> Any:
-                        if isinstance(obj, str):
-                            return _re_inject(obj, secrets)
-                        if isinstance(obj, dict):
-                            return {k: _re_inject_recursive(v) for k, v in obj.items()}
-                        if isinstance(obj, list):
-                            return [_re_inject_recursive(item) for item in obj]
-                        return obj
-
-                    resp_json = _re_inject_recursive(resp_json)
-                    new_body = json.dumps(resp_json).encode()
-
-                    return JSONResponse(
-                        content=json.loads(new_body),
-                        status_code=response.status_code,
-                        headers=dict(response.headers),
-                    )
-                except Exception:
-                    pass  # Fall through to original response
-
-        return response
+        return await _re_inject_non_streaming(response, secrets)

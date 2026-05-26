@@ -1,6 +1,6 @@
 # proxy-cesar
 
-**Deterministic multi-model LLM proxy.** Transparent HTTP proxy between LLM clients and multiple providers. Exposes abstract **pseudo-models** that map to concrete physical models with automatic fallback, content compatibility validation, tool normalization, context compaction, context alerts, explicit compaction, audit logging, provider cache optimization, auth, rate limiting, and structured metrics.
+**Proxy LLM multi-modelo determinista.** Proxy HTTP transparente entre clientes LLM y múltiples proveedores. Expone **pseudo-modelos** abstractos que mapean a modelos físicos concretos con fallback automático, validación de compatibilidad de contenido, normalización de tools, compactación explícita, alertas de contexto, auditoría, optimización de caché por proveedor, auth, rate limiting y métricas estructuradas.
 
 > **Paquetería 100% libre.** MIT, BSD, Apache 2.0.
 > **El proxy no decide. Valida, informa y ejecuta lo que el usuario ordena.**
@@ -13,10 +13,11 @@
 ## Objetivos del Sistema
 
 1. **Unificar múltiples proveedores LLM** detrás de una API OpenAI-compatible única
-2. **Maximizar cache hits** mediante afinidad de modelo físico, orden canónico de mensajes, y optimizaciones por proveedor
+2. **Maximizar cache hits** mediante afinidad de modelo físico y orden canónico de mensajes
 3. **Validar compatibilidad** de contenido multimedia y tools al cambiar de pseudo-modelo
-4. **Compactar contexto** automática y explícitamente para no saturar ventanas de modelos
-5. **Informar** cada decisión del proxy en `proxy_metadata` — nunca silencio
+4. **Delegar imágenes a tools** cuando el modelo no tiene visión pero el usuario provee tools compatibles
+5. **Proteger secrets** con KeyVault middleware — intercepta API keys antes de llegar al LLM, las reemplaza con placeholders, y las reinyecta en la respuesta
+6. **Informar** cada decisión del proxy en `proxy_metadata` — nunca silencio
 
 ---
 
@@ -26,12 +27,13 @@
 |----------|-------------|-------------------|
 | Error handling con `Result[T,E]` monad | Exceptions | Errores como datos — el `match/case` fuerza al caller a manejar ambos casos |
 | Validación de configuración fail-fast | Runtime filtering | Si `pseudo_models.yaml` es inválido, el proxy no arranca. Nunca errores en producción |
-| `openai_tools_compatible: true` obligatorio | Permitir `false` | El plan exige que todos los modelos pasen la validación de startup. Más estricto = más seguro |
+| Sin compactación automática | Compactación continua + pre-compactación | Si se supera el umbral, error explícito. El usuario decide vía `POST /compact` |
+| Delegación imagen→tool | Rechazar o degradar | Si el modelo no tiene visión pero hay tools, se transforma `image_url` a texto URL + instrucción |
+| KeyVault middleware | Sanitización en servicio | Intercepta secrets en la capa más cercana al handler, nunca modifica firmas de servicios |
 | Afinidad como Protocol abstracto | Valkey directo | `AffinityPort` permite testear sin Valkey real y cambiar backend sin tocar dominio |
-| Fallback `by_context_window` + chunking | Single model | Groq (131K, rápido) primario; si el historial excede, se divide en chunks con prefijo compartido (caché preservado) y cada chunk se comprime independientemente. Sin modelo caro necesario. |
+| Fallback `by_context_window` | Single model | Múltiples modelos físicos por pseudo-modelo; si el contexto excede, se salta ese modelo |
 | Direct model passthrough | Solo pseudo-models | Cualquier modelo `ollama/xxx`, `lmstudio/xxx` se puede llamar directo sin configuración |
 | arq en vez de Celery | Celery | async-native, MIT, 700 líneas vs 50K+. Misma autora de Pydantic |
-| Single API key (Bearer) | JWT/OAuth | Suficiente para v1. Multi-user es v2 |
 | `proxy_metadata` en cada respuesta | Solo logging | El cliente sabe siempre qué proveedor usó, cuánto ahorró, si hubo fallback |
 
 ---
@@ -55,43 +57,32 @@ curl -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## Verificación Automática
-
-```bash
-./test_hard.sh   # Inicia servidor + ejecuta todas las HUs
-```
-
-Ejecuta las 17 historias de usuario definidas en `BUG_VERIFICATION_FLOW.md` (salud, chat normal, pensamiento profundo, visión, aliases, streaming, compactación, auditoría, etc.). Opciones:
-- `--no-start` — solo tests, servidor ya corriendo
-- `--no-kill` — no mata el servidor al terminar
-
----
-
 ## 10 Pseudo-Modelos en `proxy/pseudo_models.yaml`
 
-Cada uno con límite de tokens (`input_token_threshold`), compactación continua cuando aplica, y manejo de imágenes (`on_downgrade`). Al superar el límite se activan alertas de contexto (60%/80%/100%) y se recomienda usar `/compact`.
+Cada uno con límite de tokens (`input_token_threshold`). Al superar el límite se retorna error explícito — el usuario debe usar `POST /conversations/{id}/compact` para compactar manualmente.
 
-| Pseudo-modelo | Límite | Physical models | Compactación continua | Imágenes |
-|---|---|---|---|---|
-| `pensamiento-profundo-caro` | **120K** | `zai/glm-5` → `deepseek/deepseek-v4-pro` → `anthropic/claude-haiku-4-5` | ✅ 70% | auto_describe |
-| `tareas-avanzadas` | **200K** | `deepseek/deepseek-v4-pro` → `deepseek/deepseek-v4-flash` → `zai/glm-5` | ✅ 75% | block |
-| `vision` | **120K** | `zai/glm-4.5v` | ❌ | auto_describe |
-| `vision-lite` | **32K** | `zai/glm-4.6v-flash` → `groq/meta-llama/llama-4-scout` | ❌ | auto_describe |
-| `normal` | **500K** | `deepseek/deepseek-v4-flash` → `zai/glm-4.5-flash` | ✅ 80% | block |
-| `normal-gratis` | **200K** | `openrouter/nvidia/nemotron-120b:free` → `zai/glm-4.7-flash` → `zai/glm-4.5-flash` | ❌ | auto_describe |
-| `deep-flash` | **1M** | `deepseek/deepseek-v4-flash` | ❌ | block |
-| `massive-fast` | **131K** | `groq/openai/gpt-oss-20b` → `groq/qwen/qwen3-32b` | ❌ | block |
-| `flash-lowcost` | **128K** | `zai/glm-4.5-flash` → `ollama/llama3.2` | ❌ | block |
-| `compactador` | **20M** | `groq/openai/gpt-oss-120b` (≤131K) → `gpt-oss-20b` → `qwen3-32b` → `deepseek/deepseek-v4-flash` (1M) → `claude-haiku-4-5` (200K) → `glm-4.5-flash` (128K) | ❌ | auto_describe |
+| Pseudo-modelo | Límite | Modelos físicos | Imágenes |
+|---|---|---|---|
+| `pensamiento-profundo-caro` | **120K** | `deepseek/deepseek-v4-pro` → `openrouter/google/gemini-3.5-flash` | auto_describe |
+| `tareas-avanzadas` | **200K** | `deepseek/deepseek-v4-pro` → `deepseek/deepseek-v4-flash` | block |
+| `vision` | **120K** | `groq/meta-llama/llama-4-scout-17b-16e-instruct` | auto_describe |
+| `normal` | **500K** | `deepseek/deepseek-v4-flash` → `openrouter/google/gemini-3.1-flash-lite` | block |
+| `normal-gratis` | **200K** | `openrouter/nvidia/nemotron-3-super-120b-a12b:free` → `groq/qwen/qwen3-32b` | auto_describe |
+| `massive-fast` | **131K** | `groq/openai/gpt-oss-20b` | block |
+| `flash-lowcost` | **128K** | `openrouter/google/gemini-3.1-flash-lite` | block |
+| `audio` | **131K** | `groq/whisper-large-v3` → `groq/whisper-large-v3-turbo` | block |
+| `imagen` | **1K** | `pruna/p-image` | block |
+| `compactador` | **20M** | `groq/openai/gpt-oss-20b` (≤131K) → `deepseek/deepseek-v4-flash` (1M) | auto_describe |
 
 ### Model Aliases
 
 | Alias | Resuelve a |
 |---|---|
 | `gpt-4o` | `normal` |
-| `gpt-4o-mini` | `deep-flash` |
+| `gpt-4o-mini` | `normal` |
 | `gpt-4.1` | `tareas-avanzadas` |
 | `o3` / `o4-mini` | `pensamiento-profundo-caro` |
+| `gemini-2.5-flash` | `vision` |
 | `claude-haiku-3-5-20241022` | `flash-lowcost` |
 | `default` | `normal` |
 
@@ -105,236 +96,149 @@ Cualquier modelo con prefijo de proveedor se puede llamar **directamente** sin e
 ollama/llama3.2      → LiteLLM → Ollama
 ollama/llava         → LiteLLM → Ollama
 lmstudio/my-model    → LiteLLM → LM Studio
-lmstudio/0           → LiteLLM → LM Studio (multi-modelo)
 local/cualquier-mo   → LiteLLM → proveedor local
 ```
 
-Sin compactación continua, sin router, sin límites de threshold. Usan el sistema de conversaciones (turns, snapshots) y soportan `/compact` para compactación explícita. La respuesta se reporta tal cual la devuelve el modelo local.
+Sin límites de threshold. Usan el sistema de conversaciones y soportan `POST /compact` para compactación explícita.
+
+---
+
+## KeyVault — Protección de Secrets
+
+El middleware KeyVault intercepta todas las requests `POST /v1/chat/completions`:
+
+1. **Detección**: 22 patrones de secrets (API keys OpenAI/Anthropic/GitHub/AWS, claves PEM, SSH, wallets crypto, JWT, base64 larga)
+2. **Almacenamiento**: Guarda en Valkey `keyvault:{conv}:{hash}` con TTL de 1 hora
+3. **Sanitización**: Reemplaza secrets por `[KEYVAULT:abc12345]` en los mensajes
+4. **System prompt**: Inyecta instrucción para que el LLM use placeholders
+5. **Reinyección**: Reemplaza placeholders por valores reales en la respuesta (soporta streaming y no-streaming)
+
+El LLM **nunca ve** las keys reales. El cliente **siempre ve** las keys reales.
+
+---
+
+## Delegación de Imágenes a Tools
+
+Cuando el usuario envía una imagen a un pseudo-modelo sin visión:
+
+| Escenario | Comportamiento |
+|---|---|
+| Imagen + modelo sin visión + **sin tools** | `400 IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL` |
+| Imagen + modelo sin visión + **con tools compatibles** | Se reemplaza `image_url` por texto URL + instrucción para que la tool procese la imagen |
+
+La delegación escanea las definiciones de tools buscando un parámetro de tipo `string` que pueda aceptar la URL de la imagen. Si encuentra match, transforma el mensaje en vez de rechazar.
+
+---
+
+## Compactación Explícita
+
+No hay compactación automática. Si el input supera el umbral del pseudo-modelo:
+
+```
+400 INPUT_EXCEEDS_THRESHOLD — Usa POST /conversations/{id}/compact
+```
+
+El endpoint `POST /conversations/{id}/compact`:
+1. Escanea el historial de la conversación
+2. Si encuentra imágenes/audio, delega a un modelo con visión/audio para describirlos
+3. Envía todo a un modelo compactador con prompt estructurado
+4. Genera un snapshot Markdown con secciones: estado del problema, decisiones técnicas, código producido, items pendientes
+5. Retorna metadata de la compactación
 
 ---
 
 ## Provider Caching
 
-| Proveedor | Tipo | Modelos | Ahorro |
-|---|---|---|---|
-| **Anthropic** | `cache_control` breakpoints | Claude Haiku 4.5 (breakpoints en system + penúltimo) | Por breakpoint |
-| **DeepSeek** | Prefix automático | deepseek-v4-* | Automático, sin costo |
-| **Z.ai (Zhipu)** | Prefix automático | glm-5, glm-4.5v, glm-4.5-flash, etc. | ~82% (input $0.60→$0.11) |
-| **Groq** | Prefix automático | gpt-oss-20b, gpt-oss-120b | **50%** en cacheados, 2h TTL |
-| **Ollama** (local) | Sin caché | llama3.2, llava, etc. | N/A (local) |
-
-### Estrategia
-
-- **Anthropic**: `cache_control` colocado en **content items** (no a nivel de mensaje — bug corregido). Breakpoint 1 en system message, Breakpoint 2 en penúltimo mensaje.
-- **DeepSeek/Z.ai/Groq**: Prefix caching automático. El orden canónico de mensajes (`system → tools(sorted) → history → new`) maximiza el match de prefijo.
-- **Chunking en compactación**: Cada chunk comparte el mismo HEAD (primeros mensajes), permitiendo cache hits en llamadas múltiples al compactor.
-- **Destrucción en fallback**: Cuando cambia el modelo físico, `proxy_metadata` reporta `previous_cache_destroyed: true` con costo estimado.
-
-```
-Turno 1:  system + tools + history + query1  → provider caches prefix
-Turno 2:  system + tools + history + query2  → CACHE HIT (prefix unchanged)
-...
-Turno n:  system + tools + history + queryN  → CACHE HIT
-Fallback: cache DESTROYED → reportado en proxy_metadata
-```
+| Proveedor | Tipo | Ahorro |
+|---|---|---|
+| **Anthropic** | `cache_control` breakpoints | Por breakpoint |
+| **DeepSeek** | Prefix automático | Automático, sin costo |
+| **Groq** | Prefix automático | 50% en cacheados, 2h TTL |
+| **OpenRouter** | Delega al upstream | Depende del modelo final |
+| **Ollama** (local) | Sin caché | N/A |
 
 ---
 
-## Arquitectura
+## Middleware Chain (orden de ejecución)
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        CLIENTES                                       │
-│   OpenCode / Continue / LibreChat / Aider / curl                      │
-│   Solo tienen: CESAR_PROXY_URL + CESAR_PROXY_KEY                      │
-└─────────────────────┬────────────────────────────────────────────────┘
-                      │ POST /v1/chat/completions {model, messages, key}
-                      ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  .venv/bin/python -m src.main → uvicorn :9110                        │
-│                                                                       │
-│  ├── AuthMiddleware          ═══ Bearer token vs PROXY_API_KEY        │
-│  ├── RateLimitMiddleware     ═══ Valkey sliding-window counter         │
-│  ├── CORSMiddleware          ═══ CORS_ORIGINS                         │
-│  │                                                                     │
-│  └── Router → chat_completions()                                      │
-│         │                                                             │
-│         ├── normalize_model_name()  → alias/passthrough → pseudo      │
-│         ├── detect_turn_capabilities() → has_images, has_tools        │
-│         ├── validate_incoming_content() → AUDIO/PDF/VIDEO blocked     │
-│         ├── load_session + validate_switch() → safe/warning/blocked   │
-│         ├── get_eligible_models() → filter by parallel_tools          │
-│         ├── check_input_threshold() → pre_compaction?                 │
-│         ├── continuous_compact() → snapshot at trigger_pct            │
-│         ├── evaluate_complexity() → Router LLM suggestion (no action) │
-│         │                                                             │
-│         ├── call_with_fallback()                                      │
-│         │     ├── apply_anthropic_cache_control() si Anthropic        │
-│         │     └── litellm.acompletion()  → 503/429 → fallback next    │
-│         │                                                             │
-│         └── _save_and_return() → DB + proxy_metadata                  │
-│                                                                       │
-│  SQLite ── conversations, turns, snapshots, capabilities               │
-│  Valkey ── affinity (conv:{id}:model), rate limits                     │
-│  arq    ── async compaction (>500K tokens)                             │
-└──────────────────────────────────────────────────────────────────────┘
-                      │
-                      ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        PROVEEDORES LLM                                │
-│   Z.ai (GLM) │ DeepSeek │ Anthropic │ OpenRouter │ Groq │ Ollama     │
-│   ← Todos los locales: lmstudio/xxx, local/xxx también funcionan     │
-└──────────────────────────────────────────────────────────────────────┘
+CORS → Auth → RateLimit → KeyVault → Handler
 ```
+
+1. **CORS** — Permite orígenes configurados
+2. **Auth** — Bearer token vs `PROXY_API_KEY` (desactivado en dev si no hay key)
+3. **RateLimit** — Ventana fija de 1 minuto por pseudo-modelo vía Valkey
+4. **KeyVault** — Detecta secrets, los almacena, sanitiza el body, reinyecta en respuesta
 
 ---
 
-## Configuración
+## API Endpoints
 
-### `proxy/pseudo_models.yaml`
-```yaml
-pseudo_models:
-  normal:
-    display_name: Normal
-    description: 'Punto de entrada recomendado. Límite 500K — usa /compact si lo superas.'
-    input_token_threshold: 500000
-    context_window: 500000
-    continuous_compaction:
-      enabled: true
-      trigger_pct: 80
-      compact_preserve_recent: 32768
-    image_handling:
-      on_downgrade: block
-    physical_models:
-      - provider: deepseek
-        model: deepseek/deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-      - provider: zhipu
-        model: zai/glm-4.5-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        context_window: 128000
-    fallback_strategy: sequential
-```
-
-### `proxy/.env`
-```bash
-# Provider API keys (NUNCA salen del servidor)
-ANTHROPIC_API_KEY=sk-ant-xxxx
-DEEPSEEK_API_KEY=sk-xxxx
-GROQ_API_KEY=gsk_xxxx
-OPENROUTER_API_KEY=sk-or-xxxx
-ZAI_API_KEY=xxxx
-ZHIPUAI_API_KEY=xxxx
-
-# Proxy
-PROXY_PORT=9110
-DATABASE_URL=sqlite+aiosqlite:///./proxy.db
-VALKEY_URL=valkey://localhost:6379
-PROXY_API_KEY=sk-proxy-generate-with-openssl-rand-hex-32
-
-# KeyClaw (opcional, desactivable)
-KEYCLAW_ENABLED=false
-```
+| Método | Path | Descripción |
+|---|---|---|
+| `POST` | `/v1/chat/completions` | Chat completion (streaming y no-streaming) |
+| `GET` | `/v1/models` | Lista pseudo-modelos disponibles |
+| `GET` | `/health` | Health check |
+| `GET` | `/conversations/{id}` | Obtener conversación |
+| `GET` | `/conversations/{id}/compatible-models` | Modelos compatibles con la conversación |
+| `GET` | `/conversations/{id}/tools-compatibility` | Compatibilidad de tools |
+| `POST` | `/conversations/{id}/normalize-tools` | Normalizar tool calls |
+| `POST` | `/conversations/{id}/compact` | Compactar historial explícitamente |
+| `GET` | `/conversations/{id}/audit-log` | Log de eventos de la conversación |
+| `GET` | `/metrics` | Métricas agregadas del proxy |
 
 ---
 
-## SSL en NixOS
+## proxy_metadata
 
-En NixOS, httpx/litellm leen `SSL_CERT_FILE` pero el sistema expone `NIX_SSL_CERT_FILE`.
-El proxy puentea automáticamente ambas variables al arrancar. Si hay problemas SSL:
+Cada respuesta de chat incluye `proxy_metadata` con:
 
-```bash
-SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt setsid .venv/bin/uvicorn src.main:app --port 9110
-```
-
----
-
-## KeyClaw
-
-[KeyClaw](https://keyclaw.org) es un MITM proxy opcional que filtra API keys del tráfico saliente.
-Si KeyClaw está instalado y su daemon corriendo, el proxy lo usa automáticamente.
-Si KeyClaw está instalado pero no funciona correctamente (SSL issues con algunos providers),
-desactivar con `KEYCLAW_ENABLED=false` en `.env`.
-
----
-
-## Inline Commands
-
-Cualquier mensaje que empiece con `/` o `@` se procesa como comando inline:
-
-| Comando | Acción |
+| Campo | Descripción |
 |---|---|
-| `/compact` | Normaliza tools + degrada multimedia + compacta historia |
-| `/degrade` | Describe imágenes como texto |
-| `/status` | Muestra estado de la conversación |
-| `/help` | Lista de comandos |
-
-Los comandos se ejecutan ANTES de llamar al LLM y devuelven respuesta textual directamente.
+| `physical_model` | Modelo físico que respondió |
+| `pseudo_model` | Pseudo-modelo solicitado |
+| `affinity_maintained` | `true` si se re-usó el mismo modelo físico |
+| `fallback_applied` | `true` si hubo fallback |
+| `capabilities_detected` | `has_images`, `has_tools` |
+| `images_described` | Número de imágenes descritas automáticamente |
+| `router_suggestion` | Sugerencia de Router LLM (si aplica) |
+| `context_alert` | Alerta de contexto (niveles: moderate, high, unusable) |
+| `cache` | Metadata de caché del provider |
 
 ---
 
-## Test Suite
+## Tests
 
 ```bash
 cd proxy
-.venv/bin/pytest                                      # ~410 tests
-.venv/bin/pytest tests/test_caching.py                # 13 tests (caching)
-.venv/bin/pytest tests/test_auth.py                   # 7 tests
-.venv/bin/pytest -k "not streaming"                   # sin streaming mock
+poetry run pytest tests/ -q --tb=short
 ```
 
-Para verificación completa de todas las historias de usuario:
+**270 tests**, 0 fallos esperados (excluyendo e2e/streaming/fallback/stress).
+
+---
+
+## Verificación Automática
+
 ```bash
-./test_hard.sh                                        # 17 HUs
+./test_hard.sh   # Inicia servidor + ejecuta todas las HUs
 ```
 
 ---
 
-## Features
+## Errores del Sistema
 
-| Feature | Estado |
-|---------|--------|
-| 10 pseudo-modelos con validación startup | ✅ |
-| Direct model passthrough (ollama, lmstudio, local) | ✅ |
-| Afinidad de modelo físico (Valkey 24h) | ✅ |
-| Streaming SSE + proxy_metadata | ✅ |
-| Fallback secuencial (503/429) | ✅ |
-| Detección de capabilities (imágenes, tools, parallel) | ✅ |
-| Validación de compatibilidad (safe/warning/blocked) | ✅ |
-| Normalización de parallel tools | ✅ |
-| Pre-compactación de input largo | ✅ |
-| Compactación continua (trigger_pct) | ✅ |
-| Chunking con prefijo compartido para >131K | ✅ |
-| Compactación explícita (POST /compact) | ✅ |
-| Context alerts (60%, 80%, 100%) | ✅ |
-| Audit log (GET /conversations/{id}/audit-log) | ✅ |
-| arq para compactación async (>500K) | ✅ |
-| Autenticación Bearer + rate limiting | ✅ |
-| Orden canónico de mensajes (cache prefix) | ✅ |
-| Anthropic cache_control breakpoints | ✅ |
-| DeepSeek/Z.ai/Groq prefix caching | ✅ |
-| Cache metadata en proxy_metadata | ✅ |
-| Cache destruction metadata en fallbacks | ✅ |
-| Model aliases (gpt-4o → normal, etc.) | ✅ |
-| Límites de tokens por pseudo-modelo | ✅ |
-| Alertas educativas (usa `/compact` si superas) | ✅ |
-| Degradación de imágenes manual y automática | ✅ |
-| Router LLM (sugiere downgrade, nunca impone) | ✅ |
-| Inline commands (/compact, /degrade, /status) | ✅ |
-| Config ejemplo para OpenCode | ✅ |
-| KeyClaw graceful degradation | ✅ |
-| SSL_CERT_FILE auto-setup (NixOS) | ✅ |
-| Script verificación automática (test_hard.sh) | ✅ |
-
----
-
-## Licencia
-
-MIT. Todas las dependencias tienen licencia MIT/BSD/Apache 2.0. Sin Google.
+| Código | Error | Causa |
+|---|---|---|
+| 400 | `IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL` | Imagen sin modelo visión ni tools compatibles |
+| 400 | `AUDIO_NOT_SUPPORTED` | Audio no soportado en v1 |
+| 400 | `PDF_NOT_SUPPORTED` | PDF sin modelo visión |
+| 400 | `VIDEO_NOT_SUPPORTED` | Video no soportado en v1 |
+| 400 | `INPUT_EXCEEDS_THRESHOLD` | Input supera límite del pseudo-modelo |
+| 400 | `CONTEXT_UNUSABLE` | Contexto al 100% |
+| 401 | `MISSING_AUTH` | Token inválido o faltante |
+| 409 | `PSEUDO_MODEL_INCOMPATIBLE` | Switch bloqueado por capacidades |
+| 413 | `CONTEXT_TOO_LARGE_FOR_ALL_MODELS` | Todos los modelos físicos excedidos |
+| 429 | `RATE_LIMIT_EXCEEDED` | Límite de tasa excedido |
+| 502 | `PROXY_ERROR` | Error interno del proxy |
+| 503 | `ALL_MODELS_FAILED` | Todos los modelos físicos fallaron |
