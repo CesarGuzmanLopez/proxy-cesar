@@ -8,6 +8,7 @@ Sprint 6 §3: POST /conversations/{id}/compact, GET /conversations/{id}/audit-lo
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -566,6 +567,43 @@ async def audit_log(
         ) from e
     finally:
         await db.close()
+
+
+# ── Blob retrieval ────────────────────────────────────────────────────────────
+
+
+@router.get("/blobs/{blob_hash}")
+async def get_blob(blob_hash: str, request: Request):
+    """Retrieve a stored base64 blob by hash.
+
+    Blobs are stored by the content transformation middleware when
+    the user sends base64-encoded content (images, audio, files)
+    to a model that can't process them.
+
+    Tools and sub-models can fetch the real base64 data from this
+    endpoint when they need to process the content.
+    """
+    valkey = request.app.state.valkey
+    if valkey is None:
+        raise HTTPException(status_code=503, detail={"error": "BLOB_STORE_UNAVAILABLE"})
+
+    try:
+        # Search across all conversation namespaces for this blob hash
+        # Pattern: blob:{conv_id}:{hash}
+        cursor = 0
+        pattern = f"blob:*:{blob_hash}"
+        while True:
+            cursor, keys = await valkey.scan(cursor=cursor, match=pattern, count=100)
+            if keys:
+                data = await valkey.get(keys[0])
+                if data:
+                    return JSONResponse(content={"data": data})
+            if cursor == 0:
+                break
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=404, detail={"error": "BLOB_NOT_FOUND"})
 
 
 # ── Shared helper ──────────────────────────────────────────────────────────────

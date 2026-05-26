@@ -187,6 +187,7 @@ async def chat_completions(
             conversation_id=conversation_id,
             request=request,
             messages=messages,
+            valkey=app_state.valkey,
         )
     except HTTPException:
         await db.rollback()
@@ -208,6 +209,7 @@ async def _handle_non_streaming(
     conversation_id: str,
     request: ChatRequest,
     messages: list[dict],
+    valkey=None,
 ) -> dict:
     """Non-streaming request: call LLM, save turn, return response."""
     result = await process_chat_request(
@@ -222,6 +224,7 @@ async def _handle_non_streaming(
         max_tokens=request.max_tokens,
         tools=request.tools,
         tool_choice=request.tool_choice,
+        valkey=valkey,
     )
 
     # Build response with Sprint 2 + Sprint 4 proxy_metadata

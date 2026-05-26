@@ -95,6 +95,7 @@ async def process_chat_request(
     max_tokens: int | None = None,
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
+    valkey=None,
 ) -> ChatResult:
     """Execute the full chat completion flow.
 
@@ -119,11 +120,11 @@ async def process_chat_request(
         tools,
         config,
     )
-    # Apply image→tool delegation or unsupported content transformation
+    # Apply image→tool delegation or blob storage for unsupported content
     if delegation:
         from src.service.tool_detector import (
             delegate_images_to_tool,
-            transform_unsupported_content,
+            replace_base64_with_blob_refs,
         )
 
         if delegation.get("action") == "delegate_images":
@@ -133,7 +134,9 @@ async def process_chat_request(
                 delegation["param_name"],
             )
         elif delegation.get("action") == "transform_unsupported":
-            messages = transform_unsupported_content(messages)
+            messages = await replace_base64_with_blob_refs(
+                messages, conversation_id, valkey or getattr(affinity, "client", None)
+            )
     # Sprint 8: track request metrics
     metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())
