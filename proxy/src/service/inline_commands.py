@@ -66,7 +66,7 @@ async def handle_inline_command(
 
     match command:
         case "status":
-            return await _handle_status(conversation_id, db, config)
+            return await _handle_status(conversation_id, db)
         case "help":
             return _handle_help()
     return InlineCommandResult()
@@ -75,7 +75,6 @@ async def handle_inline_command(
 async def _handle_status(
     conversation_id: str | None,
     db: AsyncSession,
-    config,
 ) -> InlineCommandResult:
     if not conversation_id:
         return InlineCommandResult(

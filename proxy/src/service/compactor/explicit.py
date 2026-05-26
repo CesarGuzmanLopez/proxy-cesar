@@ -84,7 +84,7 @@ def _build_compaction_history(turns: list[ConversationTurn]) -> list[dict]:
     return all_messages
 
 
-def _parse_compactor_response(response, total_tokens: int) -> tuple[str, int]:
+def _parse_compactor_response(response) -> tuple[str, int]:
     """Extract snapshot content and token count from compactor API response."""
     response_dict = (
         response.model_dump() if hasattr(response, "model_dump") else response
@@ -175,9 +175,7 @@ async def _run_compaction_sync(
             max_tokens=_compaction_max_tokens(total_tokens),
             temperature=0.1,
         )
-        snapshot_content, snapshot_tokens = _parse_compactor_response(
-            response, total_tokens
-        )
+        snapshot_content, snapshot_tokens = _parse_compactor_response(response)
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -277,7 +275,7 @@ async def compact_conversation(
     total_tokens = conv.total_tokens
 
     # Select compactador model
-    compactor_model, compactor_ctx = select_compactor_model(config, total_tokens)
+    compactor_model, _ = select_compactor_model(config, total_tokens)
     if not compactor_model:
         compactador_pm = config.pseudo_models.get("compactador")
         max_window = 0
@@ -370,9 +368,6 @@ async def _compact_async(
 
         all_messages.extend(_build_compaction_history(turns))
         total_tokens = conv.total_tokens
-
-        # Get context window for the selected compactor model
-        _, compactor_ctx = select_compactor_model(config, total_tokens)
 
         return await _run_compaction_sync(
             conversation_id=conversation_id,
