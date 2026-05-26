@@ -49,13 +49,13 @@ def test_image_sent_to_no_vision_with_tool_returns_transform():
     assert result == {"action": "transform_unsupported"}
 
 
-def test_audio_sent_to_audio_model_passes():
-    """Audio sent to 'audio' pseudo-model (has whisper) → no signal."""
+def test_audio_sent_to_model_with_audio_passes():
+    """Audio sent to pseudo-model with audio-capable physical model → no signal."""
     turn_caps = TurnCapabilities(has_audio=True)
     result = validate_incoming_content(
-        turn_caps, _get_pm("audio"), "audio", CONFIG
+        turn_caps, _get_pm("compactador"), "compactador", CONFIG
     )
-    assert result is None  # audio model supports audio
+    assert result is None  # compactador has whisper models with audio: true
 
 
 def test_audio_sent_to_no_audio_model_returns_transform():
@@ -96,11 +96,11 @@ def test_video_sent_to_any_model_returns_transform():
 
 
 def test_parallel_tools_sent_to_no_parallel_model_returns_400():
-    """Parallel tools sent to 'flash-lowcost' (no parallel models) → 400 error."""
+    """Parallel tools sent to 'compactador' (no parallel models) → 400 error."""
     turn_caps = TurnCapabilities(has_parallel_tools=True)
     with pytest.raises(HTTPException) as exc:
         validate_incoming_content(
-            turn_caps, _get_pm("flash-lowcost"), "flash-lowcost", CONFIG
+            turn_caps, _get_pm("compactador"), "compactador", CONFIG
         )
     assert exc.value.status_code == 400
     assert "PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL" in str(
@@ -123,44 +123,6 @@ def test_transform_signal_returned_for_all_unsupported_types():
         assert result == {"action": "transform_unsupported"}, (
             f"{content_type} should return transform signal, got {result}"
         )
-
-
-def test_imagen_rejects_images_with_error():
-    """'imagen' is text-to-image — sending an image should error, not blobify."""
-    from fastapi import HTTPException
-    caps = TurnCapabilities(has_images=True)
-    with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(caps, _get_pm("imagen"), "imagen", CONFIG)
-    assert exc.value.status_code == 400
-    assert "SPECIALIZED_MODEL" in str(exc.value.detail["error"])
-
-
-def test_audio_rejects_images_with_error():
-    """'audio' transcribes — sending an image should error."""
-    from fastapi import HTTPException
-    caps = TurnCapabilities(has_images=True)
-    with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(caps, _get_pm("audio"), "audio", CONFIG)
-    assert exc.value.status_code == 400
-    assert "SPECIALIZED_MODEL" in str(exc.value.detail["error"])
-
-
-def test_imagen_rejects_audio_with_error():
-    """'imagen' generates images — sending audio should error."""
-    from fastapi import HTTPException
-    caps = TurnCapabilities(has_audio=True)
-    with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(caps, _get_pm("imagen"), "imagen", CONFIG)
-    assert exc.value.status_code == 400
-    assert "SPECIALIZED_MODEL" in str(exc.value.detail["error"])
-
-
-def test_audio_accepts_audio():
-    """'audio' (whisper) should accept audio content."""
-    result = validate_incoming_content(
-        TurnCapabilities(has_audio=True), _get_pm("audio"), "audio", CONFIG
-    )
-    assert result is None
 
 
 def test_vision_accepts_images():

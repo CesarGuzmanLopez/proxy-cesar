@@ -155,36 +155,6 @@ pseudo_models:
         note: "Barato vía DeepSeek. $0.14/$0.28 por M tok."
     fallback_strategy: sequential
 
-  audio:
-    display_name: Audio
-    description: "Transcripción de audio a texto vía Groq Whisper. Ideal para voicenotes, reuniones, audios."
-    input_token_threshold: 131072
-    context_window: 131072
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: block
-    physical_models:
-      - provider: groq
-        model: groq/whisper-large-v3
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        audio: true
-        context_window: 131072
-        note: "Whisper Large V3 vía Groq. 217x speed. $0.111/hora."
-      - provider: groq
-        model: groq/whisper-large-v3-turbo
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        audio: true
-        context_window: 131072
-        note: "Whisper Large V3 Turbo vía Groq. 228x speed. $0.04/hora."
-    fallback_strategy: sequential
-
   compactador:
     display_name: Compactador
     description: "Compactación de contexto con delegación de modelos. Escanea la conversación y usa los modelos adecuados: visión para imágenes, tools para function calls. Groq rápido (131K), DeepSeek Flash (1M) para historias masivas."
@@ -207,6 +177,25 @@ pseudo_models:
         openai_tools_compatible: true
         vision: false
         note: "1M contexto. Para compactar historias grandes (>131K tokens)."
+      # Whisper models for audio transcription (used by blob vault, not user-facing)
+      - provider: groq
+        model: groq/whisper-large-v3
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: false
+        vision: false
+        audio: true
+        context_window: 131072
+        note: "Whisper Large V3 — transcripción de audio."
+      - provider: groq
+        model: groq/whisper-large-v3-turbo
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: false
+        vision: false
+        audio: true
+        context_window: 131072
+        note: "Whisper Large V3 Turbo — transcripción de audio rápida."
     fallback_strategy: by_context_window
 
 model_aliases:
