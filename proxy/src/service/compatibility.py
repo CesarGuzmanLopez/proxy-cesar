@@ -364,23 +364,32 @@ def validate_incoming_content(
                 },
             )
 
-    # ---- CHECK: Audio → no model supports audio in v1 ----
+    # ---- CHECK: Audio → model without audio support ----
     if turn_caps.has_audio:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "AUDIO_NOT_SUPPORTED",
-                "message": (
-                    f"Pseudo-model '{pseudo_model_name}' does not support audio "
-                    f"content. No pseudo-model in v1 supports audio processing. "
-                    f"The request was rejected rather than silently dropping the audio."
-                ),
-                "remediation": [
-                    "Remove audio content from the request",
-                    "Audio transcription support is planned for v2",
-                ],
-            },
-        )
+        has_audio_model = any(getattr(m, "audio", False) for m in physical_models)
+        if not has_audio_model:
+            audio_pseudos = [
+                name
+                for name, pm in config.pseudo_models.items()
+                if any(getattr(m, "audio", False) for m in pm.physical_models)
+            ]
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "AUDIO_NOT_SUPPORTED_BY_PSEUDO_MODEL",
+                    "message": (
+                        f"Pseudo-model '{pseudo_model_name}' "
+                        f"({pseudo_model.display_name}) has no audio-capable "
+                        f"physical models. The incoming request contains audio "
+                        f"content that cannot be processed."
+                    ),
+                    "remediation": [
+                        f"Switch to an audio-capable pseudo-model: {audio_pseudos}",
+                    ],
+                    "current_pseudo_model": pseudo_model_name,
+                    "audio_capable_pseudo_models": audio_pseudos,
+                },
+            )
 
     # ---- CHECK: PDF → model without vision ----
     if turn_caps.has_pdf:
@@ -408,22 +417,25 @@ def validate_incoming_content(
                 },
             )
 
-    # ---- CHECK: Video → not supported in v1 ----
+    # ---- CHECK: Video → model without video support ----
     if turn_caps.has_video:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "VIDEO_NOT_SUPPORTED",
-                "message": (
-                    "Video content is not supported in any pseudo-model in v1. "
-                    "The request was rejected rather than silently dropping the video."
-                ),
-                "remediation": [
-                    "Extract key frames as images and send those instead",
-                    "Video frame extraction is planned for v2",
-                ],
-            },
-        )
+        has_video_model = any(getattr(m, "video", False) for m in physical_models)
+        if not has_video_model:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "VIDEO_NOT_SUPPORTED_BY_PSEUDO_MODEL",
+                    "message": (
+                        f"Pseudo-model '{pseudo_model_name}' has no video-capable "
+                        f"physical models. Video content is not supported in any "
+                        f"pseudo-model in v1."
+                    ),
+                    "remediation": [
+                        "Extract key frames as images and send those instead",
+                        "Video frame extraction is planned for v2",
+                    ],
+                },
+            )
 
     # ---- CHECK: Parallel tools → model without parallel support ----
     if turn_caps.has_parallel_tools:

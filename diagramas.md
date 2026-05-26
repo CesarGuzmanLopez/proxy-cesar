@@ -633,10 +633,10 @@ flowchart TD
 ```mermaid
 graph TD
     subgraph Errores["Errores del Sistema"]
-        E1["400 IMAGES_NOT_SUPPORTED<br/>Imágenes sin modelo visión ni tools"]
-        E2["400 AUDIO_NOT_SUPPORTED<br/>Audio no soportado en v1"]
+        E1["400 IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL<br/>Imágenes sin modelo visión ni tools"]
+        E2["400 AUDIO_NOT_SUPPORTED_BY_PSEUDO_MODEL<br/>Audio sin modelo con soporte de audio"]
         E3["400 PDF_NOT_SUPPORTED<br/>PDF sin modelo visión"]
-        E4["400 VIDEO_NOT_SUPPORTED<br/>Video no soportado en v1"]
+        E4["400 VIDEO_NOT_SUPPORTED_BY_PSEUDO_MODEL<br/>Video sin modelo con soporte de video"]
         E5["400 PARALLEL_TOOLS_NOT_SUPPORTED<br/>Tools paralelas sin soporte"]
         E6["400 INPUT_EXCEEDS_THRESHOLD<br/>Input supera límite del pseudo-modelo<br/>Usa POST /compact"]
         E7["400 CONTEXT_UNUSABLE<br/>Contexto al 100%"]
