@@ -261,13 +261,13 @@ async def replace_base64_with_blob_refs(
         # Audio: transcribe if not cached
         audio_tasks = []
         for h, raw, mime, sz in audio_blobs:
-            audio_tasks.append(_describe_audio(valkey, f"{prefix}:{h}", f"{prefix}:{h}:desc", raw, config))
+            audio_tasks.append(_describe_audio(valkey, f"{prefix}:{h}:desc", raw, config))
         audio_results = await asyncio.gather(*audio_tasks) if audio_tasks else []
 
         # PDF: extract text if not cached
         pdf_tasks = []
         for h, raw, mime, sz in file_blobs:
-            pdf_tasks.append(_describe_pdf(valkey, f"{prefix}:{h}", f"{prefix}:{h}:desc", raw))
+            pdf_tasks.append(_describe_pdf(valkey, f"{prefix}:{h}:desc", raw))
         pdf_results = await asyncio.gather(*pdf_tasks) if pdf_tasks else []
 
         # ── Pass 3: build output ──
@@ -313,7 +313,7 @@ async def _store_desc(valkey, key: str, desc: str) -> None:
         pass
 
 
-async def _describe_audio(valkey, blob_key: str, desc_key: str, raw: str, config) -> str:
+async def _describe_audio(valkey, desc_key: str, raw: str, config) -> str:
     """Transcribe audio if not already cached."""
     try:
         cached = await valkey.get(desc_key)
@@ -327,7 +327,7 @@ async def _describe_audio(valkey, blob_key: str, desc_key: str, raw: str, config
     return desc
 
 
-async def _describe_pdf(valkey, blob_key: str, desc_key: str, raw: str) -> str:
+async def _describe_pdf(valkey, desc_key: str, raw: str) -> str:
     """Extract PDF text if not already cached."""
     try:
         cached = await valkey.get(desc_key)

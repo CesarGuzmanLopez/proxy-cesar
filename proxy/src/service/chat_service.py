@@ -973,7 +973,6 @@ async def _apply_content_delegation(
         valkey or getattr(affinity, "_client", None),
         config,
     )
-    return messages
 
 
 def _raise_if_context_unusable(
