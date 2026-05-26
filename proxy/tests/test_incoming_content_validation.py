@@ -39,17 +39,14 @@ def test_image_sent_to_vision_model_proceeds():
     assert result is None
 
 
-def test_image_sent_to_no_vision_with_tool_returns_delegation():
-    """Image sent to 'tareas-avanzadas' with a compatible tool → delegation signal."""
+def test_image_sent_to_no_vision_with_tool_returns_transform():
+    """Image sent to 'tareas-avanzadas' with a tool → transform_unsupported (proxy does not inspect tools)."""
     turn_caps = TurnCapabilities(has_images=True)
     tools = [{"function": {"name": "describe", "parameters": {"properties": {"url": {"type": "string"}}}}}]
     result = validate_incoming_content(
         turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas", CONFIG, tools
     )
-    assert result is not None
-    assert result["action"] == "delegate_images"
-    assert "tool_name" in result
-    assert "param_name" in result
+    assert result == {"action": "transform_unsupported"}
 
 
 def test_audio_sent_to_audio_model_passes():

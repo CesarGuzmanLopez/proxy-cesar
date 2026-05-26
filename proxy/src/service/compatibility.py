@@ -311,13 +311,10 @@ def validate_incoming_content(
 ) -> dict | None:
     """Validate that the current pseudo-model can handle the incoming content.
 
-    This check runs on EVERY turn, not just on pseudo-model switches.
-
     Returns:
       - None if everything is OK
-      - {"action": "delegate_images", ...} if images can be delegated to tool
       - {"action": "transform_unsupported"} if content should be blobified
-    Raises HTTPException on unrecoverable errors (wrong content for model, etc.).
+    Raises HTTPException for unrecoverable errors (specialized model, etc.).
     """
     phys = pseudo_model.physical_models
 
@@ -326,7 +323,6 @@ def validate_incoming_content(
     # Images → model without vision
     result = _check_content_support(
         turn_caps, "has_images", phys, "vision",
-        tools, can_delegate=True,
     )
     if result is not None:
         return result
@@ -415,13 +411,10 @@ def _check_content_support(
     cap_attr: str,
     physical_models: list,
     capability: str,
-    tools: list[dict] | None = None,
-    can_delegate: bool = False,
 ) -> dict | None:
     """Check if any physical model supports a required capability.
 
     Returns None if supported, or {"action": "transform_unsupported"}.
-    For images with can_delegate=True, also checks tool delegation.
     """
     if not getattr(turn_caps, cap_attr, False):
         return None
@@ -429,18 +422,6 @@ def _check_content_support(
     has_capability = any(getattr(m, capability, False) for m in physical_models)
     if has_capability:
         return None
-
-    # Try tool delegation for images
-    if can_delegate:
-        from src.service.tool_detector import find_image_compatible_tool
-
-        match = find_image_compatible_tool(tools)
-        if match:
-            return {
-                "action": "delegate_images",
-                "tool_name": match[0],
-                "param_name": match[1],
-            }
 
     return {"action": "transform_unsupported"}
 

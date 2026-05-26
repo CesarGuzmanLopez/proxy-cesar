@@ -415,22 +415,6 @@ async def _handle_streaming_with_db(
         turn_caps, pm_schema, resolved_model, config, tools
     )
 
-    # Apply delegation or unsupported content transformation
-    if delegation:
-        from src.service.tool_detector import (
-            delegate_images_to_tool,
-            transform_unsupported_content,
-        )
-
-        if delegation.get("action") == "delegate_images":
-            messages = delegate_images_to_tool(
-                messages,
-                delegation["tool_name"],
-                delegation["param_name"],
-            )
-        elif delegation.get("action") == "transform_unsupported":
-            messages = transform_unsupported_content(messages)
-
     # Resolve conversation ID
     try:
         conv_uuid = uuid.UUID(conversation_id)
