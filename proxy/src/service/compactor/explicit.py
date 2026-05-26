@@ -31,7 +31,7 @@ def _compaction_max_tokens(estimated_input: int, default: int = 12000) -> int:
 # ── Compactor model selection ─────────────────────────────────────────────
 
 
-def select_compactor_model(config, total_tokens: int) -> tuple[str | None, int | None]:
+def select_compactor_model(config, total_tokens: int):
     """Select the compactador model with enough context window for the history.
 
     Uses by_context_window strategy: picks the first physical model whose
@@ -42,23 +42,29 @@ def select_compactor_model(config, total_tokens: int) -> tuple[str | None, int |
         total_tokens: Total tokens in the conversation history.
 
     Returns:
-        ``(model_name, context_window)`` tuple, or ``(None, None)`` if no model can handle the size.
+        Physical model dict/object with ``.model``, ``.context_window``,
+        ``.api_base``, ``.api_key_env``, or ``None`` if no model available.
     """
     compactador_pm = config.pseudo_models.get("compactador")
     if not compactador_pm or not compactador_pm.physical_models:
-        return None, None
+        return None
 
-    # Try to find a model with enough context window
+    # Try to find a model with enough context window (skip audio capability models)
     for phys in compactador_pm.physical_models:
+        if getattr(phys, "audio", False):
+            continue  # Skip whisper — not a chat model
         if phys.context_window and phys.context_window >= total_tokens:
-            return phys.model, phys.context_window
+            return phys
 
-    # Fall back to the model with the largest context window
+    # Fall back to the model with the largest context window (skip audio models)
+    candidates = [m for m in compactador_pm.physical_models if not getattr(m, "audio", False)]
+    if not candidates:
+        return None
     largest = max(
-        compactador_pm.physical_models,
+        candidates,
         key=lambda m: m.context_window or 0,
     )
-    return largest.model, largest.context_window
+    return largest
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────
@@ -115,6 +121,8 @@ async def _run_compaction_sync(
     db: AsyncSession,
     config,
     conv: Conversation | None = None,
+    api_base: str | None = None,
+    api_key: str | None = None,
 ) -> dict:
     """Run compaction synchronously and store the snapshot.
 
@@ -172,6 +180,8 @@ async def _run_compaction_sync(
         response = await call_litellm(
             model=compactor_model,
             messages=compaction_messages,
+            api_base=api_base,
+            api_key=api_key,
             max_tokens=_compaction_max_tokens(total_tokens),
             temperature=0.1,
         )
@@ -275,13 +285,14 @@ async def compact_conversation(
     total_tokens = conv.total_tokens
 
     # Select compactador model
-    compactor_model, _ = select_compactor_model(config, total_tokens)
-    if not compactor_model:
+    compactor_phys = select_compactor_model(config, total_tokens)
+    if not compactor_phys:
         compactador_pm = config.pseudo_models.get("compactador")
         max_window = 0
         if compactador_pm and compactador_pm.physical_models:
             max_window = max(
                 (m.context_window or 0) for m in compactador_pm.physical_models
+                if not getattr(m, "audio", False)
             )
         raise HTTPException(
             status_code=400,
@@ -295,12 +306,18 @@ async def compact_conversation(
             },
         )
 
+    compactor_model = compactor_phys.model
+    api_base = compactor_phys.api_base or None
+    api_key = _resolve_api_key(compactor_phys)
+
     # Dispatch to arq if history > 500K tokens and pool available
     if total_tokens > 500_000 and arq_pool is not None:
         job = await arq_pool.enqueue_job(
             "compact_conversation_async",
             conversation_id,
             compactor_model,
+            api_base,
+            api_key,
         )
         return {
             "status": "processing",
@@ -317,6 +334,8 @@ async def compact_conversation(
     return await _run_compaction_sync(
         conversation_id=conversation_id,
         compactor_model=compactor_model,
+        api_base=api_base,
+        api_key=api_key,
         all_messages=all_messages,
         total_tokens=total_tokens,
         db=db,
@@ -333,6 +352,8 @@ async def _compact_async(
     compactor_model: str,
     db_session_factory,
     config,
+    api_base: str | None = None,
+    api_key: str | None = None,
 ) -> dict:
     """Async compaction helper called by the arq worker.
 
@@ -377,6 +398,8 @@ async def _compact_async(
             db=db,
             config=config,
             conv=conv,
+            api_base=api_base,
+            api_key=api_key,
         )
     finally:
         await db.close()
@@ -393,13 +416,24 @@ def _history_has_images(history: list[dict]) -> bool:
     return False
 
 
-def _find_vision_model(config) -> str | None:
-    """Find any configured physical model with vision capability."""
+def _find_vision_model(config):
+    """Find any configured physical model with vision capability.
+
+    Returns the full ``PhysicalModelSchema`` or ``None``.
+    """
     for pm in config.pseudo_models.values():
         for phys in pm.physical_models:
             if getattr(phys, "vision", False):
-                return phys.model
+                return phys
     return None
+
+
+def _resolve_api_key(phys) -> str | None:
+    """Resolve API key from environment if the physical model has api_key_env set."""
+    if not phys or not phys.api_key_env:
+        return None
+    import os
+    return os.environ.get(phys.api_key_env) or None
 
 
 async def _prepare_multimedia_for_compaction(history: list[dict], config) -> list[dict]:
@@ -407,14 +441,21 @@ async def _prepare_multimedia_for_compaction(history: list[dict], config) -> lis
     if not _history_has_images(history):
         return history
 
-    vision_model = _find_vision_model(config)
-    if vision_model is None:
+    vision_phys = _find_vision_model(config)
+    if vision_phys is None:
         return history
+
+    vision_model = vision_phys.model
+    api_base = vision_phys.api_base or None
+    api_key = _resolve_api_key(vision_phys)
 
     from src.service.multimedia.image_describer import auto_describe_images
 
     try:
-        described, _meta = await auto_describe_images(history, vision_model)
+        described, _meta = await auto_describe_images(
+            history, vision_model,
+            api_base=api_base, api_key=api_key,
+        )
         return described
     except Exception:
         return history

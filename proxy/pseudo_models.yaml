@@ -1,4 +1,5 @@
 pseudo_models:
+  # ── Razonamiento premium ──────────────────────────────────────────────────
   pensamiento-profundo-caro:
     display_name: Pensamiento Profundo
     description: "Razonamiento de máximo nivel. Límite 120K tokens — si lo superas usa compactalo para continuar."
@@ -11,6 +12,16 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
+      - provider: opencode-go
+        model: qwen3.7-max
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 1000000
+        note: "Go primary: Qwen3.7 Max. Razonamiento premium vía OpenCode Go (~4.770 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
         openai_tools_compatible: true
@@ -18,9 +29,41 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Razonamiento profundo. 1M contexto, tools estrictas."
+        note: "Fallback: DeepSeek V4 Pro directo. Razonamiento profundo."
     fallback_strategy: sequential
 
+  # ── Razonamiento ligero (NUEVO) ────────────────────────────────────────────
+  pensamiento-rapido:
+    display_name: Pensamiento Rápido
+    description: "Razonamiento ligero. Debug, code review, análisis rápidos. Límite 120K — usa compactalo si lo superas."
+    input_token_threshold: 120000
+    context_window: 120000
+    router_llm:
+      enabled: false
+    image_handling:
+      on_downgrade: auto_describe
+    physical_models:
+      - provider: opencode-go
+        model: qwen3.6-plus
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: false
+        context_window: 1000000
+        note: "Go primary: Qwen3.6 Plus. Razonamiento ligero (~16.300 req/mes)."
+      - provider: deepseek
+        model: deepseek/deepseek-v4-flash
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: false
+        context_window: 1000000
+        note: "Fallback: DeepSeek V4 Flash directo."
+    fallback_strategy: sequential
+
+  # ── Desarrollo sostenido ──────────────────────────────────────────────────
   tareas-avanzadas:
     display_name: Tareas Avanzadas
     description: "Desarrollo profundo y sostenido. Límite 200K tokens — usa compactalo si lo superas."
@@ -31,6 +74,16 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
+      - provider: opencode-go
+        model: kimi-k2.6
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 128000
+        note: "Go primary: Kimi K2.6. Coding avanzado (~5.750 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
         openai_tools_compatible: true
@@ -38,6 +91,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
+        note: "Fallback 1: DeepSeek V4 Pro directo."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -45,8 +99,51 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
+        note: "Fallback 2: DeepSeek V4 Flash directo."
     fallback_strategy: sequential
 
+  # ── Código preciso (NUEVO) ────────────────────────────────────────────────
+  codigo-preciso:
+    display_name: Código Preciso
+    description: "Generación de código puro. Refactors, tests, parches. Límite 200K — usa compactalo si lo superas."
+    input_token_threshold: 200000
+    context_window: 200000
+    router_llm:
+      enabled: false
+    image_handling:
+      on_downgrade: block
+    physical_models:
+      - provider: opencode-go
+        model: mimo-v2-pro
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 128000
+        note: "Go primary: MiMo V2 Pro. Especializado en código."
+      - provider: opencode-go
+        model: mimo-v2.5-pro
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 128000
+        note: "Go fallback: MiMo V2.5 Pro (~6.450 req/mes)."
+      - provider: deepseek
+        model: deepseek/deepseek-v4-flash
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: false
+        context_window: 1000000
+        note: "Fallback: DeepSeek V4 Flash directo."
+    fallback_strategy: sequential
+
+  # ── Visión ────────────────────────────────────────────────────────────────
   vision:
     display_name: Visión
     description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 120K tokens — usa compactalo si superas."
@@ -57,6 +154,16 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
+      - provider: opencode-go
+        model: mimo-v2-omni
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: true
+        context_window: 128000
+        note: "Go primary: MiMo V2 Omni. Visión nativa + texto."
       - provider: groq
         model: groq/meta-llama/llama-4-scout-17b-16e-instruct
         openai_tools_compatible: true
@@ -64,9 +171,10 @@ pseudo_models:
         parallel_tools: false
         vision: true
         context_window: 131072
-        note: "Visión vía Groq. 131K contexto."
+        note: "Fallback: Visión vía Groq. 131K contexto."
     fallback_strategy: sequential
 
+  # ── Normal (punto de entrada) ─────────────────────────────────────────────
   normal:
     display_name: Normal
     description: "Punto de entrada recomendado. Coding extenso. Límite 500K tokens — usa /compact si lo superas."
@@ -77,6 +185,16 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
+      - provider: opencode-go
+        model: kimi-k2.5
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 128000
+        note: "Go primary: Kimi K2.5. Rápido, tools estrictas (~9.250 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -84,9 +202,10 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Rápido, 1M contexto, tools estrictas."
+        note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
     fallback_strategy: sequential
 
+  # ── Gratuito (sin Go) ─────────────────────────────────────────────────────
   normal-gratis:
     display_name: Normal Gratis
     description: "Modelos gratuitos y de bajo costo. Límite 200K tokens — usa /compact si lo superas."
@@ -115,9 +234,10 @@ pseudo_models:
         context_window: 131072
     fallback_strategy: sequential
 
+  # ── Masivo rápido ─────────────────────────────────────────────────────────
   massive-fast:
     display_name: Massive Fast
-    description: "Texto masivo ultrarrápido vía Groq. Límite 131K tokens. GPT-OSS 20B + Qwen 32B."
+    description: "Texto masivo ultrarrápido. Límite 131K tokens. MiniMax Go + GPT-OSS Groq."
     input_token_threshold: 131072
     context_window: 131072
     router_llm:
@@ -125,16 +245,27 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
-      - provider: groq
-        context_window: 131072
-        model: groq/openai/gpt-oss-20b
+      - provider: opencode-go
+        model: minimax-m2.7
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
-        note: "Razonamiento + velocidad Groq. 20B, 131K contexto, tools regulares."
+        context_window: 200000
+        note: "Go primary: MiniMax M2.7. Velocidad extrema (~17.000 req/mes)."
+      - provider: groq
+        model: groq/openai/gpt-oss-20b
+        context_window: 131072
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: false
+        note: "Fallback: GPT-OSS 20B vía Groq (1000+ t/s)."
     fallback_strategy: sequential
 
+  # ── Flash Lowcost (NUEVO) ──────────────────────────────────────────────────
   flash-lowcost:
     display_name: Flash Lowcost
     description: "Sub-agentes baratos. Clasificación, extracción, parsing. Límite 128K."
@@ -145,6 +276,16 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
+      - provider: opencode-go
+        model: qwen3.5-plus
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: false
+        context_window: 1000000
+        note: "Go primary: Qwen3.5 Plus. El más barato de Go (~50.500 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -152,12 +293,13 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Barato vía DeepSeek. $0.14/$0.28 por M tok."
+        note: "Fallback: DeepSeek V4 Flash directo."
     fallback_strategy: sequential
 
+  # ── Compactador (con helpers internos) ────────────────────────────────────
   compactador:
     display_name: Compactador
-    description: "Compactación de contexto con delegación de modelos. Escanea la conversación y usa los modelos adecuados: visión para imágenes, tools para function calls. Groq rápido (131K), DeepSeek Flash (1M) para historias masivas."
+    description: "Compactación de contexto con delegación de modelos. GLM-5.1 Go, fallback a GPT-OSS Groq (131K), DeepSeek Flash (1M) para historias masivas."
     input_token_threshold: 20000000
     context_window: 20000000
     router_llm:
@@ -165,19 +307,29 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
+      - provider: opencode-go
+        model: glm-5.1
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: false
+        context_window: 128000
+        note: "Go primary: GLM-5.1. Compactación vía Go (~4.300 req/mes)."
       - provider: groq
         model: groq/openai/gpt-oss-20b
         context_window: 131072
         openai_tools_compatible: true
         vision: false
-        note: "Primary: 20B vía Groq (1000+ t/s). Texto puro para <131K."
+        note: "Fallback 1: 20B vía Groq (1000+ t/s). Texto puro para <131K."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         context_window: 1000000
         openai_tools_compatible: true
         vision: false
-        note: "1M contexto. Para compactar historias grandes (>131K tokens)."
-      # Whisper models for audio transcription (used by blob vault, not user-facing)
+        note: "Fallback 2: 1M contexto. Para historias grandes (>131K tokens)."
+      # Modelos helper (no participan en fallback de chat)
       - provider: groq
         model: groq/whisper-large-v3
         openai_tools_compatible: true
@@ -186,7 +338,7 @@ pseudo_models:
         vision: false
         audio: true
         context_window: 131072
-        note: "Whisper Large V3 — transcripción de audio."
+        note: "Whisper Large V3 — transcripción de audio (helper interno)."
       - provider: groq
         model: groq/whisper-large-v3-turbo
         openai_tools_compatible: true
@@ -195,7 +347,7 @@ pseudo_models:
         vision: false
         audio: true
         context_window: 131072
-        note: "Whisper Large V3 Turbo — transcripción de audio rápida."
+        note: "Whisper Large V3 Turbo — transcripción de audio rápida (helper interno)."
     fallback_strategy: by_context_window
 
 model_aliases:
@@ -203,7 +355,9 @@ model_aliases:
   gpt-4o-mini: normal
   gpt-4.1: tareas-avanzadas
   o3: pensamiento-profundo-caro
-  o4-mini: pensamiento-profundo-caro
+  o4-mini: pensamiento-rapido
   gemini-2.5-flash: vision
+  gemini-2.5-pro: codigo-preciso
+  claude-sonnet-4-20250514: codigo-preciso
   claude-haiku-3-5-20241022: flash-lowcost
   default: normal

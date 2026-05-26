@@ -95,6 +95,8 @@ async def describe_image(
     image_url: str,
     detail: str,
     vision_model: str,
+    api_base: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[str, int]:
     """Describe a single image using a vision model via LiteLLM.
 
@@ -102,6 +104,8 @@ async def describe_image(
         image_url: Data URL or HTTPS URL of the image.
         detail: Detail level (``auto``, ``low``, or ``high``).
         vision_model: LiteLLM model identifier (e.g. ``openrouter/gemini-3.5-flash``).
+        api_base: Custom API base URL (e.g. for OpenCode Go models).
+        api_key: Custom API key (resolved from api_key_env).
 
     Returns:
         Tuple of ``(description_text, tokens_used)``.
@@ -124,6 +128,8 @@ async def describe_image(
         response = await call_litellm(
             model=vision_model,
             messages=img_messages,
+            api_base=api_base,
+            api_key=api_key,
             max_tokens=MAX_TOKENS_PER_IMAGE,
             temperature=0.0,  # Deterministic descriptions
         )
@@ -138,6 +144,8 @@ async def describe_image(
 async def auto_describe_images(
     messages: list[dict],
     vision_model: str,
+    api_base: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[list[dict], dict]:
     """Auto-describe all images in a message list.
 
@@ -148,6 +156,8 @@ async def auto_describe_images(
     Args:
         messages: Original message list (read-only — not modified).
         vision_model: LiteLLM model identifier with vision capability.
+        api_base: Custom API base URL (e.g. for OpenCode Go models).
+        api_key: Custom API key (resolved from api_key_env).
 
     Returns:
         Tuple of ``(modified_messages, metadata_dict)``.
@@ -180,7 +190,10 @@ async def auto_describe_images(
     total_tokens: int = 0
 
     for idx, ref in enumerate(unique_refs):
-        desc, tokens = await describe_image(ref["url"], ref["detail"], vision_model)
+        desc, tokens = await describe_image(
+            ref["url"], ref["detail"], vision_model,
+            api_base=api_base, api_key=api_key,
+        )
         url_cache[ref["url"]] = desc
         total_tokens += tokens
 

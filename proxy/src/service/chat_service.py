@@ -55,7 +55,6 @@ from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
 from src.service.compatibility import (
     validate_incoming_content,
     validate_switch,
-    _any_vision as _any_vision_comp,
 )
 from src.service.context_alert import ContextAlert, get_context_alert
 from src.service.model_resolver import (
@@ -423,36 +422,38 @@ def _raise_if_exceeds_threshold(
 def _resolve_auto_describe_params(
     config,
     current_pseudo_name: str,
-    new_pm_schema: object,
+    new_pm_schema,
     pinned_physical_model: str,
-) -> tuple[str | None, str | None, str | None]:
-    """Check if auto-describe should run and resolve the vision model.
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    """Resolve vision model for auto-describe.
 
-    Returns (vision_model, current_pseudo_name, skip_reason).
-    If vision_model is None, skip_reason explains why auto-describe was skipped.
+    Returns:
+        (vision_model, pseudo_name, skip_reason, api_base, api_key)
     """
-    if new_pm_schema.image_handling.on_downgrade != "auto_describe":
-        return (None, None, "destination_on_downgrade_not_auto_describe")
-    if _any_vision_comp(new_pm_schema.physical_models):
-        return (None, None, "destination_has_vision_no_describe_needed")
-
+    # No switch → nothing to describe
+    if current_pseudo_name is None:
+        return (None, None, "no_source_model", None, None)
+    # Source model has no images → nothing to describe
     current_pm = config.pseudo_models.get(current_pseudo_name)
     if current_pm is None:
-        return (None, None, f"source_pseudo_model_not_found:{current_pseudo_name}")
+        return (None, None, f"source_pseudo_model_not_found:{current_pseudo_name}", None, None)
 
     vision_models = [m for m in current_pm.physical_models if m.vision]
     if not vision_models:
-        return (None, None, f"source_{current_pseudo_name}_has_no_vision_models")
+        return (None, None, f"source_{current_pseudo_name}_has_no_vision_models", None, None)
 
-    vision_model: str = (
-        pinned_physical_model
-        if any(
-            m.model == pinned_physical_model and m.vision
-            for m in current_pm.physical_models
-        )
-        else vision_models[0].model
+    vision_phys = (
+        next((m for m in current_pm.physical_models if m.model == pinned_physical_model and m.vision), None)
+        if pinned_physical_model
+        else vision_models[0]
     )
-    return (vision_model, current_pseudo_name, None)
+    if vision_phys is None:
+        vision_phys = vision_models[0]
+
+    vision_model = vision_phys.model
+    api_base = vision_phys.api_base or None
+    api_key = _resolve_api_key(vision_phys)
+    return (vision_model, current_pseudo_name, None, api_base, api_key)
 
 
 def _load_messages_from_turns(conv: Conversation) -> list[dict]:
@@ -476,7 +477,7 @@ async def handle_auto_describe(
 ) -> tuple[list[dict] | None, dict | None]:
     """Execute auto-describe when switching from vision to non-vision model."""
     # Resolve vision model (also validates auto-describe is needed)
-    vision_model, current_pseudo_name, skip_reason = _resolve_auto_describe_params(
+    vision_model, current_pseudo_name, skip_reason, api_base, api_key = _resolve_auto_describe_params(
         config,
         current_pseudo_name,
         new_pm_schema,
@@ -498,7 +499,7 @@ async def handle_auto_describe(
         return (None, None)
 
     described_history, desc_meta = await auto_describe_images(
-        all_messages, vision_model
+        all_messages, vision_model, api_base=api_base, api_key=api_key,
     )
     described_count = desc_meta.get("images_described", 0)
     if described_count == 0:
@@ -527,7 +528,10 @@ async def handle_auto_describe(
     # Describe in-flight messages if present
     described_in_flight: list[dict] | None = None
     if in_flight_messages:
-        desc_in_flight, _ = await auto_describe_images(in_flight_messages, vision_model)
+        desc_in_flight, _ = await auto_describe_images(
+            in_flight_messages, vision_model,
+            api_base=api_base, api_key=api_key,
+        )
         described_in_flight = desc_in_flight
 
     return (described_in_flight, desc_meta)
@@ -768,10 +772,13 @@ async def evaluate_router_suggestion(
     if not suggester_pm or not suggester_pm.physical_models:
         return None
 
-    suggester_model = suggester_pm.physical_models[0].model
+    suggester_phys = suggester_pm.physical_models[0]
+    suggester_model = suggester_phys.model
     suggestion = await evaluate_complexity(
         messages=messages,
         suggester_model=suggester_model,
+        api_base=suggester_phys.api_base or None,
+        api_key=_resolve_api_key(suggester_phys),
     )
 
     if not suggestion or not suggestion.get("suggested"):
@@ -1010,6 +1017,14 @@ def _extract_cmd_name(messages: list[dict]) -> str:
     return "?"
 
 
+def _resolve_api_key(phys) -> str | None:
+    """Resolve API key from environment if the physical model has api_key_env set."""
+    if not phys.api_key_env:
+        return None
+    import os
+    return os.environ.get(phys.api_key_env) or None
+
+
 async def _try_physical_model(
     phys,
     ordered_messages: list[dict],
@@ -1043,10 +1058,16 @@ async def _try_physical_model(
             provider, len(call_messages),
         )
 
+    # Resolve custom api_base/api_key for models with api_key_env (e.g. OpenCode Go)
+    api_base = phys.api_base or None
+    api_key = _resolve_api_key(phys)
+
     response = await call_litellm(
         model=phys.model,
         messages=call_messages,
         stream=stream,
+        api_base=api_base,
+        api_key=api_key,
         **{k: v for k, v in kwargs.items() if v is not None},
     )
 

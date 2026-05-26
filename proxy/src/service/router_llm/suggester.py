@@ -61,6 +61,8 @@ ALLOWED_SUGGESTIONS: set[str] = {
 async def evaluate_complexity(
     messages: list[dict],
     suggester_model: str | None = None,
+    api_base: str | None = None,
+    api_key: str | None = None,
 ) -> dict | None:
     """Evaluate task complexity using a cheap LLM evaluator.
 
@@ -76,6 +78,8 @@ async def evaluate_complexity(
         messages: Full message list (only last user message used).
         suggester_model: Physical model ID for the evaluator
             (e.g. ``zai/glm-4.5-flash``). If ``None``, returns ``None``.
+        api_base: Custom API base URL (e.g. for OpenCode Go models).
+        api_key: Custom API key (resolved from api_key_env).
 
     Returns:
         Dict with keys ``complexity``, ``suggested``, ``reason``.
@@ -94,6 +98,8 @@ async def evaluate_complexity(
         response = await call_litellm(
             model=suggester_model,
             messages=[{"role": "user", "content": prompt}],
+            api_base=api_base,
+            api_key=api_key,
             max_tokens=MAX_EVAL_TOKENS,
             temperature=0.0,
         )

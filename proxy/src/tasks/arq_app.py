@@ -23,7 +23,13 @@ except ImportError:
 # ── Worker function (discovered by name) ──────────────────────────────────
 
 
-async def compact_conversation_async(ctx, conversation_id: str, compactor_model: str):
+async def compact_conversation_async(
+    ctx,
+    conversation_id: str,
+    compactor_model: str,
+    api_base: str | None = None,
+    api_key: str | None = None,
+):
     """Async compaction task for very large conversations.
 
     Called by arq worker when a compaction job is dequeued.
@@ -33,6 +39,8 @@ async def compact_conversation_async(ctx, conversation_id: str, compactor_model:
         ctx: arq worker context (contains db_session_factory, config).
         conversation_id: UUID string of the conversation to compact.
         compactor_model: Physical model name to use for compaction.
+        api_base: Custom API base URL (e.g. for OpenCode Go models).
+        api_key: Custom API key (resolved from api_key_env).
 
     Returns:
         Dict with compaction result metadata.
@@ -52,6 +60,8 @@ async def compact_conversation_async(ctx, conversation_id: str, compactor_model:
         compactor_model=compactor_model,
         db_session_factory=db_session_factory,
         config=config,
+        api_base=api_base,
+        api_key=api_key,
     )
     return result
 

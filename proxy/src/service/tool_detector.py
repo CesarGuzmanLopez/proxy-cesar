@@ -35,15 +35,18 @@ def _extract_mime(data_uri: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _find_model_with_capability(config, cap: str = "vision") -> str | None:
+def _find_model_with_capability(config, cap: str = "vision"):
     """Find any configured physical model with a given capability.
+
+    Returns the full ``PhysicalModelSchema`` object (not just the model string)
+    so callers can access ``api_base`` and ``api_key_env`` for custom endpoints.
 
     TODO: pick the cheapest, not the first. Cost data in pseudo_models.yaml notes.
     """
     for pm in config.pseudo_models.values():
         for phys in pm.physical_models:
             if getattr(phys, cap, False):
-                return phys.model
+                return phys
     return None
 
 
@@ -55,6 +58,14 @@ def _extract_user_text(content: list[dict]) -> str:
     )
 
 
+def _resolve_api_key(phys) -> str | None:
+    """Resolve API key from environment if the physical model has api_key_env set."""
+    if not phys or not phys.api_key_env:
+        return None
+    import os
+    return os.environ.get(phys.api_key_env) or None
+
+
 async def _describe_image_batch(
     images: list[tuple[str, str]], user_prompt: str, config
 ) -> list[str]:
@@ -63,12 +74,13 @@ async def _describe_image_batch(
     Sends ALL images + the user's text prompt together so the vision
     model gives contextual descriptions. Returns one per image.
     """
-    if not _find_model_with_capability(config, "vision"):
+    vision_phys = _find_model_with_capability(config, "vision")
+    if not vision_phys:
         return [""] * len(images)
     if not images:
         return []
 
-    vision_model = _find_model_with_capability(config, "vision")
+    vision_model = vision_phys.model
     system = (
         "You receive images that the user sent to a model without vision. "
         "Describe each briefly (1-2 sentences). "
@@ -87,6 +99,8 @@ async def _describe_image_batch(
         response = await call_litellm(
             model=vision_model,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
+            api_base=vision_phys.api_base or None,
+            api_key=_resolve_api_key(vision_phys),
             max_tokens=500 * len(images),
             temperature=0.1,
         )
@@ -108,9 +122,10 @@ async def _describe_image_batch(
 
 async def _transcribe_audio(raw_data: str, config) -> str:
     """Transcribe audio using Whisper via litellm.atranscription()."""
-    audio_model = _find_model_with_capability(config, "audio")
-    if not audio_model or not raw_data.startswith("data:"):
+    audio_phys = _find_model_with_capability(config, "audio")
+    if not audio_phys or not raw_data.startswith("data:"):
         return ""
+    audio_model = audio_phys.model
     try:
         audio_bytes = base64.b64decode(raw_data.split(",", 1)[-1])
         from litellm import atranscription
@@ -120,6 +135,8 @@ async def _transcribe_audio(raw_data: str, config) -> str:
         response = await atranscription(
             model=audio_model,
             file=audio_file,
+            api_base=audio_phys.api_base or None,
+            api_key=_resolve_api_key(audio_phys),
             temperature=0.1,
         )
         return (getattr(response, "text", None) or "")[:500]

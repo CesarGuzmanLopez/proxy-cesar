@@ -25,6 +25,10 @@ class PhysicalModelSchema(BaseModel, extra="forbid"):
     audio: bool = False
     context_window: int | None = None
     note: str | None = None
+    api_base: str | None = None
+    """Custom API base URL (e.g. https://opencode.ai/zen/go/v1)."""
+    api_key_env: str | None = None
+    """Env var name holding the API key (e.g. OPENCODE_API_KEY)."""
 
 
 # ── Sub-configs ─────────────────────────────────────────────────────────────

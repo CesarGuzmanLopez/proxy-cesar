@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     groq_api_key: str = ""
     pruna_api_key: str = ""
+    opencode_api_key: str = ""
+    """API key for OpenCode Go (opencode.ai)."""
     keyclaw_enabled: bool = True
     """Set to false to disable KeyClaw secret-filtering proxy even if installed."""
 

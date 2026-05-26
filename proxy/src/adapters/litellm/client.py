@@ -151,6 +151,7 @@ def setup_litellm(settings: Settings) -> None:
     os.environ.setdefault("GROQ_API_KEY", settings.groq_api_key)
     os.environ.setdefault("PRUNA_API_KEY", settings.pruna_api_key)
     os.environ.setdefault("PRUNA_API_BASE", "https://api.pruna.ai/v1")
+    os.environ.setdefault("OPENCODE_API_KEY", settings.opencode_api_key)
 
     if not settings.keyclaw_enabled:
         litellm.suppress_debug_info = True
@@ -190,16 +191,26 @@ async def call_litellm(
     The model string is used verbatim — no prefix, no transformation.
     analisis.md §4.0: 'Sin prefijos, sin transformación, sin concatenación.'
 
+    Supports optional ``api_base`` and ``api_key`` kwargs for custom
+    endpoints (e.g. OpenCode Go). When ``api_key_env`` is set on the
+    physical model, the caller resolves the actual key and passes it here.
+
     Post-processing: some providers (e.g. GLM via OpenRouter) put the response
     in ``reasoning_content`` instead of ``content`` when they run out of token
     budget (the model "thinks" long and leaves no tokens for the final answer).
     This normalisation copies ``reasoning_content`` into ``content`` so the
     caller never sees an empty assistant reply.
     """
+    # Extract api_base/api_key if present (they are passed in **kwargs)
+    api_base = kwargs.pop("api_base", None)
+    api_key = kwargs.pop("api_key", None)
+
     response = await litellm.acompletion(
         model=model,
         messages=messages,
         stream=stream,
+        api_base=api_base,
+        api_key=api_key,
         **kwargs,
     )
 
