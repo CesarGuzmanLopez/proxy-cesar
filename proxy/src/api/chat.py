@@ -410,8 +410,8 @@ async def _handle_streaming_with_db(
     # Detect capabilities in incoming messages
     turn_caps = detect_turn_capabilities(messages, tools)
 
-    # Validate incoming content (may return delegation or transform signal)
-    delegation = validate_incoming_content(
+    # Validate incoming content
+    validate_incoming_content(
         turn_caps, pm_schema, resolved_model, config, tools
     )
 

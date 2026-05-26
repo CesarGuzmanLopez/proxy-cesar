@@ -354,24 +354,7 @@ def validate_incoming_content(
 
 # ── Internal content validators ────────────────────────────────────────────────
 
-_SPECIALIZED_MODEL_ERRORS: dict[str, dict[str, str]] = {
-    "imagen": {
-        "image_url": (
-            "The 'imagen' model generates images from text. "
-            "It cannot process image input."
-        ),
-        "input_audio": (
-            "The 'imagen' model generates images from text. "
-            "It cannot process audio input."
-        ),
-    },
-    "audio": {
-        "image_url": (
-            "The 'audio' model transcribes audio to text. "
-            "It cannot process image input."
-        ),
-    },
-}
+_SPECIALIZED_MODEL_ERRORS: dict[str, dict[str, str]] = {}
 
 
 def _check_specialized_model_mismatch(

@@ -185,27 +185,6 @@ pseudo_models:
         note: "Whisper Large V3 Turbo vía Groq. 228x speed. $0.04/hora."
     fallback_strategy: sequential
 
-  imagen:
-    display_name: Imagen
-    description: "Generación de imágenes vía Pruna P-Image. Texto a imagen en <1s. 250 req/min."
-    input_token_threshold: 1000
-    context_window: 1000
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: block
-    physical_models:
-      - provider: pruna
-        model: pruna/p-image
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        audio: false
-        context_window: 1000
-        note: "Pruna P-Image. Texto a imagen en <1s. $0.002 por imagen."
-    fallback_strategy: sequential
-
   compactador:
     display_name: Compactador
     description: "Compactación de contexto con delegación de modelos. Escanea la conversación y usa los modelos adecuados: visión para imágenes, tools para function calls. Groq rápido (131K), DeepSeek Flash (1M) para historias masivas."

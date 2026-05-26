@@ -21,33 +21,33 @@ if not os.environ.get("SSL_CERT_FILE"):
             os.environ["SSL_CERT_FILE"] = candidate
             break
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager  # noqa: E402 — SSL code above must run first
 
-import uvicorn
+import uvicorn  # noqa: E402
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from sqlmodel import SQLModel
-from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy import text as sa_text
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+from sqlmodel import SQLModel  # noqa: E402
+from sqlmodel.ext.asyncio.session import AsyncSession  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy import text as sa_text  # noqa: E402
 
-from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter, setup_valkey
-from src.adapters.litellm.client import setup_litellm
-from src.api.chat import router as chat_router
-from src.api.conversations import router as conversations_router
-from src.api.health import router as health_router
-from src.api.metrics import router as metrics_router
-from src.api.models import router as models_router
+from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter, setup_valkey  # noqa: E402
+from src.adapters.litellm.client import setup_litellm  # noqa: E402
+from src.api.chat import router as chat_router  # noqa: E402
+from src.api.conversations import router as conversations_router  # noqa: E402
+from src.api.health import router as health_router  # noqa: E402
+from src.api.metrics import router as metrics_router  # noqa: E402
+from src.api.models import router as models_router  # noqa: E402
 
-from src.auth import AuthMiddleware
-from src.config.pseudo_models import load_config
-from src.config.settings import settings
-from src.logging_config import setup_logging
-from src.middleware.rate_limiter import RateLimitMiddleware
-from src.middleware.keyvault import KeyVaultMiddleware
-from src.utils.sanitize import sanitize, sanitize_dict
+from src.auth import AuthMiddleware  # noqa: E402
+from src.config.pseudo_models import load_config  # noqa: E402
+from src.config.settings import settings  # noqa: E402
+from src.logging_config import setup_logging  # noqa: E402
+from src.middleware.rate_limiter import RateLimitMiddleware  # noqa: E402
+from src.middleware.keyvault import KeyVaultMiddleware  # noqa: E402
+from src.utils.sanitize import sanitize, sanitize_dict  # noqa: E402
 
 # Configure structured JSON logging (Sprint 8)
 setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))

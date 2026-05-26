@@ -72,18 +72,40 @@ async def _describe_content(raw_data: str, mime: str, config) -> str:
     try:
         from src.adapters.litellm import call_litellm
 
-        content_block = (
-            {"type": "image_url", "image_url": {"url": raw_data}}
-            if prompt_key == "image"
-            else {"type": "input_audio", "input_audio": {"data": raw_data}}
-        )
-        msg = {"role": "user", "content": [{"type": "text", "text": prompt}, content_block]}
-        response = await call_litellm(model=model, messages=[msg], max_tokens=200, temperature=0.1)
-        resp = response.model_dump() if hasattr(response, "model_dump") else response
-        if isinstance(resp, dict):
-            choices = resp.get("choices", [])
-            if choices:
-                return choices[0].get("message", {}).get("content", "")[:500]
+        if prompt_key == "image":
+            msg = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": raw_data}},
+                ],
+            }
+            response = await call_litellm(model=model, messages=[msg], max_tokens=200, temperature=0.1)
+            resp = response.model_dump() if hasattr(response, "model_dump") else response
+            if isinstance(resp, dict):
+                choices = resp.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "")[:500]
+
+        elif prompt_key == "audio":
+            # Use litellm's dedicated transcription API (not chat completions)
+            # Whisper/Groq expects the raw audio bytes, not a chat message
+            import base64
+            audio_bytes = base64.b64decode(raw_data.split(",", 1)[-1])
+            from litellm import atranscription
+
+            from io import BytesIO
+            audio_file = BytesIO(audio_bytes)
+            audio_file.name = "audio.wav"
+            response = await atranscription(
+                model=model,
+                file=audio_file,
+                prompt=prompt,
+                temperature=0.1,
+            )
+            text = getattr(response, "text", None) or ""
+            return text[:500] if text else ""
+
     except Exception as exc:
         logger.warning("blob_describe_failed model=%s error=%s", model, str(exc))
     return ""
