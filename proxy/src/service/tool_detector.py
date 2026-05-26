@@ -1,11 +1,12 @@
 """Tool and content detection utilities.
 
 - Finds tools compatible with image content (delegation)
-- Transforms unsupported content to text with blob references
-- Stores base64 blobs in Valkey for tool retrieval
+- Stores base64 blobs in Valkey with auto-description via cheap vision model
+- Replaces unsupported content with [BLOB:hash:mime:description] references
 """
 
 import hashlib
+import json
 import logging
 import re
 from typing import Any
@@ -13,8 +14,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 BLOB_PREFIX = "BLOB"
-BLOB_TTL = 7200  # 2 hours
+BLOB_TTL = 86400  # 24 hours
 _MAX_BLOB_SIZE = 10 * 1024 * 1024  # 10 MB
+_DESCRIBE_PROMPT = (
+    "Describe this image in one brief paragraph (max 3 sentences). "
+    "Focus on what a developer would need to know: "
+    "what is shown, any text/code visible, and the overall context."
+)
 
 
 def _hash_content(data: str) -> str:
@@ -28,10 +34,7 @@ def _extract_mime(data_uri: str) -> str | None:
 
 
 def find_image_compatible_tool(tools: list[dict] | None) -> tuple[str, str] | None:
-    """Find first tool with a string parameter that could accept an image path.
-
-    Returns (tool_name, param_name) or None if no compatible tool found.
-    """
+    """Find first tool with a string parameter that could accept an image path."""
     if not tools:
         return None
     for tool in tools:
@@ -45,25 +48,102 @@ def find_image_compatible_tool(tools: list[dict] | None) -> tuple[str, str] | No
     return None
 
 
-async def _store_blob(valkey, key: str, raw_data: str) -> None:
-    """Store base64 blob in Valkey if within size limits."""
-    if len(raw_data) > _MAX_BLOB_SIZE:
-        logger.warning("blob_too_large key=%s size=%d", key, len(raw_data))
-        return
+def _find_vision_model(config) -> str | None:
+    """Find any configured physical model with vision capability for descriptions."""
+    for pm in config.pseudo_models.values():
+        for phys in pm.physical_models:
+            if getattr(phys, "vision", False):
+                return phys.model
+    return None
+
+
+async def _describe_image(raw_data: str, vision_model: str) -> str:
+    """Generate a brief description of an image using a vision model."""
     try:
-        await valkey.set(key, raw_data, ex=BLOB_TTL)
+        from src.adapters.litellm import call_litellm
+
+        msg = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": _DESCRIBE_PROMPT},
+                {"type": "image_url", "image_url": {"url": raw_data}},
+            ],
+        }
+        response = await call_litellm(
+            model=vision_model,
+            messages=[msg],
+            max_tokens=200,
+            temperature=0.1,
+        )
+        resp = response.model_dump() if hasattr(response, "model_dump") else response
+        if isinstance(resp, dict):
+            choices = resp.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", "")[:500]
+        return ""
+    except Exception as exc:
+        logger.warning("blob_describe_failed model=%s error=%s", vision_model, str(exc))
+        return ""
+
+
+async def _store_blob_with_description(
+    valkey, blob_key: str, desc_key: str, raw_data: str, config
+) -> str:
+    """Store base64 blob in Valkey and generate a text description.
+
+    If the blob was already stored (same hash), reuse existing description.
+    Returns the description text (empty string if generation fails).
+    """
+    if len(raw_data) > _MAX_BLOB_SIZE:
+        logger.warning("blob_too_large key=%s size=%d", blob_key, len(raw_data))
+        return ""
+
+    # Check if already stored (deduplicate by hash)
+    try:
+        existing = await valkey.get(desc_key)
+        if existing:
+            return existing
     except Exception:
         pass
+
+    # Store the raw blob data
+    try:
+        await valkey.set(blob_key, raw_data, ex=BLOB_TTL)
+    except Exception:
+        return ""
+
+    # Generate description using a cheap vision model
+    vision_model = _find_vision_model(config)
+    description = ""
+    if vision_model and raw_data.startswith("data:image/"):
+        description = await _describe_image(raw_data, vision_model)
+        description = description.strip().replace("\n", " ")[:500]
+
+    # Store description
+    if description:
+        try:
+            await valkey.set(desc_key, description, ex=BLOB_TTL)
+        except Exception:
+            pass
+
+    return description
 
 
 async def replace_base64_with_blob_refs(
     messages: list[dict[str, Any]],
     conversation_id: str | None = None,
     valkey=None,
+    config=None,
 ) -> list[dict[str, Any]]:
-    """Replace base64 content parts with [BLOB:hash:mime] references.
+    """Replace base64 content parts with [BLOB:hash:mime:description] references.
 
-    Stores the actual base64 data in Valkey so tools can retrieve it later.
+    Stores the actual base64 data in Valkey, generates a brief description
+    using a cheap vision model, and includes it in the reference so the
+    main model knows what the content contains without needing vision.
+
+    The model receives:
+      [The user sent an image. blob: BLOB:hash:mime | description: ...]
+
     Real URLs (non-base64) pass through unchanged.
     """
     if valkey is None:
@@ -95,11 +175,17 @@ async def replace_base64_with_blob_refs(
                 if raw.startswith("data:"):
                     h = _hash_content(raw)
                     mime = _extract_mime(raw) or "image/unknown"
-                    await _store_blob(valkey, f"{prefix}:{h}", raw)
-                    new_content.append({
-                        "type": "text",
-                        "text": f"[The user sent an image. blob: {BLOB_PREFIX}:{h}:{mime}]",
-                    })
+                    blob_key = f"{prefix}:{h}"
+                    desc_key = f"{prefix}:{h}:desc"
+                    description = await _store_blob_with_description(
+                        valkey, blob_key, desc_key, raw, config
+                    )
+                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
+                    text = f"[The user sent an image. blob: {ref}"
+                    if description:
+                        text += f" | {description}"
+                    text += "]"
+                    new_content.append({"type": "text", "text": text})
                 else:
                     new_content.append(part)
 
@@ -109,11 +195,17 @@ async def replace_base64_with_blob_refs(
                 if raw.startswith("data:"):
                     h = _hash_content(raw)
                     mime = _extract_mime(raw) or "audio/unknown"
-                    await _store_blob(valkey, f"{prefix}:{h}", raw)
-                    new_content.append({
-                        "type": "text",
-                        "text": f"[The user sent an audio file. blob: {BLOB_PREFIX}:{h}:{mime}]",
-                    })
+                    blob_key = f"{prefix}:{h}"
+                    desc_key = f"{prefix}:{h}:desc"
+                    description = await _store_blob_with_description(
+                        valkey, blob_key, desc_key, raw, config
+                    )
+                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
+                    text = f"[The user sent an audio file. blob: {ref}"
+                    if description:
+                        text += f" | {description}"
+                    text += "]"
+                    new_content.append({"type": "text", "text": text})
                 else:
                     new_content.append(part)
 
@@ -123,11 +215,17 @@ async def replace_base64_with_blob_refs(
                 if raw.startswith("data:"):
                     h = _hash_content(raw)
                     mime = _extract_mime(raw) or "application/octet-stream"
-                    await _store_blob(valkey, f"{prefix}:{h}", raw)
-                    new_content.append({
-                        "type": "text",
-                        "text": f"[The user sent a file. blob: {BLOB_PREFIX}:{h}:{mime}]",
-                    })
+                    blob_key = f"{prefix}:{h}"
+                    desc_key = f"{prefix}:{h}:desc"
+                    description = await _store_blob_with_description(
+                        valkey, blob_key, desc_key, raw, config
+                    )
+                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
+                    text = f"[The user sent a file. blob: {ref}"
+                    if description:
+                        text += f" | {description}"
+                    text += "]"
+                    new_content.append({"type": "text", "text": text})
                 else:
                     new_content.append(part)
 

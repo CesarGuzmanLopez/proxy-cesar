@@ -135,7 +135,7 @@ async def process_chat_request(
             )
         elif delegation.get("action") == "transform_unsupported":
             messages = await replace_base64_with_blob_refs(
-                messages, conversation_id, valkey or getattr(affinity, "client", None)
+                messages, conversation_id, valkey or getattr(affinity, "client", None), config
             )
     # Sprint 8: track request metrics
     metrics.record_request(pseudo_model_name)
