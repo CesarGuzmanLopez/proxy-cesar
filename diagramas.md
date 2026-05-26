@@ -469,8 +469,16 @@ flowchart LR
     end
 
     U1 -.->|usa| U2
-    U2 --> UC1 & UC2 & UC3 & UC4 & UC5 & UC8
-    U1 --> UC6 & UC7 & UC9 & UC10
+    U2 --> UC1
+    U2 --> UC2
+    U2 --> UC3
+    U2 --> UC4
+    U2 --> UC5
+    U2 --> UC8
+    U1 --> UC6
+    U1 --> UC7
+    U1 --> UC9
+    U1 --> UC10
     U3 --> UC9
     
     UC1 --> P1
