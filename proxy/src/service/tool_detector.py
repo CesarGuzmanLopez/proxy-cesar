@@ -53,13 +53,13 @@ def transform_unsupported_content(
     """Replace unsupported content types with text explanations.
 
     For each user message containing content types the model can't process
-    (image_url, input_audio, file), extracts the URL and replaces the
+    (image_url, input_audio, file), extracts the path and replaces the
     content part with a text explanation so the model knows what the
     user sent and can respond appropriately.
 
     The model receives something like:
-      [The user sent an image. URL: https://...]
-      [The user sent an audio file. URL: data:audio/wav;base64,...]
+      [The user sent an image. path: https://...]
+      [The user sent an audio file. path: data:audio/wav;base64,...]
     """
     new_messages: list[dict[str, Any]] = []
     for msg in messages:
@@ -80,7 +80,7 @@ def transform_unsupported_content(
 
             ptype = part.get("type", "")
 
-            # image_url → extract URL
+            # image_url → extract content path
             if ptype == "image_url":
                 url = part.get("image_url", {}).get("url", "")
                 label = _content_type_label(ptype)
@@ -88,7 +88,7 @@ def transform_unsupported_content(
                     "type": "text",
                     "text": (
                         f"[The user sent an {label}. "
-                        f"URL: {url}]"
+                        f"path: {url}]"
                     ),
                 })
 
@@ -101,7 +101,7 @@ def transform_unsupported_content(
                     "type": "text",
                     "text": (
                         f"[The user sent an {label}. "
-                        f"URL: {url}]"
+                        f"path: {url}]"
                     ),
                 })
 
@@ -114,7 +114,7 @@ def transform_unsupported_content(
                     "type": "text",
                     "text": (
                         f"[The user sent a {label}. "
-                        f"URL: {url}]"
+                        f"path: {url}]"
                     ),
                 })
 

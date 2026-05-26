@@ -172,22 +172,10 @@ flowchart TB
     CapDetect --> ContentValid[3. Validar contenido entrante]
     
     ContentValid --> HasImages{¿Tiene imágenes?}
-    HasImages -->|Sí, sin visión + tools| DelegateTool[Delegar a tool:<br/>reemplaza image_url por texto URL]
-    HasImages -->|Sí, sin visión + sin tools| TransformImg[Transformar a texto:<br/>explica qué es + URL]
-    HasImages -->|Sí, con visión| InlineCmd
-    HasImages -->|No| InlineCmd
-    
-    DelegateTool --> InlineCmd
-    TransformImg --> InlineCmd
-    
-    ContentValid --> HasAudio{¿Tiene audio?}
-    HasAudio -->|Sí, sin audio model| TransformAudio[Transformar a texto:<br/>explica qué es + URL]
-    HasAudio -->|Sí, con audio model| InlineCmd
-    
-    TransformAudio --> InlineCmd
-    
-    ContentValid --> HasVideo{¿Tiene video?}
-    HasVideo -->|Sí| TransformVideo[Transformar a texto:<br/>explica qué es + URL]
+    HasImages -->|Sí, sin visión + tools| DelegateTool[Delegar a tool:<br/>reemplaza image_url por texto con path]
+    HasImages -->|Sí, sin visión + sin tools| TransformImg[Transformar a texto:<br/>explica qué es + path]
+    HasAudio -->|Sí, sin audio model| TransformAudio[Transformar a texto:<br/>explica qué es + path]
+    HasVideo -->|Sí| TransformVideo[Transformar a texto:<br/>explica qué es + path]
     
     TransformVideo --> InlineCmd
     
