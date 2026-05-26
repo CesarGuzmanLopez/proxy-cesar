@@ -219,32 +219,39 @@ async def process_chat_request(
         images_described = auto_describe_meta.get("images_described", 0)
         images_described_by = auto_describe_meta.get("described_by")
 
-    return await _save_and_return(
-        SaveContext(
-            db=db,
-            conv=conv,
-            conv_uuid=conv_uuid,
-            conv_id=conv_id,
-            pseudo_model_name=pseudo_model_name,
-            physical_model=physical_model,
-            provider=provider,
-            turn_caps=turn_caps,
-            messages=messages,
-            response=response,
-            fallback_info=fallback_info,
-            is_new_conversation=is_new,
-            existing_affinity=existing_affinity,
-            pm_schema=pm_schema,
-            session_caps=session_caps,
-            tools=tools,
-            tool_choice=tool_choice,
-            tools_filter=tools_filter,
-            images_described=images_described,
-            images_described_by=images_described_by,
-            router_suggestion=router_suggestion,
-            context_alert=context_alert,
+    try:
+        return await _save_and_return(
+            SaveContext(
+                db=db,
+                conv=conv,
+                conv_uuid=conv_uuid,
+                conv_id=conv_id,
+                pseudo_model_name=pseudo_model_name,
+                physical_model=physical_model,
+                provider=provider,
+                turn_caps=turn_caps,
+                messages=messages,
+                response=response,
+                fallback_info=fallback_info,
+                is_new_conversation=is_new,
+                existing_affinity=existing_affinity,
+                pm_schema=pm_schema,
+                session_caps=session_caps,
+                tools=tools,
+                tool_choice=tool_choice,
+                tools_filter=tools_filter,
+                images_described=images_described,
+                images_described_by=images_described_by,
+                router_suggestion=router_suggestion,
+                context_alert=context_alert,
+            )
         )
-    )
+    except Exception:
+        logger.exception(
+            "_save_and_return failed | pseudo=%s physical=%s conv=%s",
+            pseudo_model_name, physical_model, conv_id[:12],
+        )
+        raise
 
 
 # ── Step helpers ──────────────────────────────────────────────────────────────
