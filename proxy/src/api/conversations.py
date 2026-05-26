@@ -576,32 +576,33 @@ async def audit_log(
 async def get_blob(blob_hash: str, request: Request):
     """Retrieve a stored base64 blob by hash.
 
-    Blobs are stored by the content transformation middleware when
-    the user sends base64-encoded content (images, audio, files)
-    to a model that can't process them.
-
-    Tools and sub-models can fetch the real base64 data from this
-    endpoint when they need to process the content.
+    Blobs are stored by the content transformation when the user sends
+    base64-encoded content (images, audio, files) to a model that can't
+    process them. Tools and sub-models can fetch the real base64 data
+    from this endpoint when they need to process the content.
     """
     valkey = request.app.state.valkey
     if valkey is None:
         raise HTTPException(status_code=503, detail={"error": "BLOB_STORE_UNAVAILABLE"})
 
     try:
-        # Search across all conversation namespaces for this blob hash
-        # Pattern: blob:{conv_id}:{hash}
         cursor = 0
         pattern = f"blob:*:{blob_hash}"
-        while True:
+        scanned = 0
+        while scanned < 10:  # limit scan iterations
             cursor, keys = await valkey.scan(cursor=cursor, match=pattern, count=100)
-            if keys:
-                data = await valkey.get(keys[0])
+            for key in keys:
+                data = await valkey.get(key)
                 if data:
                     return JSONResponse(content={"data": data})
+            scanned += 1
             if cursor == 0:
                 break
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "BLOB_STORE_ERROR", "message": str(exc)},
+        ) from exc
 
     raise HTTPException(status_code=404, detail={"error": "BLOB_NOT_FOUND"})
 

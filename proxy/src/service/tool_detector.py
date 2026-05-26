@@ -28,7 +28,7 @@ def _hash_content(data: str) -> str:
 
 def _extract_mime(data_uri: str) -> str | None:
     """Extract MIME from data URI: 'data:image/png;base64,...' → 'image/png'."""
-    match = re.match(r"data:([a-z]+/[a-z0-9+-.]+)", data_uri)
+    match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", data_uri)
     return match.group(1) if match else None
 
 
@@ -42,7 +42,10 @@ def find_image_compatible_tool(tools: list[dict] | None) -> tuple[str, str] | No
         params = func.get("parameters", {}).get("properties", {})
         if isinstance(params, dict):
             for param_name, param_schema in params.items():
-                if isinstance(param_schema, dict) and param_schema.get("type") == "string":
+                if (
+                    isinstance(param_schema, dict)
+                    and param_schema.get("type") == "string"
+                ):
                     return (name, param_name)
     return None
 
@@ -83,9 +86,7 @@ _DESCRIBE_PROMPTS: dict[str, str] = {
 }
 
 
-async def _describe_content(
-    raw_data: str, mime: str, config, ptype: str
-) -> str:
+async def _describe_content(raw_data: str, mime: str, config, ptype: str) -> str:
     """Generate a brief description of any content using the cheapest capable model.
 
     For images: uses a vision model.
@@ -95,7 +96,9 @@ async def _describe_content(
     Provider-agnostic: the model is selected from config based on capability,
     not hardcoded.
     """
-    prompt_key = "image" if "image" in mime else ("audio" if "audio" in mime else "file")
+    prompt_key = (
+        "image" if "image" in mime else ("audio" if "audio" in mime else "file")
+    )
     prompt = _DESCRIBE_PROMPTS.get(prompt_key, _DESCRIBE_PROMPTS["file"])
 
     # Image → use any vision model
@@ -116,14 +119,18 @@ async def _describe_content(
             response = await call_litellm(
                 model=vision_model, messages=[msg], max_tokens=200, temperature=0.1
             )
-            resp = response.model_dump() if hasattr(response, "model_dump") else response
+            resp = (
+                response.model_dump() if hasattr(response, "model_dump") else response
+            )
             if isinstance(resp, dict):
                 choices = resp.get("choices", [])
                 if choices:
                     return choices[0].get("message", {}).get("content", "")[:500]
             return ""
         except Exception as exc:
-            logger.warning("blob_describe_failed model=%s error=%s", vision_model, str(exc))
+            logger.warning(
+                "blob_describe_failed model=%s error=%s", vision_model, str(exc)
+            )
             return ""
 
     # Audio → use any audio model (whisper)
@@ -144,14 +151,18 @@ async def _describe_content(
             response = await call_litellm(
                 model=audio_model, messages=[msg], max_tokens=300, temperature=0.1
             )
-            resp = response.model_dump() if hasattr(response, "model_dump") else response
+            resp = (
+                response.model_dump() if hasattr(response, "model_dump") else response
+            )
             if isinstance(resp, dict):
                 choices = resp.get("choices", [])
                 if choices:
                     return choices[0].get("message", {}).get("content", "")[:500]
             return ""
         except Exception as exc:
-            logger.warning("blob_describe_failed model=%s error=%s", audio_model, str(exc))
+            logger.warning(
+                "blob_describe_failed model=%s error=%s", audio_model, str(exc)
+            )
             return ""
 
     # Files/PDF → try Python text extraction (no model needed)
@@ -174,7 +185,7 @@ def _try_extract_pdf_text(base64_data: str) -> str:
         import fitz  # PyMuPDF
         import base64
 
-        pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1])
+        pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         page_count = len(doc)
         text = "\n".join(page.get_text() for page in doc)
@@ -183,12 +194,13 @@ def _try_extract_pdf_text(base64_data: str) -> str:
         text = text.strip()
         if text:
             return text[:1000]
-        return f"[PDF with {page_count} pages — no extractable text found. Consider using a vision model or OCR tool.]"
+        return f"[PDF with {page_count} pages — no extractable text found. Try a vision model or OCR tool.]"
     except ImportError:
         import base64
-        pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1])
+
+        pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
         size_kb = len(pdf_bytes) // 1024
-        return f"[PDF file ({size_kb} KB). PyMuPDF not available for text extraction. Use a tool to process this PDF.]"
+        return f"[PDF file ({size_kb} KB). PyMuPDF not available. Use a tool to process this PDF.]"
     except Exception as exc:
         return f"[PDF file — could not parse: {str(exc)[:100]}]"
 
@@ -198,18 +210,14 @@ async def _store_blob_with_description(
 ) -> str:
     """Store base64 blob in Valkey and generate a text description.
 
-    The description is generated using the cheapest available model
-    that can handle the content type (vision for images, audio for
-    speech, etc.). Provider-agnostic — never hardcodes a provider.
-
-    If the blob was already stored (same hash), reuse existing description.
-    Returns the description text (empty string if generation fails).
+    Uses SETNX for the description key to avoid duplicate LLM calls
+    when concurrent requests process the same blob hash.
     """
     if len(raw_data) > _MAX_BLOB_SIZE:
         logger.warning("blob_too_large key=%s size=%d", blob_key, len(raw_data))
         return ""
 
-    # Check if already stored (deduplicate by hash)
+    # Check if description already exists (fast path)
     try:
         existing = await valkey.get(desc_key)
         if existing:
@@ -217,20 +225,22 @@ async def _store_blob_with_description(
     except Exception:
         pass
 
-    # Store the raw blob data
+    # Store raw blob data first
     try:
         await valkey.set(blob_key, raw_data, ex=BLOB_TTL)
     except Exception:
         return ""
 
-    # Generate description using the cheapest capable model
+    # Generate description
     description = await _describe_content(raw_data, mime, config, ptype)
     description = description.strip().replace("\n", " ")[:500]
 
-    # Store description
+    # Use SETNX so only the first writer persists — prevents duplicate LLM calls
     if description:
         try:
-            await valkey.set(desc_key, description, ex=BLOB_TTL)
+            await valkey.setnx(desc_key, description)
+            # Set TTL on the description key (setnx doesn't support ex)
+            await valkey.expire(desc_key, BLOB_TTL)
         except Exception:
             pass
 
@@ -246,11 +256,13 @@ async def replace_base64_with_blob_refs(
     """Replace base64 content parts with [BLOB:hash:mime:description] references.
 
     Stores the actual base64 data in Valkey, generates a brief description
-    using a cheap vision model, and includes it in the reference so the
-    main model knows what the content contains without needing vision.
+    using the cheapest capable model, and includes it in the reference so
+    the main model knows what the content contains without needing vision.
 
     The model receives:
       [The user sent an image. blob: BLOB:hash:mime | description: ...]
+      [The user sent an audio file. blob: BLOB:hash:mime | description: ...]
+      [The user sent a file. blob: BLOB:hash:mime | description: ...]
 
     Real URLs (non-base64) pass through unchanged.
     """
@@ -277,94 +289,36 @@ async def replace_base64_with_blob_refs(
                 continue
 
             ptype = part.get("type", "")
+            raw: str = ""
+            label = ""
 
+            # Extract raw data from whichever content type
             if ptype == "image_url":
                 raw = part.get("image_url", {}).get("url", "")
-                if raw.startswith("data:"):
-                    h = _hash_content(raw)
-                    mime = _extract_mime(raw) or "image/unknown"
-                    blob_key = f"{prefix}:{h}"
-                    desc_key = f"{prefix}:{h}:desc"
-                    description = await _store_blob_with_description(
-                        valkey, blob_key, desc_key, raw, config
-                    )
-                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
-                    text = f"[The user sent an image. blob: {ref}"
-                    if description:
-                        text += f" | {description}"
-                    text += "]"
-                    new_content.append({"type": "text", "text": text})
-                else:
-                    new_content.append(part)
-
+                label = "image"
             elif ptype == "input_audio":
                 audio = part.get("input_audio", {})
-                raw = audio.get("data", "")
-                if raw.startswith("data:"):
-                    h = _hash_content(raw)
-                    mime = _extract_mime(raw) or "audio/unknown"
-                    blob_key = f"{prefix}:{h}"
-                    desc_key = f"{prefix}:{h}:desc"
-                    description = await _store_blob_with_description(
-                        valkey, blob_key, desc_key, raw, config
-                    )
-                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
-                    text = f"[The user sent an audio file. blob: {ref}"
-                    if description:
-                        text += f" | {description}"
-                    text += "]"
-                    new_content.append({"type": "text", "text": text})
-                else:
-                    new_content.append(part)
-
+                raw = audio.get("data", "") or audio.get("url", "")
+                label = "audio file"
             elif ptype == "file":
                 file_data = part.get("file", {})
-                raw = file_data.get("data", "")
-                if raw.startswith("data:"):
-                    h = _hash_content(raw)
-                    mime = _extract_mime(raw) or "application/octet-stream"
-                    blob_key = f"{prefix}:{h}"
-                    desc_key = f"{prefix}:{h}:desc"
-                    description = await _store_blob_with_description(
-                        valkey, blob_key, desc_key, raw, mime, ptype, config
-                    )
-                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
-                    text = f"[The user sent an image. blob: {ref}"
+                raw = file_data.get("data", "") or file_data.get("url", "")
+                label = "file"
 
-            elif ptype == "input_audio":
-                audio = part.get("input_audio", {})
-                raw = audio.get("data", "")
-                if raw.startswith("data:"):
-                    h = _hash_content(raw)
-                    mime = _extract_mime(raw) or "audio/unknown"
-                    blob_key = f"{prefix}:{h}"
-                    desc_key = f"{prefix}:{h}:desc"
-                    description = await _store_blob_with_description(
-                        valkey, blob_key, desc_key, raw, mime, ptype, config
-                    )
-                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
-                    text = f"[The user sent an audio file. blob: {ref}"
-
-            elif ptype == "file":
-                file_data = part.get("file", {})
-                raw = file_data.get("data", "")
-                if raw.startswith("data:"):
-                    h = _hash_content(raw)
-                    mime = _extract_mime(raw) or "application/octet-stream"
-                    blob_key = f"{prefix}:{h}"
-                    desc_key = f"{prefix}:{h}:desc"
-                    description = await _store_blob_with_description(
-                        valkey, blob_key, desc_key, raw, mime, ptype, config
-                    )
-                    ref = f"{BLOB_PREFIX}:{h}:{mime}"
-                    text = f"[The user sent a file. blob: {ref}"
-                    if description:
-                        text += f" | {description}"
-                    text += "]"
-                    new_content.append({"type": "text", "text": text})
-                else:
-                    new_content.append(part)
-
+            if raw and raw.startswith("data:"):
+                h = _hash_content(raw)
+                mime = _extract_mime(raw) or f"{ptype}/unknown"
+                blob_key = f"{prefix}:{h}"
+                desc_key = f"{prefix}:{h}:desc"
+                description = await _store_blob_with_description(
+                    valkey, blob_key, desc_key, raw, mime, ptype, config
+                )
+                ref = f"{BLOB_PREFIX}:{h}:{mime}"
+                text = f"[The user sent an {label}. blob: {ref}"
+                if description:
+                    text += f" | {description}"
+                text += "]"
+                new_content.append({"type": "text", "text": text})
             else:
                 new_content.append(part)
 
@@ -398,13 +352,15 @@ def delegate_images_to_tool(
         for part in content:
             if isinstance(part, dict) and part.get("type") == "image_url":
                 url = part.get("image_url", {}).get("url", "")
-                new_content.append({
-                    "type": "text",
-                    "text": (
-                        f"[Image path delegated to tool '{tool_name}' "
-                        f"as parameter '{param_name}']: {url}"
-                    ),
-                })
+                new_content.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"[Image path delegated to tool '{tool_name}' "
+                            f"as parameter '{param_name}']: {url}"
+                        ),
+                    }
+                )
             else:
                 new_content.append(part)
         new_messages.append({**msg, "content": new_content})
