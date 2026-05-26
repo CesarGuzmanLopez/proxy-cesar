@@ -159,7 +159,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-7: Flash Lowcost (Gemini Flash Lite)
+## HU-7: Flash Lowcost (DeepSeek V4 Flash)
 
 **Como** usuario
 **Quiero** usar el modelo `flash-lowcost`
@@ -180,50 +180,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-8: Audio (Whisper via Groq)
-
-**Como** usuario
-**Quiero** usar el modelo `audio`
-**Para** transcripción de audio a texto
-
-**Criterios:**
-- POST con `model: "audio"` → 200
-- Primary: `groq/whisper-large-v3` (131K ctx)
-- Fallback: `groq/whisper-large-v3-turbo` (131K ctx)
-- Sin compactación, sin router LLM
-
-**Comando online:**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"audio","messages":[{"role":"user","content":"Transcribe este audio"}],"stream":false}' \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:100])"
-```
-
----
-
-## HU-9: Imagen (Pruna P-Image)
-
-**Como** usuario
-**Quiero** usar el modelo `imagen`
-**Para** generar imágenes desde texto
-
-**Criterios:**
-- POST con `model: "imagen"` → 200
-- Único físico: `pruna/p-image` (texto a imagen en <1s, $0.002/imagen)
-- Sin compactación, sin router LLM
-
-**Comando online:**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"imagen","messages":[{"role":"user","content":"Un gato volador"}],"stream":false}' \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:200])"
-```
-
----
-
-## HU-10: Compactador explícito (POST /compact)
+## HU-8: Compactador explícito (POST /compact)
 
 **Como** usuario
 **Quiero** compactar una conversación explícitamente
@@ -235,7 +192,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 - Historia > 131K tokens → usa `deepseek/deepseek-v4-flash` (1M ctx)
 - Selección por `by_context_window`
 - Conversación vacía → 400 `EMPTY_CONVERSATION`
-- Si hay imágenes en el historial → delega a modelo con visión para describirlas antes de compactar
+- Si hay imágenes en el historial → usa modelo con visión para describirlas antes de compactar
+- Si hay audio en el historial → usa Whisper (Groq) para transcribir antes de compactar
 - Compactación múltiple: segundo compact genera nuevo `snapshot_id` y encadena con `superseded_by`
 
 **Comando online — compactar conversación existente:**
@@ -262,7 +220,7 @@ curl -s -w "\nHTTP: %{http_code}" -X POST "http://localhost:9110/conversations/$
 
 ---
 
-## HU-11: Streaming SSE
+## HU-9: Streaming SSE
 
 **Como** usuario
 **Quiero** recibir respuestas en streaming
@@ -301,7 +259,7 @@ for line in sys.stdin:
 
 ---
 
-## HU-12: Model aliases
+## HU-10: Model aliases
 
 **Como** usuario
 **Quiero** usar alias como `gpt-4o`, `claude-haiku-3-5`, etc.
@@ -329,7 +287,7 @@ done
 
 ---
 
-## HU-13: KeyVault — Protección de Secrets
+## HU-11: KeyVault — Protección de Secrets
 
 **Como** usuario
 **Quiero** que mis API keys sean interceptadas antes de llegar al LLM
@@ -361,7 +319,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-14: Contenido no soportado → Blob Vault
+## HU-12: Contenido no soportado → Blob Vault
 
 **Como** usuario
 **Quiero** enviar una imagen/audio/PDF a un modelo que no lo soporta
@@ -406,7 +364,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-15: Fallback strategy
+## HU-13: Fallback strategy
 
 **Como** sistema
 **Quiero** que cuando el physical primario falle (timeout, rate limit, error)
@@ -428,7 +386,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-16: Auditoría (GET audit-log)
+## HU-14: Auditoría (GET audit-log)
 
 **Como** usuario
 **Quiero** ver el log de eventos de una conversación
@@ -451,7 +409,7 @@ curl -s "http://localhost:9110/conversations/$CONV_ID/audit-log" \
 
 ---
 
-## HU-17: Health check + Metrics
+## HU-15: Health check + Metrics
 
 **Como** operador
 **Quiero** consultar `/health` y `/metrics`
@@ -479,7 +437,7 @@ print(f'uptime: {d[\"uptime_seconds\"]}s')
 
 ---
 
-## HU-18: Threshold exceeded → error explícito
+## HU-16: Threshold exceeded → error explícito
 
 **Como** usuario
 **Quiero** que si mi input supera el umbral del pseudo-modelo
