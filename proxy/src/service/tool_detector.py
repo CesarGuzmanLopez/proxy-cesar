@@ -151,6 +151,104 @@ async def _try_extract_pdf_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
+async def _process_msg_blobs(
+    msg: dict[str, Any],
+    prefix: str,
+    valkey,
+    config,
+) -> list[dict[str, Any]]:
+    """Process one user message: classify parts, store blobs, describe, build output."""
+    content = msg.get("content", "")
+    if not isinstance(content, list):
+        return [msg]
+
+    user_text = _extract_user_text(content)
+
+    # Pass 1: classify
+    image_blobs: list[tuple[str, str, str, str]] = []
+    audio_blobs: list[tuple[str, str, str, str]] = []
+    file_blobs: list[tuple[str, str, str, str]] = []
+    other_parts: list[dict] = []
+    store_tasks = []
+
+    for part in content:
+        if not isinstance(part, dict):
+            other_parts.append(part)
+            continue
+        ptype = part.get("type", "")
+        raw = {"image_url": lambda p: p.get("image_url", {}).get("url", ""),
+               "input_audio": lambda p: (p.get("input_audio", {}) or {}).get("data", ""),
+               "file": lambda p: (p.get("file", {}) or {}).get("data", "")}.get(ptype, lambda p: "")(part)
+        if not raw or not raw.startswith("data:"):
+            other_parts.append(part)
+            continue
+
+        h = _hash_content(raw)
+        mime = _extract_mime(raw) or f"{ptype}/unknown"
+        sz = str(len(raw) // 1024)
+        store_tasks.append(_store_blob_if_missing(valkey, f"{prefix}:{h}", raw))
+
+        target = {"image_url": image_blobs, "input_audio": audio_blobs, "file": file_blobs}
+        target.get(ptype, []).append((h, raw, mime, sz))
+
+    if store_tasks:
+        await asyncio.gather(*store_tasks)
+
+    # Pass 2: describe
+    descriptions = await _describe_images(valkey, prefix, image_blobs, user_text, config)
+    audio_results = await asyncio.gather(*[
+        _describe_audio(valkey, f"{prefix}:{h}:desc", r, config) for h, r, _, _ in audio_blobs
+    ]) if audio_blobs else []
+    pdf_results = await asyncio.gather(*[
+        _describe_pdf(valkey, f"{prefix}:{h}:desc", r) for h, r, _, _ in file_blobs
+    ]) if file_blobs else []
+
+    # Pass 3: build output
+    out: list[dict[str, Any]] = list(other_parts)
+
+    def _blob_text(h, mime, sz, label, desc=""):
+        t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {sz} KB"
+        if desc:
+            t += f"\n{desc}"
+        t += "]"
+        return {"type": "text", "text": t}
+
+    for (h, _, mime, sz), d in zip(image_blobs, descriptions):
+        out.append(_blob_text(h, mime, sz, "image", d))
+    for (h, _, mime, sz), d in zip(audio_blobs, audio_results):
+        out.append(_blob_text(h, mime, sz, "audio file", d))
+    for (h, _, mime, sz), d in zip(file_blobs, pdf_results):
+        out.append(_blob_text(h, mime, sz, "file", d))
+
+    return [{**msg, "content": out}]
+
+
+async def _describe_images(valkey, prefix, blobs, user_text, config):
+    """Batch describe images or return cached descriptions."""
+    if not blobs:
+        return []
+    cached = await asyncio.gather(*[
+        _get_cached(valkey, f"{prefix}:{h}:desc") for h, _, _, _ in blobs
+    ])
+    if all(cached):
+        return cached
+    descs = await _describe_image_batch([(h, r) for h, r, _, _ in blobs], user_text, config)
+    while len(descs) < len(blobs):
+        descs.append("")
+    store = [_store_desc(valkey, f"{prefix}:{h}:desc", d) for (h, _, _, _), d in zip(blobs, descs) if d]
+    if store:
+        await asyncio.gather(*store)
+    return descs
+
+
+async def _get_cached(valkey, key: str) -> str:
+    try:
+        v = await valkey.get(key)
+        return v or ""
+    except Exception:
+        return ""
+
+
 async def replace_base64_with_blob_refs(
     messages: list[dict[str, Any]],
     conversation_id: str | None = None,
@@ -162,136 +260,17 @@ async def replace_base64_with_blob_refs(
     Groups images from the same message and describes them together
     using the user's original prompt for context.
     Real URLs pass through unchanged.
-    Optimized with cache checks and parallel operations.
     """
     if valkey is None:
         return messages
-
     prefix = f"blob:{conversation_id or 'anon'}"
-    new_messages: list[dict[str, Any]] = []
-
+    results: list[dict[str, Any]] = []
     for msg in messages:
         if msg.get("role") != "user":
-            new_messages.append(msg)
-            continue
-        content = msg.get("content", "")
-        if not isinstance(content, list):
-            new_messages.append(msg)
-            continue
-
-        # ── Pass 1: classify parts, check cache, store only new blobs ──
-        user_text = _extract_user_text(content)
-        image_blobs: list[tuple[str, str, str, str]] = []
-        audio_blobs: list[tuple[str, str, str, str]] = []
-        file_blobs: list[tuple[str, str, str, str]] = []
-        other_parts: list[dict] = []
-        store_tasks = []
-
-        for part in content:
-            if not isinstance(part, dict):
-                other_parts.append(part)
-                continue
-
-            ptype = part.get("type", "")
-            raw = ""
-            if ptype == "image_url":
-                raw = part.get("image_url", {}).get("url", "")
-            elif ptype == "input_audio":
-                raw = (part.get("input_audio", {}) or {}).get("data", "")
-            elif ptype == "file":
-                raw = (part.get("file", {}) or {}).get("data", "")
-            else:
-                other_parts.append(part)
-                continue
-
-            if not raw or not raw.startswith("data:"):
-                other_parts.append(part)
-                continue
-
-            h = _hash_content(raw)
-            mime = _extract_mime(raw) or f"{ptype}/unknown"
-            size_kb = str(len(raw) // 1024)
-            info = (h, raw, mime, size_kb)
-
-            # Check if blob already exists before storing
-            store_tasks.append(_store_blob_if_missing(valkey, f"{prefix}:{h}", raw))
-
-            if ptype == "image_url":
-                image_blobs.append(info)
-            elif ptype == "input_audio":
-                audio_blobs.append(info)
-            elif ptype == "file":
-                file_blobs.append(info)
-
-        if store_tasks:
-            await asyncio.gather(*store_tasks)
-
-        # ── Pass 2: describe/transcribe/extract with cache check ──
-        async def _get_cached(key: str) -> str:
-            try:
-                v = await valkey.get(key)
-                return v or ""
-            except Exception:
-                return ""
-
-        # Images: batch describe (always regenerate with new context)
-        descriptions: list[str] = []
-        if image_blobs:
-            # Check if ALL descriptions already cached (skip vision call)
-            cached_descs = await asyncio.gather(*[
-                _get_cached(f"{prefix}:{h}:desc") for h, _, _, _ in image_blobs
-            ])
-            if all(cached_descs):
-                descriptions = cached_descs
-            else:
-                descs = await _describe_image_batch(
-                    [(h, r) for h, r, _, _ in image_blobs], user_text, config
-                )
-                while len(descs) < len(image_blobs):
-                    descs.append("")
-                descriptions = descs
-                # Store only new descriptions
-                store = []
-                for (h, _, _, _), d in zip(image_blobs, descriptions):
-                    if d:
-                        store.append(_store_desc(valkey, f"{prefix}:{h}:desc", d))
-                if store:
-                    await asyncio.gather(*store)
-
-        # Audio: transcribe if not cached
-        audio_tasks = []
-        for h, raw, mime, sz in audio_blobs:
-            audio_tasks.append(_describe_audio(valkey, f"{prefix}:{h}:desc", raw, config))
-        audio_results = await asyncio.gather(*audio_tasks) if audio_tasks else []
-
-        # PDF: extract text if not cached
-        pdf_tasks = []
-        for h, raw, mime, sz in file_blobs:
-            pdf_tasks.append(_describe_pdf(valkey, f"{prefix}:{h}:desc", raw))
-        pdf_results = await asyncio.gather(*pdf_tasks) if pdf_tasks else []
-
-        # ── Pass 3: build output ──
-        out: list[dict[str, Any]] = list(other_parts)
-
-        def _blob_text(h, mime, sz, label, desc=""):
-            t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {sz} KB"
-            if desc:
-                t += f"\n{desc}"
-            t += "]"
-            return {"type": "text", "text": t}
-
-        for i, (h, _, mime, sz) in enumerate(image_blobs):
-            out.append(_blob_text(h, mime, sz, "image", descriptions[i] if i < len(descriptions) else ""))
-
-        for (h, _, mime, sz), desc in zip(audio_blobs, audio_results):
-            out.append(_blob_text(h, mime, sz, "audio file", desc))
-
-        for (h, _, mime, sz), desc in zip(file_blobs, pdf_results):
-            out.append(_blob_text(h, mime, sz, "file", desc))
-
-        new_messages.append({**msg, "content": out})
-
-    return new_messages
+            results.append(msg)
+        else:
+            results.extend(await _process_msg_blobs(msg, prefix, valkey, config))
+    return results
 
 
 async def _store_blob_if_missing(valkey, key: str, raw: str) -> None:
