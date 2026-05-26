@@ -265,7 +265,7 @@ def test_images_to_normal_gratis_auto_describe():
 
 
 def test_normal_to_flash_lowcost_parallel_tools():
-    """normal → flash-lowcost (with parallel tools) → BLOCKED."""
+    """normal → flash-lowcost (with parallel tools) → WARNING (budget model downgrade)."""
     result = validate_switch(
         "normal",
         "flash-lowcost",
@@ -273,11 +273,11 @@ def test_normal_to_flash_lowcost_parallel_tools():
         _make_caps(has_parallel_tools=True),
         CONFIG,
     )
-    assert result.status == CompatibilityStatus.BLOCKED
+    assert result.status == CompatibilityStatus.WARNING
 
 
-def test_vision_to_flash_lowcost_images_allowed():
-    """vision → flash-lowcost (with images) → WARNING (budget model, but images pass)."""
+def test_vision_to_flash_lowcost_images_blocked():
+    """vision → flash-lowcost (with images) → BLOCKED (no vision model, on_downgrade=block)."""
     result = validate_switch(
         "vision",
         "flash-lowcost",
@@ -285,7 +285,7 @@ def test_vision_to_flash_lowcost_images_allowed():
         _make_caps(has_images=True),
         CONFIG,
     )
-    assert result.status == CompatibilityStatus.WARNING
+    assert result.status == CompatibilityStatus.BLOCKED
 
 
 def test_vision_to_massive_fast_with_images_blocked():
@@ -308,18 +308,6 @@ def test_context_exceeds_destination_window():
         "vision",
         CONFIG.pseudo_models["vision"],
         _make_caps(total_tokens=999999),
-        CONFIG,
-    )
-    assert result.status == CompatibilityStatus.BLOCKED
-
-
-def test_parallel_tools_no_parallel_in_destination():
-    """Parallel tools → destination has no parallel models → BLOCKED."""
-    result = validate_switch(
-        "normal",
-        "flash-lowcost",
-        CONFIG.pseudo_models["flash-lowcost"],
-        _make_caps(has_parallel_tools=True),
         CONFIG,
     )
     assert result.status == CompatibilityStatus.BLOCKED

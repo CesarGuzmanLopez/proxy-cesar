@@ -18,15 +18,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Primary: razonamiento profundo. 1M contexto, tools estrictas."
-      - provider: openrouter
-        model: openrouter/google/gemini-3.5-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: true
-        context_window: 1048576
-        note: "Fallback vía OpenRouter. 1M contexto, visión+audio, razonamiento fuerte, bajo costo."
+        note: "Razonamiento profundo. 1M contexto, tools estrictas."
     fallback_strategy: sequential
 
   tareas-avanzadas:
@@ -153,14 +145,14 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
-      - provider: openrouter
-        model: openrouter/google/gemini-3.1-flash-lite
+      - provider: deepseek
+        model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
         tools_strict: false
-        parallel_tools: false
-        vision: true
-        note: "Barato vía OpenRouter. $0.00000025/$0.0000015 por M tok. 1M contexto, visión+audio."
+        parallel_tools: true
+        vision: false
         context_window: 1000000
+        note: "Barato vía DeepSeek. $0.14/$0.28 por M tok."
     fallback_strategy: sequential
 
   audio:

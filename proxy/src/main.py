@@ -5,8 +5,20 @@ Sprint 8 — Auth, CORS, rate limiting, structured logging, metrics.
 """
 
 import os
-from contextlib import asynccontextmanager
 from pathlib import Path
+
+# ── SSL_CERT_FILE must be set *before* any module imports httpx/litellm ────
+if not os.environ.get("SSL_CERT_FILE"):
+    for candidate in (
+        os.environ.get("NIX_SSL_CERT_FILE", ""),
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/ssl/cert.pem",
+    ):
+        if candidate and Path(candidate).exists():
+            os.environ["SSL_CERT_FILE"] = candidate
+            break
+
+from contextlib import asynccontextmanager
 
 import uvicorn
 
