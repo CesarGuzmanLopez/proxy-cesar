@@ -35,13 +35,10 @@ async def health(request: Request):
     # Check providers (API keys configured)
     providers = {}
     for provider in [
-        "anthropic",
+        "pruna",
         "openrouter",
-        "google",
         "deepseek",
         "groq",
-        "zhipuai",
-        "zai",
     ]:
         key_env = f"{provider.upper()}_API_KEY"
         providers[provider] = "configured" if os.getenv(key_env) else "not configured"

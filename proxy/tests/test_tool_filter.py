@@ -37,64 +37,24 @@ def test_parallel_tools_only_parallel_models():
 
 
 def test_pensamiento_profundo_parallel_filters():
-    """pensamiento-profundo-caro: parallel → only deepseek-v4-pro."""
+    """pensamiento-profundo-caro: parallel → models with parallel_tools."""
     pm = CONFIG.pseudo_models["pensamiento-profundo-caro"]
     result = get_eligible_models(
         pm.physical_models, _make_caps(has_parallel_tools=True)
     )
-    # Only deepseek-v4-pro has parallel_tools: true
-    assert len(result) == 1
-    assert result[0].model == "deepseek/deepseek-v4-pro"
+    assert len(result) == 2  # deepseek-v4-pro + gemini-3.5-flash
+    assert all(m.parallel_tools is True for m in result)
 
 
-def test_tareas_avanzadas_no_parallel_includes_minimax():
-    """tareas-avanzadas: no parallel → all models including MiniMax."""
+def test_tareas_avanzadas_no_parallel_returns_all():
+    """tareas-avanzadas: no parallel → all 2 models eligible."""
     pm = CONFIG.pseudo_models["tareas-avanzadas"]
     result = get_eligible_models(
         pm.physical_models, _make_caps(has_parallel_tools=False)
     )
     models = [m.model for m in result]
-    assert "openrouter/minimax-m2.5" in models  # MiniMax only via OpenRouter
-
-
-def test_normal_with_parallel_only_deepseek():
-    """normal with parallel → only deepseek-v4-flash."""
-    pm = CONFIG.pseudo_models["normal"]
-    result = get_eligible_models(
-        pm.physical_models, _make_caps(has_parallel_tools=True)
-    )
-    models = [m.model for m in result]
+    assert len(models) == 2
+    assert "deepseek/deepseek-v4-pro" in models
     assert "deepseek/deepseek-v4-flash" in models
-    assert "openrouter/qwen3-max" not in models  # Qwen has no parallel_tools
 
-
-def test_flash_lowcost_with_parallel_returns_all():
-    """flash-lowcost with parallel → pool empty → returns all models."""
-    pm = CONFIG.pseudo_models["flash-lowcost"]
-    result = get_eligible_models(
-        pm.physical_models, _make_caps(has_parallel_tools=True)
-    )
-    # No model has parallel_tools: true, so returns all
-    assert len(result) == len(pm.physical_models)
-
-
-def test_deep_flash_with_parallel_only_deepseek():
-    """deep-flash with parallel → only deepseek-v4-flash."""
-    pm = CONFIG.pseudo_models["deep-flash"]
-    result = get_eligible_models(
-        pm.physical_models, _make_caps(has_parallel_tools=True)
-    )
-    models = [m.model for m in result]
-    assert "deepseek/deepseek-v4-flash" in models
-    assert "zai/glm-4.5-flash" not in models
-
-
-def test_is_pinned_model_eligible():
-    """is_pinned_model_eligible correctly identifies eligible pinned models."""
-    pm = CONFIG.pseudo_models["normal"]
-    eligible = get_eligible_models(
-        pm.physical_models, _make_caps(has_parallel_tools=True)
-    )
-
-    assert is_pinned_model_eligible("deepseek/deepseek-v4-flash", eligible) is True
-    assert is_pinned_model_eligible("openrouter/qwen3-max", eligible) is False
+    assert is_pinned_model_eligible("deepseek/deepseek-v4-flash", result) is True

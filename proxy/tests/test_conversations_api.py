@@ -35,7 +35,7 @@ async def client_with_conversation(mock_valkey):
     # Create mock conversation with capability flags
     mock_conv = MagicMock(spec=Conversation)
     mock_conv.id = uuid.uuid4()
-    mock_conv.pseudo_model = "avanzada-vision"
+    mock_conv.pseudo_model = "vision"
     mock_conv.physical_model = "gemini-3.5-flash"
     mock_conv.total_tokens = 45230
     mock_conv.created_at = None
@@ -99,7 +99,7 @@ async def test_get_conversation_returns_full_state(client_with_conversation):
     assert "capabilities" in data
     assert data["capabilities"]["has_images"] is True
     assert data["capabilities"]["has_tools"] is True
-    assert data["pseudo_model"] == "avanzada-vision"
+    assert data["pseudo_model"] == "vision"
 
 
 @pytest.mark.asyncio
@@ -120,7 +120,7 @@ async def test_get_compatible_models_returns_all(client_with_conversation):
     assert "compatible_models" in data
     # Should include all pseudo-models
     assert len(data["compatible_models"]) >= 8
-    assert data["current_pseudo_model"] == "avanzada-vision"
+    assert data["current_pseudo_model"] == "vision"
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_compatible_models_reflects_capabilities(client_with_conversation)
 
     # Find a non-vision model that should be blocked
     for m in data["compatible_models"]:
-        if m["pseudo_model"] == "normal":
+        if m["pseudo_model"] == "tareas-avanzadas":
             assert m["status"] == "blocked"
             break
 

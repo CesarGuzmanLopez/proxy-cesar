@@ -110,7 +110,7 @@ def _check_pdf(
                 "In v1, PDFs require vision models."
             ),
             remediation=[
-                "Use a vision-capable pseudo-model (avanzada-vision, flash-vision)",
+                "Use a vision-capable pseudo-model (vision)",
                 "PDF text extraction is planned for v2",
             ],
         )
@@ -233,7 +233,7 @@ def _check_capacity_loss(
     to_pseudo_name: str,
 ) -> CompatibilityResult | None:
     """CHECK 8: General capacity loss when switching to budget models."""
-    _BUDGET_MODELS: set[str] = {"deep-flash", "flash-lowcost"}
+    _BUDGET_MODELS: set[str] = {"flash-lowcost", "massive-fast"}
     if to_pseudo_name in _BUDGET_MODELS and from_pseudo_name not in _BUDGET_MODELS:
         return CompatibilityResult(
             status=CompatibilityStatus.WARNING,

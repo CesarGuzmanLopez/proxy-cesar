@@ -113,24 +113,25 @@ def conversation_with_turns():
 
 def test_select_compactor_model_large_enough(config_with_compactador):
     """Selects model with enough context window for the history."""
-    model = select_compactor_model(config_with_compactador, 50000)
-    assert (
-        model == "gemini-3.5-flash"
-    )  # First model with 1M ctx window (enough for 50K)
+    model, ctx = select_compactor_model(config_with_compactador, 50000)
+    assert model == "gemini-3.5-flash"  # First model with 1M ctx window (enough for 50K)
+    assert ctx == 1000000
 
 
 def test_select_compactor_model_largest_fallback(config_with_compactador):
     """When history exceeds all models, returns the one with largest window."""
-    model = select_compactor_model(config_with_compactador, 2000000)
+    model, ctx = select_compactor_model(config_with_compactador, 2000000)
     assert model == "gemini-3.5-flash"  # Largest available
+    assert ctx == 1000000
 
 
 def test_select_compactor_model_no_compactador():
     """When compactador pseudo-model is missing, returns None."""
     config = MagicMock()
     config.pseudo_models = {}
-    model = select_compactor_model(config, 50000)
+    model, ctx = select_compactor_model(config, 50000)
     assert model is None
+    assert ctx is None
 
 
 # ── Explicit compaction tests ────────────────────────────────────────────

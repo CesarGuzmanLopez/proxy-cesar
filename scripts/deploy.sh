@@ -17,6 +17,7 @@
 #   ZAI_API_KEY
 #   DATABASE_URL        — default: sqlite+aiosqlite:///./proxy.db
 #   VALKEY_URL          — default: valkey://localhost:6379
+#   KEYCLAW_VERSION     — KeyClaw version to install (default: latest)
 
 set -euo pipefail
 
@@ -74,7 +75,61 @@ EOF
 
 chmod 600 .env
 
-# ── 4. Systemd service ────────────────────────────────────────────────
+# ── 4. KeyClaw — local MITM proxy ─────────────────────────────────────
+if ! command -v keyclaw &>/dev/null; then
+    echo "[deploy] Installing KeyClaw..."
+    if command -v cargo &>/dev/null; then
+        cargo install keyclaw
+    else
+        echo "[deploy] ERROR: cargo not found. Install Rust first: https://rustup.rs"
+        exit 1
+    fi
+fi
+
+KEYCLAW_HOME="/home/proxy/.keyclaw"
+if [ ! -f "$KEYCLAW_HOME/ca.crt" ]; then
+    echo "[deploy] Initialising KeyClaw..."
+    keyclaw init
+fi
+
+# Create combined CA bundle (system CAs + KeyClaw CA)
+if command -v update-ca-certificates &>/dev/null; then
+    # Debian/Ubuntu — add to system trust store
+    cp "$KEYCLAW_HOME/ca.crt" /usr/local/share/ca-certificates/keyclaw-ca.crt
+    update-ca-certificates
+elif [ -f /etc/ssl/cert.pem ]; then
+    # Arch / combined-bundle approach
+    cat /etc/ssl/cert.pem "$KEYCLAW_HOME/ca.crt" > "$KEYCLAW_HOME/combined-ca.pem"
+fi
+
+# Systemd service for KeyClaw
+KEYCLAW_SERVICE_FILE="/etc/systemd/system/keyclaw.service"
+if [ ! -f "$KEYCLAW_SERVICE_FILE" ]; then
+    echo "[deploy] Creating KeyClaw systemd service..."
+    cat > "$KEYCLAW_SERVICE_FILE" <<-EOF
+[Unit]
+Description=KeyClaw — Local MITM Proxy that strips secrets from LLM traffic
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=proxy
+Restart=always
+RestartSec=5
+ExecStart=/home/proxy/.cargo/bin/keyclaw proxy start --foreground
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable keyclaw.service
+    echo "[deploy] KeyClaw service created and enabled"
+fi
+
+# ── 6. Systemd service ────────────────────────────────────────────────
 SERVICE_NAME="proxy-cesar"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
@@ -82,7 +137,7 @@ echo "[deploy] Updating systemd service..."
 cat > "$SERVICE_FILE" <<-EOF
 [Unit]
 Description=Proxy Cesar — Deterministic Multi-Model LLM Proxy
-After=network-online.target
+After=network.target keyclaw.service
 Wants=network-online.target
 
 [Service]
@@ -103,7 +158,7 @@ EOF
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" || true
 
-# ── 5. arq worker service ─────────────────────────────────────────────
+# ── 7. arq worker service ─────────────────────────────────────────────
 ARQ_SERVICE_NAME="proxy-cesar-arq"
 ARQ_SERVICE_FILE="/etc/systemd/system/${ARQ_SERVICE_NAME}.service"
 
@@ -135,7 +190,12 @@ EOF
     echo "[deploy] arq worker service created and enabled"
 fi
 
-# ── 6. Restart services ───────────────────────────────────────────────
+# ── 8. Start KeyClaw (before proxy) ────────────────────────────────────
+echo "[deploy] Starting KeyClaw..."
+systemctl start keyclaw.service || true
+echo "[deploy] keyclaw: $(systemctl is-active keyclaw.service)"
+
+# ── 9. Restart services ───────────────────────────────────────────────
 echo "[deploy] Restarting proxy-cesar..."
 systemctl restart "$SERVICE_NAME"
 echo "[deploy] proxy-cesar: $(systemctl is-active "$SERVICE_NAME")"

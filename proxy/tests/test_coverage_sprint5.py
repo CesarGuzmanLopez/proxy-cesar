@@ -23,6 +23,7 @@ async def test_call_with_fallback_non_retryable_propagates():
     """Non-503/429 errors propagate through fallback (not caught)."""
     mock_phys = MagicMock()
     mock_phys.model = "test-model"
+    mock_phys.context_window = None
     mock_schema = MagicMock()
     mock_schema.physical_models = [mock_phys]
     mock_schema.display_name = "Test"
@@ -40,8 +41,10 @@ async def test_call_with_fallback_retryable_triggers_fallback():
     """503/429 on ALL models raises 503 ALL_MODELS_FAILED."""
     mock_phys1 = MagicMock()
     mock_phys1.model = "test-model-1"
+    mock_phys1.context_window = None
     mock_phys2 = MagicMock()
     mock_phys2.model = "test-model-2"
+    mock_phys2.context_window = None
     mock_schema = MagicMock()
     mock_schema.physical_models = [mock_phys1, mock_phys2]
     mock_schema.display_name = "Test"
@@ -106,29 +109,33 @@ def test_suggest_higher_threshold_models_no_match():
 
 @pytest.mark.asyncio
 async def test_handle_auto_describe_not_auto_describe():
-    """Returns None when on_downgrade != 'auto_describe'."""
+    """Returns metadata with skip reason when on_downgrade != 'auto_describe'."""
     pm = _CONFIG.pseudo_models["normal"]  # block mode
     result = await handle_auto_describe(
         conv=MagicMock(),
-        current_pseudo_name="avanzada-vision",
+        current_pseudo_name="vision",
         new_pm_schema=pm,
         config=_CONFIG,
         db=MagicMock(),
         pinned_physical_model="test",
     )
-    assert result == (None, None)
+    assert result[0] is None
+    assert result[1] is not None
+    assert result[1]["auto_describe_skipped"] is True
 
 
 @pytest.mark.asyncio
 async def test_handle_auto_describe_dest_has_vision():
-    """Returns (None, None) when destination has vision models."""
-    pm = _CONFIG.pseudo_models["avanzada-vision"]  # has vision
+    """Returns metadata with skip reason when destination has vision models."""
+    pm = _CONFIG.pseudo_models["vision"]  # has vision
     result = await handle_auto_describe(
         conv=MagicMock(),
-        current_pseudo_name="avanzada-vision",
+        current_pseudo_name="vision",
         new_pm_schema=pm,
         config=_CONFIG,
         db=MagicMock(),
         pinned_physical_model="test",
     )
-    assert result == (None, None)
+    assert result[0] is None
+    assert result[1] is not None
+    assert result[1]["auto_describe_skipped"] is True

@@ -20,34 +20,34 @@ _CONFIG = load_config()
         ("normal", "normal"),
         ("tareas-avanzadas", "tareas-avanzadas"),
         ("pensamiento-profundo-caro", "pensamiento-profundo-caro"),
-        ("deep-flash", "deep-flash"),
         ("flash-lowcost", "flash-lowcost"),
-        ("avanzada-vision", "avanzada-vision"),
-        ("flash-vision", "flash-vision"),
+        ("flash-lowcost", "flash-lowcost"),
+        ("vision", "vision"),
+        ("vision", "vision"),
         ("compactador", "compactador"),
         # OpenCode local provider: "local/<pseudo>"
         ("local/normal", "normal"),
-        ("local/deep-flash", "deep-flash"),
+        ("local/normal", "normal"),
         # Custom provider names: "cesar-proxy/<pseudo>"
         ("cesar-proxy/normal", "normal"),
         ("cesar-proxy/tareas-avanzadas", "tareas-avanzadas"),
         # Cline fork: "cline/<pseudo>"
         ("cline/normal", "normal"),
-        ("cline/deep-flash", "deep-flash"),
+        ("cline/flash-lowcost", "flash-lowcost"),
         # RooCode fork: "roo/<pseudo>"
         ("roo/normal", "normal"),
         ("roo/flash-lowcost", "flash-lowcost"),
         # OpenAI aliases (with and without prefix)
         ("gpt-4o", "normal"),
         ("local/gpt-4o", "normal"),
-        ("gpt-4o-mini", "deep-flash"),
-        ("local/gpt-4o-mini", "deep-flash"),
+        ("gpt-4o-mini", "normal"),
+        ("local/gpt-4o-mini", "normal"),
         ("o3", "pensamiento-profundo-caro"),
         ("local/o3", "pensamiento-profundo-caro"),
         ("o4-mini", "pensamiento-profundo-caro"),
         # Google alias
-        ("gemini-2.5-flash", "avanzada-vision"),
-        ("local/gemini-2.5-flash", "avanzada-vision"),
+        ("gemini-2.5-flash", "vision"),
+        ("local/gemini-2.5-flash", "vision"),
         # Default fallback for unknown models
         ("unknown-model", "normal"),
         ("local/unknown-thing", "normal"),

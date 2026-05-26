@@ -136,7 +136,7 @@ async def test_sprint4():
     # ── 4b. Input threshold + pre-compaction ──────────────────────────
     print("\n[4b] Threshold guard — input excede el límite")
     huge = "hello " * 30000
-    st, d = await chat("flash-vision", huge, 10)  # threshold=16000
+    st, d = await chat("vision", huge, 10)  # threshold=16000
     if st == 400:
         err_code = d.get("detail", {}).get("error", "")
         log_test(
@@ -262,7 +262,7 @@ async def test_sprint5():
         conv = str(uuid.uuid4())
         # Turn 1: send image to vision model
         st1, d1 = await chat(
-            "avanzada-vision",
+            "vision",
             [
                 {
                     "role": "user",
@@ -320,7 +320,7 @@ async def test_sprint5():
     else:
         conv_d = str(uuid.uuid4())
         st1, d1 = await chat(
-            "avanzada-vision",
+            "vision",
             [
                 {
                     "role": "user",

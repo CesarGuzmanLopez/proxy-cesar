@@ -22,6 +22,7 @@ class PhysicalModelSchema(BaseModel, extra="forbid"):
     tools_strict: bool = False
     parallel_tools: bool = False
     vision: bool = False
+    audio: bool = False
     context_window: int | None = None
     note: str | None = None
 

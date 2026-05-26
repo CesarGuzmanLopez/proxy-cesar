@@ -214,15 +214,66 @@ async def _build_compaction_history(
         if isinstance(turn_messages, list):
             history.extend(turn_messages)
 
+    # Strip image_url parts — the compactor is text-only and cannot
+    # process images.  Raw JSON blobs in the history would confuse it.
+    history = _strip_images_from_messages(history)
+
     return history
 
 
+def _strip_images_from_messages(messages: list[dict]) -> list[dict]:
+    """Replace ``image_url`` content parts with a text placeholder.
+
+    The compactor LLM (usually Groq) is text-only.  If the history contains
+    ``image_url`` parts from vision-model turns they'd arrive as opaque JSON.
+    """
+    result: list[dict] = []
+    image_counter: int = 0
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            result.append(msg)
+            continue
+
+        new_parts: list[dict] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                image_counter += 1
+                new_parts.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"[Image #{image_counter} omitted — "
+                            f"user shared an image at this point]"
+                        ),
+                    }
+                )
+            else:
+                new_parts.append(part)
+
+        result.append({**msg, "content": new_parts})
+
+    return result
+
+
 def _resolve_compactor_model(
-    pseudo_model: PseudoModelSchema, config
-) -> tuple[str | None, str | None]:
+    pseudo_model: PseudoModelSchema,
+    config,
+    estimated_input: int = 0,
+) -> tuple[str | None, int | None, str | None]:
     """Resolve the compactor physical model name.
 
-    Returns (compactor_model, error_reason). If error_reason is set, compactor_model is None.
+    Uses by_context_window strategy: picks the first model whose
+    context_window >= estimated_input. Falls back to the model with
+    the largest context window.  This lets Groq models (fast, 131K) handle
+    most compactions while larger models (Gemini 1M) handle big histories.
+
+    For very large histories, we divide-and-conquer: split into chunks
+    that fit within the cheap model's context and compress each separately,
+    then concatenate results.  This avoids ever needing an expensive model.
+
+    Returns (compactor_model, context_window, error_reason).
+    If error_reason is set, compactor_model and context_window are None.
     """
     compactor_name = "deep-flash"
     if pseudo_model.pre_compaction.enabled and pseudo_model.pre_compaction.compactor:
@@ -230,9 +281,82 @@ def _resolve_compactor_model(
 
     compactor_pm = config.pseudo_models.get(compactor_name)
     if not compactor_pm or not compactor_pm.physical_models:
-        return None, f"compactor_not_available: {compactor_name}"
+        return None, None, f"compactor_not_available: {compactor_name}"
 
-    return compactor_pm.physical_models[0].model, None
+    # by_context_window: prefer fast models with enough room
+    for phys in compactor_pm.physical_models:
+        cw = phys.context_window
+        if cw is None:
+            return phys.model, cw, None
+        if isinstance(cw, (int, float)) and cw >= estimated_input:
+            return phys.model, cw, None
+
+    # Fall back to largest context window
+    def _cw(m):
+        cw = getattr(m, 'context_window', 0)
+        return cw if isinstance(cw, (int, float)) else 0
+    largest = max(compactor_pm.physical_models, key=_cw)
+    cw = getattr(largest, 'context_window', None)
+    return getattr(largest, 'model', None), cw, None
+
+
+def _chunk_history(
+    history: list[dict],
+    compaction_prompt: str,
+    context_window: int,
+    output_buffer: int = 8000,
+) -> list[list[dict]]:
+    """Split history into overlapping chunks with shared prefix.
+
+    Each chunk includes the **first messages** (common context/prefix) plus
+    a unique segment of the middle/end.  All chunks start with the same
+    prefix, so providers (Anthropic, DeepSeek) reuse their prompt cache
+    across chunk calls — saving cost and latency.
+
+    Chunks are compressed independently, then concatenated into one snapshot.
+    This lets us use fast Groq compressions for any size history.
+    """
+    prompt_tokens = estimate_tokens(
+        [{"role": "system", "content": compaction_prompt}]
+    )
+    available = context_window - prompt_tokens - output_buffer
+    if available <= 0:
+        return [history]
+
+    # Reserve space for the first messages (global context) + overlap
+    # We keep at least the first ~10% of messages or 5, whichever is larger
+    context_count = max(5, len(history) // 10)
+    head = history[:context_count]
+    body = history[context_count:]
+
+    if not body:
+        return [history]
+
+    head_str = json.dumps(head, default=str)
+    head_tokens = estimate_tokens([{"role": "user", "content": head_str}])
+    leftover = available - head_tokens
+
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_tokens = 0
+
+    for msg in body:
+        msg_str = json.dumps(msg, default=str)
+        msg_tokens = estimate_tokens([{"role": "user", "content": msg_str}])
+
+        if current_tokens + msg_tokens > leftover and current:
+            # Prepend head for context on each chunk
+            chunks.append([*head, *current])
+            current = [msg]
+            current_tokens = msg_tokens
+        else:
+            current.append(msg)
+            current_tokens += msg_tokens
+
+    if current:
+        chunks.append([*head, *current])
+
+    return chunks or [history]
 
 
 async def _store_compaction_snapshot(
@@ -320,9 +444,15 @@ async def continuous_compact(
         db, conversation, compact_turns
     )
 
-    # Resolve compactor model
+    estimated_input = estimate_tokens(
+        [{"role": "user", "content": json.dumps(history_to_compact, default=str)}]
+    )
+
+    # Resolve compactor model (use by_context_window: Groq for fast cheap compressions)
     compaction_prompt = build_continuous_compaction_prompt()
-    compactor_model, error_reason = _resolve_compactor_model(pseudo_model, config)
+    compactor_model, compactor_ctx, error_reason = _resolve_compactor_model(
+        pseudo_model, config, estimated_input,
+    )
     if error_reason:
         return {
             "applied": False,
@@ -330,39 +460,81 @@ async def continuous_compact(
             "warning": "Continuous compaction cannot run: compactor not available.",
         }
 
-    # Call compactor
-    compaction_messages = [
-        {"role": "system", "content": compaction_prompt},
-        {"role": "user", "content": json.dumps(history_to_compact, default=str)},
-    ]
-
-    estimated_input = estimate_tokens(
-        [{"role": "user", "content": json.dumps(history_to_compact, default=str)}]
-    )
-
+    # If history is too large for one call, split into chunks (divide & conquer).
+    # Each chunk includes the first messages (shared cache prefix) + its segment.
+    # Chunks are independent, so the compactor cache prefix hits on every chunk.
     try:
-        response = await call_litellm(
-            model=compactor_model,
-            messages=compaction_messages,
-            max_tokens=8000,
-        )
-        response_dict = (
-            response.model_dump() if hasattr(response, "model_dump") else response
-        )
-        if isinstance(response_dict, dict):
-            choices = response_dict.get("choices", [])
-            snapshot_content = (
-                choices[0].get("message", {}).get("content", "") if choices else ""
+        if compactor_ctx and estimated_input > compactor_ctx - 8000:
+            chunks = _chunk_history(
+                history_to_compact, compaction_prompt, compactor_ctx
             )
-            usage = response_dict.get("usage", {})
-            snapshot_tokens = usage.get("completion_tokens", 0) or 0
+            snapshot_parts: list[str] = []
+            total_snapshot_tokens = 0
+
+            for chunk in chunks:
+                chunk_messages = [
+                    {"role": "system", "content": compaction_prompt},
+                    {"role": "user", "content": json.dumps(chunk, default=str)},
+                ]
+                chunk_resp = await call_litellm(
+                    model=compactor_model,
+                    messages=chunk_messages,
+                    max_tokens=8000,
+                )
+                chunk_dict = (
+                    chunk_resp.model_dump()
+                    if hasattr(chunk_resp, "model_dump")
+                    else chunk_resp
+                )
+                if isinstance(chunk_dict, dict):
+                    choices = chunk_dict.get("choices", [])
+                    content = (
+                        choices[0].get("message", {}).get("content", "")
+                        if choices else ""
+                    )
+                    usage = chunk_dict.get("usage", {})
+                    tok = usage.get("completion_tokens", 0) or 0
+                else:
+                    content = chunk_resp.choices[0].message.content
+                    tok = getattr(chunk_resp.usage, "completion_tokens", 0)
+                if not tok:
+                    tok = estimate_tokens(
+                        [{"role": "user", "content": content or ""}]
+                    )
+                if content:
+                    snapshot_parts.append(content)
+                total_snapshot_tokens += tok
+
+            snapshot_content = "\n\n".join(snapshot_parts)
+            snapshot_tokens = total_snapshot_tokens
         else:
-            snapshot_content = response.choices[0].message.content
-            snapshot_tokens = getattr(response.usage, "completion_tokens", 0)
-        if not snapshot_tokens:
-            snapshot_tokens = estimate_tokens(
-                [{"role": "user", "content": snapshot_content or ""}]
+            # Single call — fits in context
+            compaction_messages = [
+                {"role": "system", "content": compaction_prompt},
+                {"role": "user", "content": json.dumps(history_to_compact, default=str)},
+            ]
+            response = await call_litellm(
+                model=compactor_model,
+                messages=compaction_messages,
+                max_tokens=8000,
             )
+            response_dict = (
+                response.model_dump() if hasattr(response, "model_dump") else response
+            )
+            if isinstance(response_dict, dict):
+                choices = response_dict.get("choices", [])
+                snapshot_content = (
+                    choices[0].get("message", {}).get("content", "") if choices else ""
+                )
+                usage = response_dict.get("usage", {})
+                snapshot_tokens = usage.get("completion_tokens", 0) or 0
+            else:
+                snapshot_content = response.choices[0].message.content
+                snapshot_tokens = getattr(response.usage, "completion_tokens", 0)
+            if not snapshot_tokens:
+                snapshot_tokens = estimate_tokens(
+                    [{"role": "user", "content": snapshot_content or ""}]
+                )
     except Exception as exc:
         return {
             "applied": False,
@@ -380,6 +552,13 @@ async def continuous_compact(
         estimated_input=estimated_input,
         total_turns=len(turns),
     )
+
+    # Reset total_tokens to reflect compacted state:
+    # snapshot tokens + preserved recent turns
+    preserved_tokens = sum(
+        t.input_tokens + t.output_tokens for t in preserved_turns
+    )
+    conversation.total_tokens = snapshot_tokens + preserved_tokens
 
     return {
         "applied": True,
@@ -400,10 +579,15 @@ async def assemble_context(
     """Build the message array to send to the model.
 
     If an active snapshot exists, use [snapshot] + [recent turns] instead of
-    full history.
+    full history.  Uses ``conversation.turns`` (must be eagerly loaded) to
+    avoid redundant DB queries.
+
+    ``image_url`` parts are stripped from historic turns — they belong to past
+    turns and are not needed for the current request.  If images were relevant
+    they are already captured in the snapshot or in recent-turn descriptions.
 
     Args:
-        conversation: The conversation from DB.
+        conversation: The conversation from DB (turns must be eagerly loaded).
         db: Database session.
 
     Returns:
@@ -429,36 +613,33 @@ async def assemble_context(
                 }
             )
 
-            # Load only turns AFTER the snapshot
-            result = await db.execute(
-                select(ConversationTurn)
-                .where(
-                    ConversationTurn.conversation_id == conversation.id,
-                    ConversationTurn.turn_number > snapshot.turn_number_at_compaction,
-                )
-                .order_by(ConversationTurn.turn_number)
+            # Filter + sort in-memory instead of re-querying DB
+            recent_turns = sorted(
+                (t for t in (conversation.turns or [])
+                 if t.turn_number > snapshot.turn_number_at_compaction),
+                key=lambda t: t.turn_number,
             )
-            recent_turns = result.scalars().all()
         else:
-            # Snapshot reference broken — fall back to full history
-            result = await db.execute(
-                select(ConversationTurn)
-                .where(ConversationTurn.conversation_id == conversation.id)
-                .order_by(ConversationTurn.turn_number)
+            # Snapshot reference broken — fall back to all turns
+            recent_turns = sorted(
+                (conversation.turns or []),
+                key=lambda t: t.turn_number,
             )
-            recent_turns = result.scalars().all()
     else:
-        # Load all turns
-        result = await db.execute(
-            select(ConversationTurn)
-            .where(ConversationTurn.conversation_id == conversation.id)
-            .order_by(ConversationTurn.turn_number)
+        # Use eagerly loaded turns directly
+        recent_turns = sorted(
+            (conversation.turns or []),
+            key=lambda t: t.turn_number,
         )
-        recent_turns = result.scalars().all()
 
     for turn in recent_turns:
         turn_messages = turn.messages
         if isinstance(turn_messages, list):
             messages.extend(turn_messages)
+
+    # Strip image_url parts — historic images are not needed for the current
+    # request.  If they were relevant they are in the snapshot or already
+    # described by auto-describe.  Raw image_url blobs confuse text-only models.
+    messages = _strip_images_from_messages(messages)
 
     return messages

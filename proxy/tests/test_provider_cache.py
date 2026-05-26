@@ -19,14 +19,18 @@ def test_anthropic_cache_control_breakpoints():
     ]
     result = apply_anthropic_cache_control(messages)
 
-    # System message gets first breakpoint
-    assert result[0].get("cache_control") == {"type": "ephemeral"}
+    # System message gets first breakpoint on its last content item
+    assert result[0]["content"][-1].get("cache_control") == {"type": "ephemeral"}
 
     # The second-to-last message (assistant) gets the second breakpoint
-    assert result[2].get("cache_control") == {"type": "ephemeral"}
+    assert result[2]["content"][-1].get("cache_control") == {"type": "ephemeral"}
 
-    # No more than 4 breakpoints
-    bp_count = sum(1 for m in result if m.get("cache_control") == {"type": "ephemeral"})
+    # No more than 4 breakpoints across content items
+    bp_count = sum(
+        1 for m in result
+        for c in (m.get("content", []) if isinstance(m.get("content"), list) else [])
+        if isinstance(c, dict) and c.get("cache_control") == {"type": "ephemeral"}
+    )
     assert bp_count <= 4
 
 
@@ -37,28 +41,24 @@ def test_anthropic_cache_control_original_not_modified():
         {"role": "user", "content": "q"},
     ]
     result = apply_anthropic_cache_control(original)
-    assert "cache_control" not in original[0]
-    assert "cache_control" in result[0]
+    assert "cache_control" not in original[0].get("content", [{}])[0]
+    assert "cache_control" in result[0].get("content", [{}])[0]
 
 
 def test_should_apply_cache_control():
-    """Only Anthropic provider gets cache_control breakpoints."""
-    assert should_apply_cache_control("anthropic") is True
-    assert should_apply_cache_control("Anthropic") is True
+    """Only Anthropic gets cache_control breakpoints; others use auto-cache."""
+    assert should_apply_cache_control("anthropic") is True   # cache_control breakpoints
     assert should_apply_cache_control("openai") is False
     assert should_apply_cache_control("deepseek") is False
-    assert should_apply_cache_control("google") is False
     assert should_apply_cache_control("groq") is False
 
 
 def test_provider_supports_cache():
     """Check which providers have any cache support."""
-    assert provider_supports_cache("anthropic") is True
+    assert provider_supports_cache("anthropic") is True      # cache_control support
     assert provider_supports_cache("openai") is True
     assert provider_supports_cache("deepseek") is True
-    assert provider_supports_cache("google") is True
-    assert provider_supports_cache("groq") is False
-    assert provider_supports_cache("zhipu") is False
+    assert provider_supports_cache("groq") is True
 
 
 def test_build_cache_metadata_openai_style():

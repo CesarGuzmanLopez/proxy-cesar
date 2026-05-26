@@ -162,10 +162,6 @@ class TestBasicNonStreamingChat:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -206,10 +202,6 @@ class TestBasicNonStreamingChat:
         mock_call.return_value = _make_chat_response()
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -244,10 +236,6 @@ class TestBasicNonStreamingChat:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -291,10 +279,6 @@ class TestBasicStreamingChat:
         """Streaming request → SSE response with [DONE] marker."""
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
             patch("src.api.chat.call_with_fallback") as mock_fallback,
         ):
             from src.service.chat_models import FallbackInfo
@@ -345,10 +329,6 @@ class TestCompatibility:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -361,7 +341,7 @@ class TestCompatibility:
             # Create a mock conversation that already has images
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000001",
-                pseudo_model="avanzada-vision",
+                pseudo_model="vision",
                 physical_model="gemini/gemini-3.5-flash",
                 capability_has_images=True,
             )
@@ -400,10 +380,6 @@ class TestCompatibility:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
             patch("src.api.conversations.auto_describe_images") as mock_ad,
         ):
             mock_ad.side_effect = lambda msgs, model: (
@@ -429,7 +405,7 @@ class TestCompatibility:
 
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000002",
-                pseudo_model="avanzada-vision",
+                pseudo_model="vision",
                 physical_model="gemini/gemini-3.5-flash",
                 capability_has_images=True,
             )
@@ -464,7 +440,7 @@ class TestCompatibility:
                 resp = await client.post(
                     "/v1/chat/completions",
                     json={
-                        "model": "pensamiento-profundo-caro",  # has on_downgrade: auto_describe
+                        "model": "normal-gratis",  # has on_downgrade: auto_describe, no vision
                         "conversation_id": "00000000-0000-0000-0000-000000000002",
                         "messages": [
                             {"role": "user", "content": "Switch me with auto-describe!"}
@@ -480,10 +456,9 @@ class TestCompatibility:
                 assert meta.get("images_described") == 1, (
                     f"Expected images_described=1, got {meta.get('images_described')}"
                 )
-                # The first vision model in avanzada-vision is Groq Llama 4 Scout
-                assert meta["images_described_by"] in (
-                    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-                    "gemini/gemini-3.5-flash",
+                # Vision model from 'vision' pseudo: Llama 4 Scout
+                assert meta["images_described_by"] == (
+                    "groq/meta-llama/llama-4-scout-17b-16e-instruct"
                 ), f"Unexpected describer: {meta['images_described_by']}"
 
 
@@ -506,10 +481,6 @@ class TestAutoDescribe:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.service.multimedia.image_describer import auto_describe_images
 
@@ -605,11 +576,11 @@ class TestRouterLLM:
         assert is_downgrade("flash-lowcost", "normal", valid_config) is True
 
     def test_is_downgrade_more_expensive(self, valid_config):
-        """normal → pensamiento-profundo-caro is NOT a downgrade."""
+        """tareas-avanzadas → normal is NOT a downgrade."""
         from src.service.router_llm.suggester import is_downgrade
 
         assert (
-            is_downgrade("pensamiento-profundo-caro", "normal", valid_config) is False
+            is_downgrade("normal", "tareas-avanzadas", valid_config) is False
         )
 
 
@@ -636,7 +607,7 @@ class TestManualDegradation:
                 "images_described": 1,
                 "unique_images_described": 1,
                 "duplicate_images_skipped": 0,
-                "described_by": "gemini/gemini-3.5-flash",
+                "described_by": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
                 "total_description_tokens": 15,
                 "status": "completed",
             },
@@ -644,10 +615,6 @@ class TestManualDegradation:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -660,8 +627,8 @@ class TestManualDegradation:
 
             conv = Conversation(
                 id="00000000-0000-0000-0000-000000000003",
-                pseudo_model="avanzada-vision",
-                physical_model="gemini/gemini-3.5-flash",
+                pseudo_model="vision",
+                physical_model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
                 capability_has_images=True,
                 images_described=0,
                 images_degraded_manually=False,
@@ -709,11 +676,11 @@ class TestManualDegradation:
                     )
                     data = resp.json()
                     assert data["images_described"] == 1
-                    assert data["described_by"] == "gemini/gemini-3.5-flash"
+                    assert data["described_by"] == "groq/meta-llama/llama-4-scout-17b-16e-instruct"
                     assert "can_now_switch_to" in data
-                    # Should list non-vision models
-                    assert "normal" in data["can_now_switch_to"]
-                    assert "flash-lowcost" in data["can_now_switch_to"]
+                    # Should list previously-blocked models
+                    assert "tareas-avanzadas" in data["can_now_switch_to"]
+                    assert "normal-gratis" in data["can_now_switch_to"]
 
     async def test_degrade_images_no_images_returns_400(
         self, mock_valkey, mock_db_session
@@ -721,10 +688,6 @@ class TestManualDegradation:
         """POST /degrade-images without images → 400."""
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -787,10 +750,6 @@ class TestAPIEndpoints:
         """GET /health → returns OK."""
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -813,10 +772,6 @@ class TestAPIEndpoints:
         """GET /v1/models → returns list of models."""
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -839,7 +794,7 @@ class TestAPIEndpoints:
                 # Should list pseudo-models
                 models = [m["id"] for m in data_list]
                 assert "normal" in models
-                assert "avanzada-vision" in models
+                assert "vision" in models
                 assert "pensamiento-profundo-caro" in models
 
     @patch("src.service.chat_service.call_litellm")
@@ -849,10 +804,6 @@ class TestAPIEndpoints:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -905,10 +856,6 @@ class TestProxyMetadata:
 
         with (
             patch("src.main.setup_litellm"),
-            patch(
-                "src.service.router_llm.suggester.load_bert_classifier",
-                return_value=False,
-            ),
         ):
             from src.main import app
             from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter

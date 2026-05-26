@@ -62,8 +62,11 @@ from src.service.compatibility import (
 )
 from src.service.compatibility import _any_vision as _any_vision_comp
 from src.service.context_alert import ContextAlert, get_context_alert
-from src.service.inline_commands import handle_inline_command, InlineCommandResult
-from src.service.model_resolver import normalize_model_name
+from src.service.inline_commands import handle_inline_command
+from src.service.model_resolver import (
+    build_passthrough_pseudo_model,
+    normalize_model_name,
+)
 from src.service.multimedia.image_describer import auto_describe_images
 from src.service.router_llm.suggester import evaluate_complexity, is_downgrade
 from src.service.threshold_guard import check_input_threshold
@@ -134,7 +137,6 @@ async def process_chat_request(
         conversation_id=conversation_id,
         config=config,
         db=db,
-        arq_pool=getattr(db, "_arq_pool", None),
     )
     if cmd_result.handled and cmd_result.skip_llm:
         logger.info(
@@ -244,6 +246,12 @@ async def process_chat_request(
     )
     active_messages = prep["active_messages"]
 
+    # Recalculate after compaction — pre-compaction may have reduced the
+    # input or skipped (images, compactor unavailable).  The stale pre-
+    # compaction estimate would cause call_with_fallback to incorrectly
+    # skip models with adequate context windows.
+    est_input = estimate_tokens(active_messages)
+
     # Sprint 6: Context alerts — warn before context becomes unusable
     context_alert = get_context_alert(
         total_tokens=conv.total_tokens if conv else 0,
@@ -285,6 +293,7 @@ async def process_chat_request(
         pseudo_model_schema=pm_schema,
         messages=active_messages,
         stream=stream,
+        estimated_input=est_input,
         temperature=temperature,
         max_tokens=max_tokens,
         tools=tools,
@@ -350,18 +359,15 @@ def _resolve_and_validate(
     tools: list[dict] | None,
     config: ProxyConfigSchema,
 ) -> tuple[str, object, SessionCapabilities]:
-    """Steps 1-3: Normalize model, detect capabilities, validate content."""
+    """Steps 1-3: Normalize model, detect capabilities, validate content.
+
+    If the model name is not a known pseudo-model, creates a direct passthrough.
+    """
     resolved = normalize_model_name(model, config)
     if resolved not in config.pseudo_models:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "UNKNOWN_PSEUDO_MODEL",
-                "message": f"Unknown pseudo-model: '{resolved}'",
-                "available": list(config.pseudo_models.keys()),
-            },
-        )
-    pm = config.pseudo_models[resolved]
+        pm = build_passthrough_pseudo_model(resolved)
+    else:
+        pm = config.pseudo_models[resolved]
     caps = detect_turn_capabilities(messages, tools)
     validate_incoming_content(caps, pm, resolved, config)
     return resolved, pm, caps
@@ -514,24 +520,24 @@ def _resolve_auto_describe_params(
     current_pseudo_name: str,
     new_pm_schema: object,
     pinned_physical_model: str,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     """Check if auto-describe should run and resolve the vision model.
 
-    Returns (vision_model, current_pseudo_name) or (None, None) if
-    auto-describe should be skipped.
+    Returns (vision_model, current_pseudo_name, skip_reason).
+    If vision_model is None, skip_reason explains why auto-describe was skipped.
     """
     if new_pm_schema.image_handling.on_downgrade != "auto_describe":
-        return (None, None)
+        return (None, None, "destination_on_downgrade_not_auto_describe")
     if _any_vision_comp(new_pm_schema.physical_models):
-        return (None, None)
+        return (None, None, "destination_has_vision_no_describe_needed")
 
     current_pm = config.pseudo_models.get(current_pseudo_name)
     if current_pm is None:
-        return (None, None)
+        return (None, None, f"source_pseudo_model_not_found:{current_pseudo_name}")
 
     vision_models = [m for m in current_pm.physical_models if m.vision]
     if not vision_models:
-        return (None, None)
+        return (None, None, f"source_{current_pseudo_name}_has_no_vision_models")
 
     vision_model: str = (
         pinned_physical_model
@@ -541,7 +547,7 @@ def _resolve_auto_describe_params(
         )
         else vision_models[0].model
     )
-    return (vision_model, current_pseudo_name)
+    return (vision_model, current_pseudo_name, None)
 
 
 def _load_messages_from_turns(conv: Conversation) -> list[dict]:
@@ -565,14 +571,16 @@ async def handle_auto_describe(
 ) -> tuple[list[dict] | None, dict | None]:
     """Execute auto-describe when switching from vision to non-vision model."""
     # Resolve vision model (also validates auto-describe is needed)
-    vision_model, current_pseudo_name = _resolve_auto_describe_params(
+    vision_model, current_pseudo_name, skip_reason = _resolve_auto_describe_params(
         config,
         current_pseudo_name,
         new_pm_schema,
         pinned_physical_model,
     )
     if vision_model is None:
-        return (None, None)
+        if skip_reason:
+            logger.debug("auto_describe_skipped reason=%s", skip_reason)
+        return (None, None if not skip_reason else {"auto_describe_skipped": True, "skip_reason": skip_reason})
 
     # Load and describe messages from DB history
     all_messages = _load_messages_from_turns(conv)
@@ -604,6 +612,7 @@ async def handle_auto_describe(
     )
     db.add(deg_turn)
     conv.images_described = max(conv.images_described or 0, 0) + described_count
+    conv.capability_has_images = False  # Reset after successful auto-describe
 
     # Describe in-flight messages if present
     described_in_flight: list[dict] | None = None
@@ -660,7 +669,7 @@ async def _apply_compaction(
         "continuous_compaction_metadata": None,
     }
 
-    # Pre-compaction
+    # Pre-compaction (caller must provide estimated_input — no recalculation)
     if pm_schema.pre_compaction.enabled and estimated_input > (
         pm_schema.pre_compaction.threshold or 0
     ):
@@ -668,6 +677,7 @@ async def _apply_compaction(
             messages=messages,
             pseudo_model=pm_schema,
             config=config,
+            input_tokens=estimated_input,
         )
         state["pre_compaction_applied"] = meta.get("applied", False)
         state["pre_compaction_metadata"] = meta
@@ -837,6 +847,7 @@ async def call_with_fallback(
     pseudo_model_schema,
     messages: list[dict],
     stream: bool = False,
+    estimated_input: int | None = None,
     **kwargs,
 ) -> tuple:
     """Try each physical model in order. On retryable errors, move to next.
@@ -865,8 +876,45 @@ async def call_with_fallback(
     # Sprint 7: track cache optimization for metadata extraction
     cache_optimization_applied = False
 
+    # Estimate input tokens once (caller may have pre-computed)
+    _est_input = estimated_input if estimated_input is not None else estimate_tokens(messages)
+    _context_skipped: list[str] = []  # Models skipped due to context too large
+
+    # Sprint 7: canonical ordering + tool sorting — compute ONCE before the loop
+    ordered_messages = canonicalize_message_order(messages)
+    raw_tools = kwargs.get("tools")
+    if raw_tools:
+        sorted_tools = sort_tool_definitions(raw_tools)
+        kwargs["tools"] = sorted_tools
+        first_name = sorted_tools[0].get("function", {}).get("name", "?")
+        logger.debug(
+            "tools_sorted | trace=%s count=%d first=%s",
+            _trace_id,
+            len(sorted_tools),
+            first_name,
+        )
+
     for idx, phys in enumerate(pseudo_model_schema.physical_models):
         try:
+            # Sprint 9: Check if this model's context window is large enough.
+            # If the input exceeds the model's context_window, skip it and
+            # report clearly. Prevents silent failures when fallback models
+            # have smaller context than the primary.
+            if phys.context_window is not None and _est_input > phys.context_window:
+                logger.warning(
+                    "llm_skip  | trace=%s model=%s context_window=%d "
+                    "input_est=%d reason=context_too_large",
+                    _trace_id,
+                    phys.model,
+                    phys.context_window,
+                    _est_input,
+                )
+                _context_skipped.append(phys.model)
+                fallback_info.attempted_models.append(
+                    f"{phys.model} (skipped: context too small)"
+                )
+                continue
+
             logger.info(
                 "llm_call  | trace=%s attempt=%d/%d model=%s stream=%s",
                 _trace_id,
@@ -876,29 +924,11 @@ async def call_with_fallback(
                 stream,
             )
 
-            # Sprint 7: canonical message ordering for deterministic cache hits
-            # Reorder: system first, then history, then new messages at the tail
-            call_messages = canonicalize_message_order(messages)
-
-            # Sprint 7: stable tool definition serialization
-            raw_tools = kwargs.get("tools")
-            if raw_tools:
-                sorted_tools = sort_tool_definitions(raw_tools)
-                kwargs["tools"] = sorted_tools
-                # Log a sample sorted tool name for traceability
-                if sorted_tools:
-                    first_name = sorted_tools[0].get("function", {}).get("name", "?")
-                    logger.debug(
-                        "tools_sorted | trace=%s count=%d first=%s",
-                        _trace_id,
-                        len(sorted_tools),
-                        first_name,
-                    )
-
             # Sprint 7: apply provider-specific cache optimizations
+            call_messages = ordered_messages
             provider = phys.provider.lower()
             if should_apply_cache_control(provider):
-                call_messages = apply_anthropic_cache_control(call_messages)
+                call_messages = apply_anthropic_cache_control(ordered_messages)
                 cache_optimization_applied = True
                 logger.debug(
                     "cache_control applied provider=%s messages=%d",
@@ -967,6 +997,45 @@ async def call_with_fallback(
             continue
 
     elapsed = time.monotonic() - _start
+
+    # Sprint 9: If all models were skipped due to context too large,
+    # return a 413 error suggesting compaction instead of a generic 503.
+    if len(_context_skipped) == len(pseudo_model_schema.physical_models):
+        logger.error(
+            "llm_fail   | trace=%s elapsed=%.1fs reason=all_context_too_large "
+            "input_est=%d models=%s",
+            _trace_id,
+            elapsed,
+            _est_input,
+            _context_skipped,
+        )
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "CONTEXT_TOO_LARGE_FOR_ALL_MODELS",
+                "message": (
+                    f"The conversation ({_est_input:,} tokens) exceeds the "
+                    f"context window of all remaining models in "
+                    f"'{pseudo_model_schema.display_name}'. "
+                    f"Type 'compact' or '/compact' in your message to compact."
+                ),
+                "estimated_tokens": _est_input,
+                "remediation": {
+                    "action": "compact",
+                    "description": "Compact the conversation into a snapshot.",
+                    "command": "/compact",
+                },
+                "context_skipped": _context_skipped,
+            },
+        )
+
+    # Some models were skipped due to context, some failed — report partial
+    context_skipped_note = ""
+    if _context_skipped:
+        context_skipped_note = (
+            f" ({len(_context_skipped)} skipped: context too large)"
+        )
+
     logger.error(
         "llm_fail   | trace=%s elapsed=%.1fs models=%s last_error=%s",
         _trace_id,
@@ -980,7 +1049,8 @@ async def call_with_fallback(
             "error": "ALL_MODELS_FAILED",
             "message": (
                 f"All {len(fallback_info.attempted_models)} model(s) for "
-                f"pseudo-model '{pseudo_model_schema.display_name}' failed."
+                f"pseudo-model '{pseudo_model_schema.display_name}' failed"
+                f"{context_skipped_note}."
             ),
             "attempted": fallback_info.attempted_models,
             "last_error": str(last_error),

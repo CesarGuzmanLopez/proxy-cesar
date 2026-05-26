@@ -24,13 +24,12 @@ class Settings(BaseSettings):
     """Comma-separated list of allowed origins."""
 
     # Provider API keys — passed to LiteLLM via os.environ
-    anthropic_api_key: str = ""
     openrouter_api_key: str = ""
-    google_api_key: str = ""
     deepseek_api_key: str = ""
     groq_api_key: str = ""
-    zhipuai_api_key: str = ""
-    zai_api_key: str = ""
+    pruna_api_key: str = ""
+    keyclaw_enabled: bool = True
+    """Set to false to disable KeyClaw secret-filtering proxy even if installed."""
 
 
 settings = Settings()

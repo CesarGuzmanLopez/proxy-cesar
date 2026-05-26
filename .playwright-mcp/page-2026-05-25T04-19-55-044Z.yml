@@ -1,0 +1,283 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - button "Alternar menú" [ref=e8]:
+          - img [ref=e10]
+        - button "Buscar archivos" [ref=e95]:
+          - generic [ref=e97]: Buscar proxy-cesar
+          - generic [ref=e98]: Ctrl+K
+        - generic [ref=e103]:
+          - button "Estado" [ref=e105]:
+            - img [ref=e109]
+          - button "Alternar terminal" [ref=e113]:
+            - img [ref=e115]
+          - generic [ref=e117]:
+            - button "Alternar revisión" [expanded] [ref=e119]:
+              - img [ref=e121]
+            - button "Alternar árbol de archivos" [ref=e124]:
+              - img [ref=e127]
+    - generic [ref=e14]:
+      - navigation "Proyectos y sesiones" [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]:
+            - generic [ref=e19]:
+              - button "proxy-cesar" [ref=e130]:
+                - generic [ref=e133]: p
+              - button "Abrir proyecto" [ref=e21]:
+                - img [ref=e23]
+            - generic [ref=e25]:
+              - button "Ajustes" [ref=e27]:
+                - img [ref=e29]
+              - button "Ayuda" [ref=e32]:
+                - img [ref=e34]
+          - generic [ref=e37]:
+            - generic [ref=e135]:
+              - generic [ref=e136]:
+                - generic [ref=e137]: proxy-cesar
+                - generic [ref=e139]: ~/Documents/Proyectos/proxy-cesar
+              - button "Más opciones" [ref=e140]:
+                - img [ref=e142]
+            - generic [ref=e144]:
+              - button "Nueva sesión" [ref=e146]:
+                - img [ref=e148]
+                - text: Nueva sesión
+              - navigation [ref=e152]:
+                - generic [ref=e154]:
+                  - link "New session" [ref=e157]:
+                    - /url: /L2hvbWUvY2VzYXIvRG9jdW1lbnRzL1Byb3llY3Rvcy9wcm94eS1jZXNhcg/session/ses_1a36d160affebTfzvu06B5Rw61
+                    - generic [ref=e158]: New session
+                  - button "Archivar" [ref=e161]:
+                    - img [ref=e163]
+                - generic [ref=e166]:
+                  - link "Confirmación de funcionamiento OK" [ref=e169]:
+                    - /url: /L2hvbWUvY2VzYXIvRG9jdW1lbnRzL1Byb3llY3Rvcy9wcm94eS1jZXNhcg/session/ses_1a2c24d72ffeu0LRIG4tu91T47
+                    - generic [ref=e170]: Confirmación de funcionamiento OK
+                  - button "Archivar" [ref=e173]:
+                    - img [ref=e175]
+                - generic [ref=e178]:
+                  - link "Confirmación de funcionamiento OK" [ref=e181]:
+                    - /url: /L2hvbWUvY2VzYXIvRG9jdW1lbnRzL1Byb3llY3Rvcy9wcm94eS1jZXNhcg/session/ses_1a2c34cb8ffeATY16ph62Cs3Be
+                    - generic [ref=e182]: Confirmación de funcionamiento OK
+                  - button "Archivar" [ref=e185]:
+                    - img [ref=e187]
+                - generic [ref=e190]:
+                  - link "Confirmación de funcionamiento OK" [ref=e193]:
+                    - /url: /L2hvbWUvY2VzYXIvRG9jdW1lbnRzL1Byb3llY3Rvcy9wcm94eS1jZXNhcg/session/ses_1a2c6fea8ffeToXaOGkF7nSKvR
+                    - generic [ref=e194]: Confirmación de funcionamiento OK
+                  - button "Archivar" [ref=e197]:
+                    - img [ref=e199]
+                - generic [ref=e202]:
+                  - link "New session" [ref=e205]:
+                    - /url: /L2hvbWUvY2VzYXIvRG9jdW1lbnRzL1Byb3llY3Rvcy9wcm94eS1jZXNhcg/session/ses_1a2c93e11ffeO0u2RELcBel77G
+                    - generic [ref=e206]: New session
+                  - button "Archivar" [ref=e209]:
+                    - img [ref=e211]
+                - generic [ref=e214]:
+                  - link "New session" [ref=e217]:
+                    - /url: /L2hvbWUvY2VzYXIvRG9jdW1lbnRzL1Byb3llY3Rvcy9wcm94eS1jZXNhcg/session/ses_1a2c95fb4ffebGRphDFFMuGBCD
+                    - generic [ref=e218]: New session
+                  - button "Archivar" [ref=e221]:
+                    - img [ref=e223]
+                - generic [ref=e226]:
+                  - link "Finalizar sprints 07-08 y verificar proyecto proxy" [ref=e229]:
+                    - /url: /L2hvbWUvY2VzYXIvRG9jdW1lbnRzL1Byb3llY3Rvcy9wcm94eS1jZXNhcg/session/ses_1a3e1991effeGHh6AfjH8szETT
+                    - generic [ref=e230]: Finalizar sprints 07-08 y verificar proyecto proxy
+                  - button "Archivar" [ref=e233]:
+                    - img [ref=e235]
+                - button "Cargar más" [ref=e238]
+      - main [ref=e48]:
+        - generic [ref=e239]:
+          - generic [ref=e240]:
+            - generic [ref=e241]:
+              - generic [ref=e246]:
+                - generic [ref=e247]:
+                  - img [ref=e248]
+                  - generic [ref=e251]: Construye lo que quieras
+                - generic [ref=e252]:
+                  - generic [ref=e254]: /home/cesar/Documents/Proyectos/proxy-cesar
+                  - generic [ref=e255]:
+                    - img [ref=e257]
+                    - generic [ref=e259]: Rama principal (main)
+                  - generic [ref=e261]: Última modificación hace 0 segundos
+              - generic [ref=e264]:
+                - generic [ref=e266]:
+                  - generic [ref=e267]:
+                    - textbox "Pregunta cualquier cosa... \"¿Qué significa este error?\"" [ref=e402]
+                    - generic: Pregunta cualquier cosa... "¿Qué significa este error?"
+                  - button "Enviar" [disabled] [ref=e270]:
+                    - img [ref=e272]
+                  - button "Adjuntar archivo" [ref=e276]:
+                    - img [ref=e278]
+                - generic [ref=e282]:
+                  - generic:
+                    - generic:
+                      - img
+                    - generic: Shell
+                    - button "Cancelar"
+                  - generic [ref=e283]:
+                    - group [ref=e286]:
+                      - button "build" [ref=e287]:
+                        - generic [ref=e288]: build
+                        - img [ref=e291]
+                    - button "normal" [expanded] [ref=e295]:
+                      - img [ref=e296]
+                      - generic [ref=e298]: normal
+                      - img [ref=e300]
+            - complementary "Revisión y archivos" [ref=e303]:
+              - generic [ref=e304]:
+                - generic [ref=e307]:
+                  - tablist [ref=e309]:
+                    - tab "Revisión 2" [selected] [ref=e311]:
+                      - generic [ref=e312]:
+                        - generic [ref=e313]: Revisión
+                        - generic [ref=e314]: "2"
+                    - button "Abrir archivo" [ref=e317]:
+                      - img [ref=e319]
+                  - tabpanel "Revisión 2" [ref=e321]:
+                    - generic [ref=e324]:
+                      - generic [ref=e325]:
+                        - group [ref=e327]:
+                          - button "Git changes" [ref=e328]:
+                            - generic [ref=e329]: Git changes
+                            - img [ref=e332]
+                        - generic [ref=e334]:
+                          - radiogroup [ref=e335]:
+                            - group [ref=e336]:
+                              - radio "Unificado" [ref=e337]
+                              - generic [ref=e339]: Unificado
+                            - group [ref=e340]:
+                              - radio "Dividido" [checked] [ref=e341]
+                              - generic [ref=e343]: Dividido
+                          - button "Expandir todo" [ref=e344]:
+                            - img [ref=e346]
+                            - text: Expandir todo
+                      - region "contenido desplazable" [ref=e349]:
+                        - generic [ref=e352]:
+                          - heading "‪.playwright-mcp/‬ page-2026-05-25T04-18-27-870Z.yml Abrir archivo Añadido +49 -0" [level=3] [ref=e354]:
+                            - button "‪.playwright-mcp/‬ page-2026-05-25T04-18-27-870Z.yml Abrir archivo Añadido +49 -0" [ref=e355]:
+                              - generic [ref=e356]:
+                                - generic [ref=e357]:
+                                  - img [ref=e358]
+                                  - generic [ref=e360]:
+                                    - generic [ref=e361]: ‪.playwright-mcp/‬
+                                    - generic [ref=e362]: page-2026-05-25T04-18-27-870Z.yml
+                                    - button "Abrir archivo" [ref=e364] [cursor=pointer]:
+                                      - img [ref=e366]
+                                - generic [ref=e368]:
+                                  - generic [ref=e369]:
+                                    - generic [ref=e370]: Añadido
+                                    - generic [ref=e371]:
+                                      - generic [ref=e372]: "+49"
+                                      - generic [ref=e373]: "-0"
+                                  - img [ref=e376]
+                          - heading "‪proxy/src/‬ main.py Abrir archivo +1 -1" [level=3] [ref=e379]:
+                            - button "‪proxy/src/‬ main.py Abrir archivo +1 -1" [ref=e380]:
+                              - generic [ref=e381]:
+                                - generic [ref=e382]:
+                                  - img [ref=e383]
+                                  - generic [ref=e385]:
+                                    - generic [ref=e386]: ‪proxy/src/‬
+                                    - generic [ref=e387]: main.py
+                                    - button "Abrir archivo" [ref=e389] [cursor=pointer]:
+                                      - img [ref=e391]
+                                - generic [ref=e393]:
+                                  - generic [ref=e394]:
+                                    - generic [ref=e395]: "+1"
+                                    - generic [ref=e396]: "-1"
+                                  - img [ref=e399]
+                - generic:
+                  - tablist:
+                    - generic:
+                      - tab [selected]: 2 Cambios
+                    - generic:
+                      - tab: Todos los archivos
+                  - tabpanel:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - img
+                    - button:
+                      - img
+                      - generic: A
+                    - generic:
+                      - generic:
+                        - generic:
+                          - img
+                    - generic:
+                      - generic:
+                        - generic:
+                          - img
+                    - button:
+                      - img
+                      - generic: M
+          - generic:
+            - generic:
+              - generic:
+                - tablist:
+                  - generic:
+                    - generic:
+                      - button:
+                        - generic:
+                          - img
+  - generic:
+    - region "Notifications (alt+T)":
+      - list
+  - dialog "Seleccionar modelo" [ref=e403]:
+    - heading "Seleccionar modelo" [level=2] [ref=e404]
+    - generic [ref=e405]:
+      - generic [ref=e406]:
+        - generic [ref=e408]:
+          - img [ref=e410]
+          - group [ref=e412]:
+            - textbox "Buscar modelos" [active] [ref=e414]
+        - generic [ref=e415]:
+          - button "Conectar proveedor" [ref=e417]:
+            - img [ref=e419]
+          - button "Gestionar modelos" [ref=e422]:
+            - img [ref=e424]
+      - generic [ref=e426]:
+        - generic [ref=e427]:
+          - generic [ref=e428]: OpenCode Zen
+          - generic [ref=e429]:
+            - button "DeepSeek V4 Flash Free Gratis" [ref=e431]:
+              - generic [ref=e432]:
+                - generic [ref=e433]: DeepSeek V4 Flash Free
+                - generic [ref=e434]: Gratis
+            - button "Nemotron 3 Super Free Gratis" [ref=e436]:
+              - generic [ref=e437]:
+                - generic [ref=e438]: Nemotron 3 Super Free
+                - generic [ref=e439]: Gratis
+        - generic [ref=e440]:
+          - generic [ref=e441]: Groq
+          - button "Orpheus V1 English" [ref=e444]:
+            - generic [ref=e446]: Orpheus V1 English
+        - generic [ref=e447]:
+          - generic [ref=e448]: DeepSeek
+          - generic [ref=e449]:
+            - button "DeepSeek Chat" [ref=e451]:
+              - generic [ref=e453]: DeepSeek Chat
+            - button "DeepSeek V4 Flash" [ref=e455]:
+              - generic [ref=e457]: DeepSeek V4 Flash
+            - button "DeepSeek V4 Pro" [ref=e459]:
+              - generic [ref=e461]: DeepSeek V4 Pro
+        - generic [ref=e462]:
+          - generic [ref=e463]: cesar-proxy
+          - generic [ref=e464]:
+            - button "avanzada-vision" [ref=e466]:
+              - generic [ref=e468]: avanzada-vision
+            - button "compactador" [ref=e470]:
+              - generic [ref=e472]: compactador
+            - button "deep-flash" [ref=e474]:
+              - generic [ref=e476]: deep-flash
+            - button "flash-lowcost" [ref=e478]:
+              - generic [ref=e480]: flash-lowcost
+            - button "flash-vision" [ref=e482]:
+              - generic [ref=e484]: flash-vision
+            - button "normal" [ref=e486]:
+              - generic [ref=e488]: normal
+              - img [ref=e491]
+            - button "pensamiento-profundo-caro" [ref=e494]:
+              - generic [ref=e496]: pensamiento-profundo-caro
+            - button "tareas-avanzadas" [ref=e498]:
+              - generic [ref=e500]: tareas-avanzadas

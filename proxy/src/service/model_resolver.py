@@ -3,7 +3,15 @@
 Exact logic from sprint §7. No prefix manipulation, no string concatenation.
 """
 
-from src.config.pseudo_models import ProxyConfigSchema
+from src.config.pseudo_models import (
+    ContinuousCompactionConfig,
+    ImageHandlingConfig,
+    PhysicalModelSchema,
+    PreCompactionConfig,
+    PseudoModelSchema,
+    ProxyConfigSchema,
+    RouterLLMConfig,
+)
 from src.domain.errors import PhysicalModelNotInList, PseudoModelNotFound
 from src.domain.types import Err, Ok, Result
 
@@ -35,12 +43,40 @@ def normalize_model_name(raw_model: str, config: ProxyConfigSchema) -> str:
     if raw_model in config.model_aliases:
         return config.model_aliases[raw_model]
 
-    # 4. Default fallback alias
-    if "default" in config.model_aliases:
+    # 4. Default fallback alias — only applies to simple names, not provider-prefixed models
+    if "default" in config.model_aliases and "/" not in raw_model:
         return config.model_aliases["default"]
 
-    # 5. No match — caller handles error
+    # 5. No match — return original for passthrough (e.g. "ollama/llama3.2")
     return raw_model
+
+
+def build_passthrough_pseudo_model(model_name: str) -> PseudoModelSchema:
+    """Build a minimal passthrough pseudo-model for direct model calls.
+
+    Supports models not defined in pseudo_models.yaml (e.g. ollama/llama3.2).
+    No compaction, no router, no thresholds — just pass through to LiteLLM as-is.
+    The response is reported exactly as the local model returns it.
+    """
+    provider = model_name.split("/")[0] if "/" in model_name else "openai"
+    return PseudoModelSchema(
+        display_name=model_name,
+        description=f"Direct passthrough: {model_name}",
+        input_token_threshold=None,
+        context_window=None,
+        continuous_compaction=ContinuousCompactionConfig(enabled=False),
+        pre_compaction=PreCompactionConfig(enabled=False),
+        router_llm=RouterLLMConfig(enabled=False),
+        image_handling=ImageHandlingConfig(on_downgrade="auto_describe"),
+        physical_models=[
+            PhysicalModelSchema(
+                provider=provider,
+                model=model_name,
+                openai_tools_compatible=True,
+            )
+        ],
+        fallback_strategy="sequential",
+    )
 
 
 def resolve_physical_model(

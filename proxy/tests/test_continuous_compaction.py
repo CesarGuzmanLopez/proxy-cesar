@@ -104,6 +104,7 @@ def config_with_compactor():
     compactor_pm = MagicMock()
     phys = MagicMock()
     phys.model = "glm-4.5-flash"
+    phys.context_window = 131072
     compactor_pm.physical_models = [phys]
     config.pseudo_models = {"deep-flash": compactor_pm}
     return config
@@ -669,18 +670,14 @@ async def test_assemble_context_with_snapshot():
     snapshot_mock.snapshot_content = "## Snapshot\n\nWorked on features."
     db.get = AsyncMock(return_value=snapshot_mock)
 
-    # Mock recent turns
+    # Set up conv.turns directly (avoids redundant DB query)
     recent_turn = MagicMock()
+    recent_turn.turn_number = 16  # After snapshot
     recent_turn.messages = [{"role": "user", "content": "Continue from here."}]
-
-    scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(
-        return_value=MagicMock(all=MagicMock(return_value=[recent_turn]))
-    )
-    db.execute = AsyncMock(return_value=scalar_result)
 
     conv = MagicMock()
     conv.active_snapshot_id = "snap-1"
+    conv.turns = [MagicMock(turn_number=1), MagicMock(turn_number=2), recent_turn]
 
     messages = await assemble_context(conv, db)
     assert len(messages) > 0
@@ -700,18 +697,15 @@ async def test_assemble_context_without_snapshot():
     db.get = AsyncMock(return_value=None)
 
     turn1 = MagicMock()
+    turn1.turn_number = 1
     turn1.messages = [{"role": "system", "content": "You are an assistant."}]
     turn2 = MagicMock()
+    turn2.turn_number = 2
     turn2.messages = [{"role": "user", "content": "Hello!"}]
-
-    scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(
-        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2]))
-    )
-    db.execute = AsyncMock(return_value=scalar_result)
 
     conv = MagicMock()
     conv.active_snapshot_id = None  # No snapshot
+    conv.turns = [turn1, turn2]
 
     messages = await assemble_context(conv, db)
     assert len(messages) == 2
@@ -726,18 +720,15 @@ async def test_assemble_context_broken_snapshot_reference():
     db.get = AsyncMock(return_value=None)  # Snapshot not found (broken reference)
 
     turn1 = MagicMock()
+    turn1.turn_number = 1
     turn1.messages = [{"role": "system", "content": "System."}]
     turn2 = MagicMock()
+    turn2.turn_number = 2
     turn2.messages = [{"role": "user", "content": "User."}]
-
-    scalar_result = MagicMock()
-    scalar_result.scalars = MagicMock(
-        return_value=MagicMock(all=MagicMock(return_value=[turn1, turn2]))
-    )
-    db.execute = AsyncMock(return_value=scalar_result)
 
     conv = MagicMock()
     conv.active_snapshot_id = "snap-gone"  # Exists in DB but snapshot not found
+    conv.turns = [turn1, turn2]
 
     messages = await assemble_context(conv, db)
     # Should fall back to full history (all turns)

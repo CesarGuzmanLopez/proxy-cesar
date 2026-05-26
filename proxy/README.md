@@ -114,7 +114,7 @@ Bridges client model names to pseudo-models without modifying clients. Configure
 - `gpt-4o` → `normal`
 - `o3` / `o4-mini` → `pensamiento-profundo-caro`
 - `gpt-4o-mini` → `deep-flash`
-- `gemini-2.5-flash` → `avanzada-vision`
+- `gemini-2.5-flash` → `vision`
 - `default: normal` catches unknown model names (client-friendly)
 
 ### Provider Cache Optimization (Sprint 7)

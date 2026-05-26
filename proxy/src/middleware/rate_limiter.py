@@ -1,12 +1,13 @@
 """Rate limiting middleware per pseudo-model (Sprint 8 §4).
 
 Fixed-window counter in Valkey. Key: ratelimit:{pseudo_model}:{minute_bucket}
-Reads the request body to determine the pseudo-model — never trusts client headers.
+Reads only the first 2 KB of the request body to extract the model name —
+never loads the full body (which may contain multi-MB base64 images).
 """
 
-import json
 import logging
 import os
+import re
 import time
 
 from fastapi import Request
@@ -15,6 +16,13 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
+# Lightweight scan: find "model":"<value>" in raw body bytes
+# Avoids full json.loads() of large chat bodies (images, tools, etc.)
+_MODEL_RE = re.compile(rb'"model"\s*:\s*"([^"]+)"', re.IGNORECASE)
+
+# Only read the first 2 KB — the model field always appears near the start
+_MAX_BODY_SCAN = 2048
+
 # Default rate limits: requests per minute per pseudo-model
 _DEFAULT_RATE_LIMITS: dict[str, int] = {
     "pensamiento-profundo-caro": 5,
@@ -22,8 +30,7 @@ _DEFAULT_RATE_LIMITS: dict[str, int] = {
     "normal": 60,
     "deep-flash": 120,
     "flash-lowcost": 200,
-    "avanzada-vision": 10,
-    "flash-vision": 30,
+    "vision": 15,
     "compactador": 5,
 }
 
@@ -56,6 +63,23 @@ def _get_limits() -> dict[str, int]:
 _CHAT_PATH = "/v1/chat/completions"
 
 
+def _extract_model(body_bytes: bytes) -> str:
+    """Extract model name from raw JSON body bytes without full parse.
+
+    Scans only the first _MAX_BODY_SCAN bytes — the model field is always
+    near the start of the JSON payload.  For very large requests (base64
+    images) this avoids scanning megabytes of image data.
+    """
+    scan_slice = body_bytes[:_MAX_BODY_SCAN]
+    try:
+        m = _MODEL_RE.search(scan_slice)
+        if m:
+            return m.group(1).decode()
+    except Exception:
+        pass
+    return "unknown"
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Fixed-window rate limiter per pseudo-model in Valkey.
 
@@ -73,8 +97,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         try:
             body_bytes = await request.body()
             if body_bytes:
-                body = json.loads(body_bytes)
-                pseudo_model = body.get("model", "unknown") or "unknown"
+                pseudo_model = _extract_model(body_bytes)
         except Exception:
             pass
 

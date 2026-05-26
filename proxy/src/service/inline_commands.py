@@ -4,11 +4,12 @@ Commands the user types directly in the chat message to perform operations
 without leaving the conversation or using curl.
 
 Commands:
-  /compact      — Normalize tools + degrade multimedia + compact history.
-                  One-shot prep for switching pseudo-models.
   /degrade      — Describe all multimedia (images, PDFs, video frames) as text.
   /status       — Show conversation state (tokens, model, capabilities).
   /help         — List all commands.
+
+Compaction is handled natively by OpenCode. Use POST /conversations/{id}/compact
+for programmatic compaction (up to 2M tokens via compactador model).
 
 Design:
   - Commands start with "/" (or "@" for backward compat).
@@ -28,15 +29,29 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
 from src.service.capability_detector import load_session_capabilities
-from src.service.compactor.explicit import compact_conversation
 from src.service.multimedia.image_describer import auto_describe_images
 from src.service.tools_normalizer import generate_preview, normalize_history
 
 # ── Command regex ───────────────────────────────────────────────────────────
 
-_COMMAND_RE = re.compile(r"^[/@](\w[\w-]*)\s*(.*)", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^[/@]?(\b(?:degrade|status|help)\b)\s*(.*)", re.IGNORECASE)
+"""Detect commands ONLY as the first word of the message.
 
-_VALID_COMMANDS = frozenset({"compact", "degrade", "status", "help"})
+The command must be the very first word (optional / or @ prefix).
+Compaction is handled by OpenCode natively and the POST /compact endpoint.
+
+Matches:
+  "degrade images"  → triggers
+  "degradar fotos"  → triggers (alias)
+  "/status"         → triggers
+  "help"            → triggers
+
+Does NOT match:
+  "please degrade"  → first word is "please"
+  "degraded"        → word boundary prevents partial match
+"""
+
+_VALID_COMMANDS = frozenset({"degrade", "status", "help"})
 
 
 # ── Result type ─────────────────────────────────────────────────────────────
@@ -66,7 +81,6 @@ async def handle_inline_command(
     conversation_id: str | None,
     config,
     db: AsyncSession,
-    arq_pool=None,
 ) -> InlineCommandResult:
     """Check if the last user message contains an inline command.
 
@@ -86,21 +100,17 @@ async def handle_inline_command(
         return InlineCommandResult()
 
     command = match.group(1).lower()
-    args = match.group(2).strip()
-
-    # Resolve aliases
     command = _resolve_aliases(command) or command
 
     if command not in _VALID_COMMANDS:
         return InlineCommandResult()
 
-    if not conversation_id and command in ("compact", "degrade"):
+    if not conversation_id and command == "degrade":
         return InlineCommandResult(
             handled=True,
             response_text=(
                 "⚠️ **No active conversation.**\n\n"
                 "Start a conversation first, then use:\n"
-                "- `/compact` — prepare conversation for model switch\n"
                 "- `/degrade` — describe multimedia as text\n"
                 "- `/status` — show conversation state"
             ),
@@ -108,8 +118,6 @@ async def handle_inline_command(
         )
 
     match command:
-        case "compact":
-            return await _handle_compact(conversation_id, config, db, arq_pool, args)
         case "degrade":
             return await _handle_degrade(conversation_id, config, db)
         case "status":
@@ -117,107 +125,6 @@ async def handle_inline_command(
         case "help":
             return _handle_help()
     return InlineCommandResult()
-
-
-# ── @compact — one-shot prep for model switch ──────────────────────────────
-
-
-async def _handle_compact(
-    conversation_id: str | None,
-    config,
-    db: AsyncSession,
-    arq_pool=None,
-    args: str = "",
-) -> InlineCommandResult:
-    """@compact: normalize tools + degrade multimedia + compact history.
-
-    This is the one-shot command to prepare a conversation for switching
-    to a different pseudo-model. It runs all three operations in sequence
-    so the resulting conversation is maximally portable.
-    """
-    if not conversation_id:
-        return _no_conv_result()
-
-    steps: list[str] = []
-    total_meta: dict = {}
-
-    conv_uuid = _parse_uuid(conversation_id)
-    conv = await db.get(Conversation, conv_uuid)
-    if not conv:
-        return InlineCommandResult(
-            handled=True,
-            response_text="⚠️ Conversation not found.",
-            skip_llm=True,
-        )
-
-    caps = await load_session_capabilities(db, conv_uuid, conv.total_tokens)
-
-    # ── Step 1: Normalize parallel tools ─────────────────────────────────
-    if caps.has_parallel_tools:
-        try:
-            norm_result = await _do_normalize(conv_uuid, db)
-            if norm_result:
-                steps.append(f"✅ **Tools normalised:** {norm_result['turns_serialized']} turn(s) serialised")
-                total_meta["normalize"] = norm_result
-        except Exception as e:
-            steps.append(f"⚠️ Tool normalisation skipped: {e}")
-
-    # ── Step 2: Degrade multimedia ───────────────────────────────────────
-    if caps.has_images:
-        try:
-            deg_result = await _do_degrade(conv, conv_uuid, config, db)
-            if deg_result and deg_result.get("images_described", 0) > 0:
-                steps.append(
-                    f"🖼️ **Multimedia degraded:** {deg_result['images_described']} "
-                    f"item(s) described by {deg_result.get('described_by', '?')}"
-                )
-                total_meta["degrade"] = deg_result
-        except Exception as e:
-            steps.append(f"⚠️ Degradation skipped: {e}")
-
-    # ── Step 3: Compact history ──────────────────────────────────────────
-    dry_run = "`--dry`" in args
-    if not dry_run:
-        try:
-            comp_result = await compact_conversation(
-                conversation_id=conversation_id,
-                db=db,
-                config=config,
-                arq_pool=arq_pool,
-            )
-            if comp_result.get("status") == "processing":
-                steps.append(
-                    f"📦 **Compaction dispatched** — task `{comp_result.get('task_id', '?')}`"
-                )
-            else:
-                steps.append(
-                    f"📦 **History compacted:** "
-                    f"{comp_result.get('tokens_before', 0):,} → "
-                    f"{comp_result.get('tokens_after', 0):,} tokens "
-                    f"(−{comp_result.get('tokens_reduced_pct', 0)}%)"
-                )
-            total_meta["compact"] = comp_result
-        except HTTPException as e:
-            detail = e.detail if isinstance(e.detail, dict) else {"error": str(e)}
-            steps.append(f"⚠️ Compaction not needed: {detail.get('error', '')}")
-
-    if not steps:
-        steps.append("ℹ️ Nothing to do — conversation is already clean.")
-
-    preview = ""
-    if total_meta.get("compact") and total_meta["compact"].get("preview"):
-        preview = (
-            "\n\n**Snapshot preview:**\n```\n"
-            + total_meta["compact"]["preview"][:600]
-            + "\n```"
-        )
-
-    return InlineCommandResult(
-        handled=True,
-        response_text="## 🧹 Conversation prepared for model switch\n\n" + "\n".join(steps) + preview,
-        response_metadata=total_meta,
-        skip_llm=True,
-    )
 
 
 # ── @degrade — describe multimedia as text ────────────────────────────────
@@ -321,6 +228,7 @@ async def _handle_degrade(
     db.add(deg_turn)
     conv.images_described = (conv.images_described or 0) + described_count
     conv.images_degraded_manually = True
+    conv.capability_has_images = False  # Reset after successful degradation
     await db.commit()
 
     return InlineCommandResult(
@@ -407,7 +315,6 @@ async def _handle_status(
     status_lines.extend([
         "",
         "**Commands:**",
-        "- `/compact` — prepare for model switch (normalize + degrade + compact)",
         "- `/degrade` — describe multimedia as text",
         "- `/status` — this screen",
     ])
@@ -434,68 +341,20 @@ def _handle_help() -> InlineCommandResult:
         response_text=(
             "📚 **Inline Commands — Help**\n\n"
             "Type any of these as your chat message:\n\n"
-            "### `/compact`\n"
-            "**One-shot prep for switching models.** Runs three steps:\n"
-            "1. Normalize parallel tools → sequential\n"
-            "2. Describe multimedia (images, PDFs) as text\n"
-            "3. Compact conversation history into a snapshot\n\n"
-            "After `/compact`, the conversation is maximally portable.\n\n"
             "### `/degrade`\n"
             "Describe all multimedia items as text.\n"
             "Use before switching to a non-vision pseudo-model.\n\n"
             "### `/status`\n"
             "Show current conversation state: model, tokens, capabilities.\n\n"
             "---\n"
-            "*Commands work on the current conversation only.*"
+            "Compaction is handled natively by OpenCode.\n"
+            "For programmatic compaction: `POST /conversations/{id}/compact`"
         ),
         skip_llm=True,
     )
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────
-
-
-async def _do_normalize(conv_uuid: uuid.UUID, db: AsyncSession) -> dict | None:
-    """Run tool normalisation and return result metadata."""
-    result = await db.execute(
-        select(ConversationTurn)
-        .where(ConversationTurn.conversation_id == conv_uuid)
-        .order_by(ConversationTurn.turn_number)
-    )
-    turns = result.scalars().all()
-    if not turns:
-        return None
-
-    all_messages: list[dict] = []
-    for turn in turns:
-        tm = turn.messages
-        if isinstance(tm, list):
-            all_messages.extend(tm)
-        elif isinstance(tm, dict):
-            msgs = tm.get("messages", tm)
-            if isinstance(msgs, list):
-                all_messages.extend(msgs)
-
-    normalized, meta = normalize_history(all_messages)
-    if meta.turns_serialized == 0:
-        return None
-
-    conv = await db.get(Conversation, conv_uuid)
-    norm_turn = ConversationTurn(
-        conversation_id=conv_uuid,
-        turn_number=(max(t.turn_number for t in turns) + 1),
-        turn_type="normalization_event",
-        pseudo_model=conv.pseudo_model if conv else "?",
-        physical_model=conv.physical_model if conv else "?",
-        messages={"normalized_history": normalized, "metadata": vars(meta)},
-    )
-    db.add(norm_turn)
-    await db.flush()
-    return {
-        "turns_serialized": meta.turns_serialized,
-        "parallel_calls_serialized": meta.parallel_calls_serialized,
-        "affected_turns": meta.affected_turns,
-    }
 
 
 async def _do_degrade(
@@ -553,11 +412,6 @@ def _no_conv_result() -> InlineCommandResult:
 
 
 _ALIASES: dict[str, str] = {
-    "compactar": "compact",
-    "comprime": "compact",
-    "comprimir": "compact",
-    "prepare": "compact",
-    "preparar": "compact",
     "degradar": "degrade",
     "describir": "degrade",
     "describe": "degrade",

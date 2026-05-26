@@ -12,7 +12,6 @@ python.md §4: Pure functions tested deterministically.
 python.md §3: Result monad — errors returned, not raised.
 """
 
-import builtins
 import json
 from unittest.mock import MagicMock, patch
 
@@ -21,12 +20,10 @@ import pytest
 from src.service.chat_service import evaluate_router_suggestion
 from src.service.router_llm.suggester import (
     ALLOWED_SUGGESTIONS,
-    _classify_with_bert,
     _compute_tier,
     _extract_last_user_content,
     evaluate_complexity,
     is_downgrade,
-    load_bert_classifier,
 )
 from src.config.pseudo_models import load_config
 
@@ -176,9 +173,9 @@ class TestIsDowngrade:
 
     def test_more_expensive_not_downgrade(self):
         """Switching TO a more expensive model is NOT a downgrade.
-        Suggested (pensamiento) costs more than current (normal) → False.
+        Suggested (normal) costs more than current (tareas-avanzadas) → False.
         """
-        assert is_downgrade("pensamiento-profundo-caro", "normal", _CONFIG) is False
+        assert is_downgrade("normal", "tareas-avanzadas", _CONFIG) is False
 
     def test_same_model_not_downgrade(self):
         """Same model → not a downgrade."""
@@ -192,20 +189,20 @@ class TestComputeTier:
     """2 tests for _compute_tier()."""
 
     def test_ranks_correctly(self):
-        """pensamiento-profundo-caro > normal > flash-lowcost."""
+        """normal > pensamiento-profundo-caro > flash-lowcost by context_window."""
         deep_tier = _compute_tier("pensamiento-profundo-caro", _CONFIG)
         normal_tier = _compute_tier("normal", _CONFIG)
         flash_tier = _compute_tier("flash-lowcost", _CONFIG)
-        deep_v4_tier = _compute_tier("deep-flash", _CONFIG)
+        massive_tier = _compute_tier("massive-fast", _CONFIG)
 
-        assert deep_tier > normal_tier, (
-            f"pensamiento-profundo-caro ({deep_tier}) should be > normal ({normal_tier})"
+        assert normal_tier > deep_tier, (
+            f"normal ({normal_tier}) > pensamiento-profundo-caro ({deep_tier}) by context_window"
         )
         assert normal_tier > flash_tier, (
             f"normal ({normal_tier}) should be > flash-lowcost ({flash_tier})"
         )
-        assert deep_v4_tier >= normal_tier or deep_v4_tier < flash_tier, (
-            f"deep-flash ({deep_v4_tier}) tier check"
+        assert normal_tier >= massive_tier, (
+            f"normal ({normal_tier}) >= massive-fast ({massive_tier})"
         )
 
     def test_unknown_model_returns_zero(self):
@@ -260,56 +257,6 @@ class TestAllowedSuggestions:
             )
 
 
-# ── load_bert_classifier tests ────────────────────────────────────────────────
-
-
-class TestLoadBertClassifier:
-    """3 tests for load_bert_classifier()."""
-
-    @patch("src.service.router_llm.suggester.Path")
-    def test_file_not_found(self, mock_path):
-        """Model file missing → returns False."""
-        mock_path.return_value.exists.return_value = False
-        result = load_bert_classifier()
-        assert result is False
-
-    @patch("src.service.router_llm.suggester.Path")
-    def test_onnx_not_installed(self, mock_path):
-        """onnxruntime not installed → returns False gracefully."""
-        mock_path.return_value.exists.return_value = True
-        real_import = builtins.__import__
-
-        def mock_import(name, *args, **kwargs):
-            if name == "onnxruntime":
-                raise ImportError(f"No module named {name}")
-            return real_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", mock_import):
-            result = load_bert_classifier()
-        assert result is False
-
-    @patch("src.service.router_llm.suggester.Path")
-    def test_success(self, mock_path):
-        """Model loads successfully → returns True."""
-        mock_path.return_value.exists.return_value = True
-        real_import = builtins.__import__
-        mock_session = MagicMock()
-
-        def mock_import(name, *args, **kwargs):
-            if name == "onnxruntime":
-                mock_ort = MagicMock()
-                mock_ort.InferenceSession.return_value = mock_session
-                return mock_ort
-            return real_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", mock_import):
-            result = load_bert_classifier()
-        assert result is True
-        import src.service.router_llm.suggester as _s
-
-        _s._bert_session = None
-
-
 # ── evaluate_router_suggestion tests ───────────────────────────────────────────
 
 
@@ -350,18 +297,3 @@ class TestEvaluateRouterSuggestion:
 
         assert result is None
         config.pseudo_models.get.assert_called_once_with("nonexistent-suggester")
-
-
-# ── _classify_with_bert tests ──────────────────────────────────────────────────
-
-
-class TestClassifyWithBert:
-    """1 test for _classify_with_bert()."""
-
-    def test_not_loaded(self):
-        """_bert_session is None → returns None."""
-        import src.service.router_llm.suggester as _s
-
-        _s._bert_session = None
-        result = _classify_with_bert("some text")
-        assert result is None

@@ -419,10 +419,10 @@ async def compact_conversation_endpoint(
     Returns:
         Dict with snapshot_id, tokens_before/after, preview, status.
     """
-    db: AsyncSession = fastapi_request.app.state.db_session_factory()
     config = fastapi_request.app.state.config
     arq_pool = getattr(fastapi_request.app.state, "arq_pool", None)
 
+    db = fastapi_request.app.state.db_session_factory()
     try:
         return await compact_conversation(
             conversation_id=conversation_id,
@@ -431,14 +431,12 @@ async def compact_conversation_endpoint(
             arq_pool=arq_pool,
         )
     except HTTPException:
-        await db.rollback()
         raise
     except Exception as e:
-        await db.rollback()
         raise HTTPException(
-            status_code=502,
-            detail={"error": "COMPACTION_FAILED", "message": str(e)},
-        ) from e
+        status_code=502,
+        detail={"error": "COMPACTION_FAILED", "message": str(e)},
+    ) from e
     finally:
         await db.close()
 
@@ -707,6 +705,7 @@ async def degrade_images(
         # Update conversation tracking
         conv.images_described = (conv.images_described or 0) + described_count
         conv.images_degraded_manually = True
+        conv.capability_has_images = False  # Reset after successful degradation
         await db.commit()
 
         return {

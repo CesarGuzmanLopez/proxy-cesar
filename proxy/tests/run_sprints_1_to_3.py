@@ -210,7 +210,7 @@ async def test_sprint2():
         r = await c.post(
             f"{BASE}/v1/chat/completions",
             json={
-                "model": "flash-vision",
+                "model": "vision",
                 "messages": [{"role": "user", "content": huge_msg}],
                 "max_tokens": 10,
             },
@@ -248,11 +248,11 @@ async def test_sprint2():
             expected = {
                 "pensamiento-profundo-caro",
                 "tareas-avanzadas",
-                "avanzada-vision",
+                "vision",
                 "normal",
                 "deep-flash",
                 "flash-lowcost",
-                "flash-vision",
+                "vision",
                 "compactador",
             }
             missing = expected - ids

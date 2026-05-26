@@ -28,7 +28,7 @@ async def test_1_new_conversation(async_client: AsyncClient, mock_litellm):
     data = response.json()
     assert "proxy_metadata" in data
     assert data["proxy_metadata"]["pseudo_model"] == "normal"
-    assert data["proxy_metadata"]["physical_model"] == "openrouter/qwen3-max"
+    assert data["proxy_metadata"]["physical_model"] == "deepseek/deepseek-v4-flash"
     assert data["proxy_metadata"]["conversation_id"] == "conv-test-1"
 
 
@@ -254,7 +254,7 @@ async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_li
     conv_id = uuid.uuid5(uuid.NAMESPACE_DNS, "conv-auto-desc")
     conv = Conversation(
         id=conv_id,
-        pseudo_model="avanzada-vision",
+        pseudo_model="vision",
         physical_model="gemini/gemini-3.5-flash",
         total_tokens=100,
     )
@@ -302,7 +302,7 @@ async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_li
         response = await async_client.post(
             "/v1/chat/completions",
             json={
-                "model": "pensamiento-profundo-caro",
+                "model": "normal-gratis",
                 "messages": [{"role": "user", "content": "Tell me about this image"}],
                 "conversation_id": "conv-auto-desc",
             },

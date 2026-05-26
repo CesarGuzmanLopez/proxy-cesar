@@ -79,18 +79,23 @@ async def pre_compact_input(
     messages: list[dict],
     pseudo_model: PseudoModelSchema,
     config,
+    input_tokens: int | None = None,
 ) -> tuple[list[dict], dict]:
     """Pre-compact the input using the configured compactor pseudo-model.
 
     Only modifies the LAST user message. System messages, tool history,
     and assistant messages are passed through unchanged.
+
+    Args:
+        input_tokens: Pre-computed token count (avoids redundant estimation).
     """
     threshold = pseudo_model.pre_compaction.threshold
     target_tokens = pseudo_model.pre_compaction.target_tokens
     compactor_name = pseudo_model.pre_compaction.compactor
 
-    # Estimate input tokens
-    input_tokens = estimate_tokens(messages)
+    # Estimate input tokens (caller may have pre-computed)
+    if input_tokens is None:
+        input_tokens = estimate_tokens(messages)
 
     if input_tokens <= (threshold or 0):
         return messages, {
@@ -105,6 +110,14 @@ async def pre_compact_input(
         return messages, {
             "applied": False,
             "reason": "no_user_message",
+            "original_input_tokens": input_tokens,
+        }
+
+    # Skip if the last user message contains images (can't compact them)
+    if _has_image_content(messages[last_user_idx]):
+        return messages, {
+            "applied": False,
+            "reason": "has_image_content",
             "original_input_tokens": input_tokens,
         }
 
@@ -170,6 +183,17 @@ def _find_last_user_message(messages: list[dict]) -> int | None:
         if messages[i].get("role") == "user":
             return i
     return None
+
+
+def _has_image_content(message: dict) -> bool:
+    """Check if a message contains ``image_url`` content parts."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            return True
+    return False
 
 
 def _extract_text_content(message: dict) -> str:

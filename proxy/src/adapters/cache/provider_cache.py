@@ -3,10 +3,8 @@
 Sprint 7 §3: each provider has a different caching mechanism.
 The proxy applies the appropriate strategy based on the physical model's provider.
 
-- Anthropic: cache_control breakpoints (max 4)
-- OpenAI/DeepSeek: automatic prefix caching (no action needed)
-- Gemini: CachedContent via cache_id (documented limitation)
-- Groq/Zhipu/Qwen/MiniMax/Ollama: no caching
+- OpenAI/DeepSeek/Groq: automatic prefix caching (no action needed)
+- Ollama: no caching
 """
 
 import logging
@@ -15,9 +13,12 @@ from copy import deepcopy
 logger = logging.getLogger(__name__)
 
 # Providers with known caching mechanisms
-_PROVIDERS_WITH_CACHE = frozenset({"anthropic", "openai", "deepseek", "google"})
+# Z.ai/Zhipu: automatic prefix caching (OpenAI-compatible format, cached input ~18% of regular price)
+# Groq: automatic prefix caching, 50% discount on cached tokens, 2-hour TTL
+#   Supported models: openai/gpt-oss-20b, openai/gpt-oss-120b
+_PROVIDERS_WITH_CACHE = frozenset({"openai", "deepseek", "groq", "anthropic"})
 _PROVIDERS_WITH_CACHE_CONTROL = frozenset({"anthropic"})
-_PROVIDERS_WITH_AUTO_CACHE = frozenset({"openai", "deepseek"})
+_PROVIDERS_WITH_AUTO_CACHE = frozenset({"openai", "deepseek", "groq"})
 
 
 # ── Anthropic cache_control ──────────────────────────────────────────────────
@@ -35,6 +36,13 @@ def apply_anthropic_cache_control(messages: list[dict]) -> list[dict]:
     Max 4 breakpoints per Anthropic's limits.
     Only works with messages in canonical order (system first).
 
+    LiteLLM expects cache_control on CONTENT ITEMS, not at the message level:
+      {"role": "user", "content": [
+          {"type": "text", "text": "...", "cache_control": {"type": "ephemeral"}}
+      ]}
+
+    Messages with string content are converted to this format automatically.
+
     Returns a deep copy with cache_control annotations added.
     """
     modified = deepcopy(messages)
@@ -42,25 +50,43 @@ def apply_anthropic_cache_control(messages: list[dict]) -> list[dict]:
     msg_count = len(modified)
 
     if msg_count < 2:
-        return modified  # too few messages for meaningful breakpoints
+        return modified
+
+    # Helper: ensure content is a list of content items (Anthropic format)
+    def _ensure_content_list(msg: dict) -> dict:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            msg["content"] = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            pass  # already in Anthropic format
+        return msg
+
+    # Helper: add cache_control to the last content item
+    def _add_cache_control_to_last_content(msg: dict) -> dict:
+        content = msg.get("content", [])
+        if isinstance(content, list) and content:
+            last = content[-1]
+            if isinstance(last, dict):
+                last["cache_control"] = {"type": "ephemeral"}
+        return msg
 
     # Breakpoint 1: on the first system message
     for i, msg in enumerate(modified):
         if breakpoints_placed >= 4:
             break
         if msg.get("role") == "system" and breakpoints_placed == 0:
-            msg["cache_control"] = {"type": "ephemeral"}
+            msg = _ensure_content_list(msg)
+            msg = _add_cache_control_to_last_content(msg)
+            modified[i] = msg
             breakpoints_placed += 1
-            break  # system found, move to next breakpoint position
+            break
 
     # Breakpoint 2: on the last message before the final user query
-    # In canonical order, the penultimate message is the last history entry.
-    # We assume the last message is the new user query.
     if breakpoints_placed < 4 and msg_count >= 2:
-        # Index of the last message before the final one
         bp_idx = msg_count - 2
         if bp_idx >= 0 and modified[bp_idx].get("role") != "system":
-            modified[bp_idx]["cache_control"] = {"type": "ephemeral"}
+            modified[bp_idx] = _ensure_content_list(modified[bp_idx])
+            modified[bp_idx] = _add_cache_control_to_last_content(modified[bp_idx])
             breakpoints_placed += 1
         logger.debug(
             "anthropic_cache_control placed=%d messages=%d",
@@ -81,7 +107,7 @@ def provider_supports_cache(provider: str) -> bool:
     return provider.lower() in _PROVIDERS_WITH_CACHE
 
 
-# ── Gemini CachedContent (documented limitation in Sprint 7) ──────────────────
+# ── Gemini CachedContent (deprecated — Google models removed) ──────────────
 
 
 async def manage_gemini_cache(
@@ -91,35 +117,7 @@ async def manage_gemini_cache(
     tool_definitions: list[dict] | None,
     provider: str,
 ) -> str | None:
-    """Manage Gemini CachedContent for a conversation.
-
-    Creates a cache on first turn, reuses on subsequent turns.
-    Returns the cache_id or None.
-
-    Sprint 7 limitation: if LiteLLM does not support Gemini CachedContent
-    directly, this returns None and the limitation is documented in
-    proxy_metadata.
-    """
-    if provider.lower() != "google":
-        return None
-
-    cache_key = f"conv:{conversation_id}:gemini_cache_id"
-
-    try:
-        existing_cache_id = await valkey_client.get(cache_key)
-        if existing_cache_id:
-            return existing_cache_id
-    except Exception:
-        logger.warning("gemini_cache valkey_read_failed conv=%s", conversation_id)
-        return None
-
-    # LiteLLM may not support Gemini CachedContent directly.
-    # Document as limitation — Sprint 7 §3.3
-    logger.info(
-        "gemini_cache not_supported_via_litellm conv=%s "
-        "limitation=CachedContent_requires_direct_gemini_api",
-        conversation_id,
-    )
+    """Stub — Google models have been removed from the proxy configuration."""
     return None
 
 

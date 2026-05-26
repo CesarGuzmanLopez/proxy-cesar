@@ -10,8 +10,9 @@ from pathlib import Path
 
 import uvicorn
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -24,11 +25,13 @@ from src.api.conversations import router as conversations_router
 from src.api.health import router as health_router
 from src.api.metrics import router as metrics_router
 from src.api.models import router as models_router
+
 from src.auth import AuthMiddleware
 from src.config.pseudo_models import load_config
 from src.config.settings import settings
 from src.logging_config import setup_logging
 from src.middleware.rate_limiter import RateLimitMiddleware
+from src.utils.sanitize import sanitize, sanitize_dict
 
 # Configure structured JSON logging (Sprint 8)
 setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -90,15 +93,6 @@ async def lifespan(app: FastAPI):
         print("arq not available — compaction runs synchronously")
     app.state.arq_pool = arq_pool
 
-    # Sprint 5: Optional BERT router classifier
-    from src.service.router_llm.suggester import load_bert_classifier
-
-    bert_loaded = load_bert_classifier()
-    if bert_loaded:
-        print("BERT router classifier loaded — fast local routing enabled")
-    else:
-        print("BERT router classifier not loaded — using LLM-based routing (slower)")
-
     print(f"Proxy ready on port {settings.proxy_port}")
 
     yield
@@ -142,6 +136,30 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Conversation-ID"],
 )
 
+# ── Global exception handlers: sanitize API keys from all error responses ──
+
+@app.exception_handler(HTTPException)
+async def sanitize_http_exception(request, exc: HTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict):
+        detail = sanitize_dict(detail)
+    elif isinstance(detail, str):
+        detail = sanitize(detail)
+    status = exc.status_code
+    headers = getattr(exc, "headers", None)
+    return JSONResponse(
+        status_code=status,
+        content={"detail": detail},
+        headers=headers,
+    )
+
+@app.exception_handler(Exception)
+async def sanitize_generic_exception(request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": {"error": "INTERNAL_ERROR", "message": "Internal server error"}},
+    )
+
 # ── Routers ─────────────────────────────────────────────────────────────────
 
 app.include_router(chat_router)
@@ -157,7 +175,7 @@ def main() -> None:
         "src.main:app",
         host=settings.proxy_host,
         port=settings.proxy_port,
-        reload=True,
+        reload=False,
     )
 
 

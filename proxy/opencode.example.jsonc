@@ -59,23 +59,23 @@
             "parallel_tool_calls": false
           }
         },
-        "avanzada-vision": {
-          "name": "avanzada-vision",
+        "vision": {
+          "name": "vision",
           "capabilities": {
-            "tools": false,
+            "tools": true,
             "vision": true,
             "streaming": true,
-            "function_calling": false,
-            "parallel_tool_calls": false
+            "function_calling": true,
+            "parallel_tool_calls": true
           }
         },
-        "flash-vision": {
-          "name": "flash-vision",
+        "normal-gratis": {
+          "name": "normal-gratis",
           "capabilities": {
-            "tools": false,
-            "vision": true,
+            "tools": true,
+            "vision": false,
             "streaming": true,
-            "function_calling": false,
+            "function_calling": true,
             "parallel_tool_calls": false
           }
         }

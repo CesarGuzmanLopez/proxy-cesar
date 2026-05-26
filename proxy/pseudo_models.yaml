@@ -1,9 +1,9 @@
 pseudo_models:
   pensamiento-profundo-caro:
     display_name: Pensamiento Profundo
-    description: Razonamiento de máximo nivel. Bugs imposibles, arquitectura compleja.
-    input_token_threshold: 32000
-    context_window: 200000
+    description: 'Razonamiento de máximo nivel. Límite 120K tokens — si lo superas usa /compact para continuar.'
+    input_token_threshold: 120000
+    context_window: 120000
     continuous_compaction:
       enabled: true
       trigger_pct: 70
@@ -12,7 +12,7 @@ pseudo_models:
       enabled: true
       threshold: 32000
       target_tokens: 8000
-      compactor: deep-flash
+      compactor: flash-lowcost
     router_llm:
       enabled: true
       suggester: flash-lowcost
@@ -20,24 +20,29 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
-    - provider: zhipu
-      model: zai/glm-5
-      openai_tools_compatible: true
-      tools_strict: false
-      parallel_tools: false
-      vision: false
     - provider: deepseek
       model: deepseek/deepseek-v4-pro
       openai_tools_compatible: true
       tools_strict: true
       parallel_tools: true
       vision: false
+      context_window: 1000000
+      note: 'Primary: razonamiento profundo. 1M contexto, tools estrictas.'
+    - provider: openrouter
+      model: openrouter/google/gemini-3.5-flash
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: true
+      vision: true
+      context_window: 1048576
+      note: 'Fallback vía OpenRouter. 1M contexto, visión+audio, razonamiento fuerte, bajo costo.'
     fallback_strategy: sequential
+
   tareas-avanzadas:
     display_name: Tareas Avanzadas
-    description: Desarrollo profundo y sostenido. Features largas, debugging serio.
-    input_token_threshold: 64000
-    context_window: 128000
+    description: 'Desarrollo profundo y sostenido. Límite 200K tokens — usa /compact si lo superas.'
+    input_token_threshold: 200000
+    context_window: 200000
     continuous_compaction:
       enabled: true
       trigger_pct: 75
@@ -55,24 +60,21 @@ pseudo_models:
       tools_strict: true
       parallel_tools: true
       vision: false
+      context_window: 1000000
     - provider: deepseek
       model: deepseek/deepseek-v4-flash
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: true
       vision: false
-    - provider: minimax
-      model: openrouter/minimax-m2.5
-      openai_tools_compatible: true
-      tools_strict: false
-      parallel_tools: false
-      vision: false
+      context_window: 1000000
     fallback_strategy: sequential
-  avanzada-vision:
-    display_name: Visión Avanzada
-    description: Análisis visual de alto nivel. Diseño UI, OCR complejo, diagramas.
-    input_token_threshold: 32000
-    context_window: 32768
+
+  vision:
+    display_name: Visión
+    description: 'Visión unificada: OCR, diagramas, UI, screenshots. Límite 120K tokens — usa /degrade si superas.'
+    input_token_threshold: 120000
+    context_window: 120000
     continuous_compaction:
       enabled: false
     pre_compaction:
@@ -88,20 +90,15 @@ pseudo_models:
       tools_strict: false
       parallel_tools: false
       vision: true
-      note: "Primary: fast, cheap Llama 4 vision via Groq"
-    - provider: google
-      model: gemini/gemini-3.5-flash
-      openai_tools_compatible: true # LiteLLM traduce
-      tools_strict: false
-      parallel_tools: false
-      vision: true
-      note: "Fallback: Gemini Flash vision"
+      context_window: 131072
+      note: 'Visión vía Groq. 131K contexto.'
     fallback_strategy: sequential
+
   normal:
     display_name: Normal
-    description: Punto de entrada recomendado. Coding extenso, trabajo agéntico.
-    input_token_threshold: 96000
-    context_window: 96000
+    description: 'Punto de entrada recomendado. Coding extenso. Límite 500K tokens — usa /compact si lo superas.'
+    input_token_threshold: 500000
+    context_window: 500000
     continuous_compaction:
       enabled: true
       trigger_pct: 80
@@ -113,22 +110,83 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
-    - provider: qwen
-      model: openrouter/qwen3-max
-      openai_tools_compatible: true
-      tools_strict: false
-      parallel_tools: false
-      vision: false
     - provider: deepseek
       model: deepseek/deepseek-v4-flash
       openai_tools_compatible: true
       tools_strict: true
       parallel_tools: true
       vision: false
+      context_window: 1000000
+      note: 'Primary: rápido, 1M contexto, tools estrictas.'
+    - provider: openrouter
+      model: openrouter/google/gemini-3.1-flash-lite
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: true
+      context_window: 1000000
+      note: 'Fallback barato vía OpenRouter. 1M contexto, visión+audio.'
     fallback_strategy: sequential
-  deep-flash:
-    display_name: Deep Flash
-    description: Velocidad y costo mínimo para tareas masivas y simples.
+
+  normal-gratis:
+    display_name: Normal Gratis
+    description: 'Modelos gratuitos y de bajo costo. Límite 200K tokens — usa /compact si lo superas.'
+    input_token_threshold: 200000
+    context_window: 200000
+    continuous_compaction:
+      enabled: false
+    pre_compaction:
+      enabled: false
+    router_llm:
+      enabled: false
+    image_handling:
+      on_downgrade: auto_describe
+    physical_models:
+    - provider: openrouter
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: false
+      vision: false
+      note: 'Gratuito vía OpenRouter. 1M contexto. Primary.'
+      context_window: 1000000
+    - provider: groq
+      model: groq/qwen/qwen3-32b
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: true
+      vision: false
+      note: 'Fallback rápido vía Groq. 32B, 131K contexto. Bajo costo.'
+      context_window: 131072
+    fallback_strategy: sequential
+
+  massive-fast:
+    display_name: Massive Fast
+    description: 'Texto masivo ultrarrápido vía Groq. Límite 131K tokens. GPT-OSS 20B + Qwen 32B.'
+    input_token_threshold: 131072
+    context_window: 131072
+    continuous_compaction:
+      enabled: false
+    pre_compaction:
+      enabled: false
+    router_llm:
+      enabled: false
+    image_handling:
+      on_downgrade: block
+    physical_models:
+    - provider: groq
+      context_window: 131072
+      model: groq/openai/gpt-oss-20b
+      openai_tools_compatible: true
+      tools_strict: false
+      parallel_tools: true
+      vision: false
+      note: 'Razonamiento + velocidad Groq. 20B, 131K contexto, tools regulares.'
+    fallback_strategy: sequential
+
+  flash-lowcost:
+    display_name: Flash Lowcost
+    description: 'Sub-agentes baratos. Clasificación, extracción, parsing. Límite 128K.'
     input_token_threshold: 128000
     context_window: 128000
     continuous_compaction:
@@ -140,30 +198,21 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
-    - provider: zhipu
-      model: zai/glm-4.5-flash
+    - provider: openrouter
+      model: openrouter/google/gemini-3.1-flash-lite
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
-      vision: false
-    - provider: groq
-      model: groq/gpt-oss-20b
-      openai_tools_compatible: true
-      tools_strict: false
-      parallel_tools: false
-      vision: false
-    - provider: deepseek
-      model: deepseek/deepseek-v4-flash
-      openai_tools_compatible: true
-      tools_strict: true
-      parallel_tools: true
-      vision: false
+      vision: true
+      note: 'Barato vía OpenRouter. $0.00000025/$0.0000015 por M tok. 1M contexto, visión+audio.'
+      context_window: 1000000
     fallback_strategy: sequential
-  flash-lowcost:
-    display_name: Flash Lowcost
-    description: Sub-agentes baratos. Clasificación, extracción, parsing.
-    input_token_threshold: 64000
-    context_window: 64000
+
+  audio:
+    display_name: Audio
+    description: 'Transcripción de audio a texto vía Groq Whisper. Ideal para voicenotes, reuniones, audios.'
+    input_token_threshold: 131072
+    context_window: 131072
     continuous_compaction:
       enabled: false
     pre_compaction:
@@ -173,30 +222,31 @@ pseudo_models:
     image_handling:
       on_downgrade: block
     physical_models:
-    - provider: zhipu
-      model: zai/glm-4.5-flash
+    - provider: groq
+      model: groq/whisper-large-v3
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
       vision: false
-    - provider: qwen
-      model: openrouter/qwen3.5-plus
+      audio: true
+      context_window: 131072
+      note: 'Whisper Large V3 vía Groq. 217x speed. $0.111/hora.'
+    - provider: groq
+      model: groq/whisper-large-v3-turbo
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
       vision: false
-    - provider: ollama
-      model: ollama/llama3.2
-      openai_tools_compatible: true
-      tools_strict: false
-      parallel_tools: false
-      vision: false
+      audio: true
+      context_window: 131072
+      note: 'Whisper Large V3 Turbo vía Groq. 228x speed. $0.04/hora.'
     fallback_strategy: sequential
-  flash-vision:
-    display_name: Flash Vision
-    description: Visión rápida y barata. OCR ligero, screenshots.
-    input_token_threshold: 16000
-    context_window: 16384
+
+  imagen:
+    display_name: Imagen
+    description: 'Generación de imágenes vía Pruna P-Image. Texto a imagen en <1s. 250 req/min.'
+    input_token_threshold: 1000
+    context_window: 1000
     continuous_compaction:
       enabled: false
     pre_compaction:
@@ -204,26 +254,24 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: auto_describe
+      on_downgrade: block
     physical_models:
-    - provider: google
-      model: gemini/gemini-3.5-flash
+    - provider: pruna
+      model: pruna/p-image
       openai_tools_compatible: true
       tools_strict: false
       parallel_tools: false
-      vision: true
-    - provider: ollama
-      model: ollama/llava
-      openai_tools_compatible: true
-      tools_strict: false
-      parallel_tools: false
-      vision: true
+      vision: false
+      audio: false
+      context_window: 1000
+      note: 'Pruna P-Image. Texto a imagen en <1s. $0.002 por imagen.'
     fallback_strategy: sequential
+
   compactador:
     display_name: Compactador
-    description: Operación de compactación explícita. No es modo conversacional.
-    input_token_threshold: null
-    context_window: null
+    description: 'Compactación de contexto ultrarrápida. Sin límite práctico (20M tokens). Preserva primeras y últimas messages para mantener caché de proveedor. Groq hasta 131K, DeepSeek V4 Flash (1M) para historias masivas. Sin tools, solo texto.'
+    input_token_threshold: 20000000
+    context_window: 20000000
     continuous_compaction:
       enabled: false
     pre_compaction:
@@ -233,34 +281,26 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
-    - provider: google
-      model: gemini/gemini-3.5-flash
+    - provider: groq
+      model: groq/openai/gpt-oss-20b
+      context_window: 131072
+      openai_tools_compatible: true
+      vision: false
+      note: 'Primary: 20B vía Groq (1000+ t/s). Ideal para <131K.'
+    - provider: deepseek
+      model: deepseek/deepseek-v4-flash
       context_window: 1000000
       openai_tools_compatible: true
-      vision: true
-    - provider: anthropic
-      model: anthropic/claude-haiku-4-5-20251001
-      context_window: 200000
-      openai_tools_compatible: true
       vision: false
-    - provider: zhipu
-      model: zai/glm-4.5-flash
-      context_window: 128000
-      openai_tools_compatible: true
-      vision: false
+      note: '1M contexto. Para compactar historias muy grandes (>131K tokens).'
     fallback_strategy: by_context_window
 
 model_aliases:
-  # OpenAI names → pseudo-models
   gpt-4o: normal
-  gpt-4o-mini: deep-flash
-  "gpt-4.1": tareas-avanzadas
+  gpt-4o-mini: normal
+  gpt-4.1: tareas-avanzadas
   o3: pensamiento-profundo-caro
   o4-mini: pensamiento-profundo-caro
-  # Anthropic names → pseudo-models
+  gemini-2.5-flash: vision
   claude-haiku-3-5-20241022: flash-lowcost
-  # Google names → pseudo-models
-  gemini-2.5-flash: avanzada-vision
-  gemini-2.5-pro: avanzada-vision
-  # Generic fallback
   default: normal

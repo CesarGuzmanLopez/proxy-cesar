@@ -19,11 +19,11 @@ def _get_pm(name: str):
     return CONFIG.pseudo_models[name]
 
 
-def test_image_sent_to_normal_returns_400():
-    """Image sent to 'normal' (no vision models) → 400 IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL."""
+def test_image_sent_to_tareas_avanzadas_returns_400():
+    """Image sent to 'tareas-avanzadas' (no vision models) → 400 IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL."""
     turn_caps = TurnCapabilities(has_images=True)
     with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(turn_caps, _get_pm("normal"), "normal", CONFIG)
+        validate_incoming_content(turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas", CONFIG)
     assert exc.value.status_code == 400
     assert "IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL" in str(exc.value.detail["error"])
 
@@ -33,7 +33,7 @@ def test_image_sent_to_avanzada_vision_proceeds():
     turn_caps = TurnCapabilities(has_images=True)
     # Should not raise
     result = validate_incoming_content(
-        turn_caps, _get_pm("avanzada-vision"), "avanzada-vision", CONFIG
+        turn_caps, _get_pm("vision"), "vision", CONFIG
     )
     assert result is None
 
@@ -41,19 +41,19 @@ def test_image_sent_to_avanzada_vision_proceeds():
 def test_audio_sent_to_any_model_returns_400():
     """Audio sent to any pseudo-model → 400 AUDIO_NOT_SUPPORTED."""
     turn_caps = TurnCapabilities(has_audio=True)
-    for name in ("normal", "avanzada-vision", "deep-flash"):
+    for name in ("normal", "vision", "flash-lowcost"):
         with pytest.raises(HTTPException) as exc:
             validate_incoming_content(turn_caps, _get_pm(name), name, CONFIG)
         assert exc.value.status_code == 400
         assert "AUDIO_NOT_SUPPORTED" in str(exc.value.detail["error"])
 
 
-def test_pdf_sent_to_deep_flash_returns_400():
-    """PDF sent to 'deep-flash' (no vision) → 400 PDF_NOT_SUPPORTED."""
+def test_pdf_sent_to_tareas_avanzadas_returns_400():
+    """PDF sent to 'tareas-avanzadas' (no vision) → 400 PDF_NOT_SUPPORTED."""
     turn_caps = TurnCapabilities(has_pdf=True)
     with pytest.raises(HTTPException) as exc:
         validate_incoming_content(
-            turn_caps, _get_pm("deep-flash"), "deep-flash", CONFIG
+            turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas", CONFIG
         )
     assert exc.value.status_code == 400
     assert "PDF_NOT_SUPPORTED" in str(exc.value.detail["error"])
@@ -63,7 +63,7 @@ def test_pdf_sent_to_avanzada_vision_proceeds():
     """PDF sent to 'avanzada-vision' (has vision) → proceeds (PDFs treated as images)."""
     turn_caps = TurnCapabilities(has_pdf=True)
     result = validate_incoming_content(
-        turn_caps, _get_pm("avanzada-vision"), "avanzada-vision", CONFIG
+        turn_caps, _get_pm("vision"), "vision", CONFIG
     )
     assert result is None
 
@@ -71,7 +71,7 @@ def test_pdf_sent_to_avanzada_vision_proceeds():
 def test_video_sent_to_any_model_returns_400():
     """Video sent to any pseudo-model → 400 VIDEO_NOT_SUPPORTED."""
     turn_caps = TurnCapabilities(has_video=True)
-    for name in ("normal", "avanzada-vision", "deep-flash"):
+    for name in ("normal", "vision", "flash-lowcost"):
         with pytest.raises(HTTPException) as exc:
             validate_incoming_content(turn_caps, _get_pm(name), name, CONFIG)
         assert exc.value.status_code == 400
@@ -95,7 +95,7 @@ def test_error_responses_include_remediation():
     """Error responses include 'remediation' array with actionable options."""
     turn_caps = TurnCapabilities(has_images=True)
     with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(turn_caps, _get_pm("normal"), "normal", CONFIG)
+        validate_incoming_content(turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas", CONFIG)
     detail = exc.value.detail
     assert "remediation" in detail
     assert isinstance(detail["remediation"], list)
@@ -106,7 +106,7 @@ def test_error_responses_include_vision_capable_list():
     """Error responses include 'vision_capable_pseudo_models' list."""
     turn_caps = TurnCapabilities(has_images=True)
     with pytest.raises(HTTPException) as exc:
-        validate_incoming_content(turn_caps, _get_pm("normal"), "normal", CONFIG)
+        validate_incoming_content(turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas", CONFIG)
     detail = exc.value.detail
     assert "vision_capable_pseudo_models" in detail
     assert isinstance(detail["vision_capable_pseudo_models"], list)

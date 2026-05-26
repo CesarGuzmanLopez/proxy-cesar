@@ -24,7 +24,7 @@ from src.service.compactor.prompts import build_explicit_compaction_prompt
 # ── Compactor model selection ─────────────────────────────────────────────
 
 
-def select_compactor_model(config, total_tokens: int) -> str | None:
+def select_compactor_model(config, total_tokens: int) -> tuple[str | None, int | None]:
     """Select the compactador model with enough context window for the history.
 
     Uses by_context_window strategy: picks the first physical model whose
@@ -35,23 +35,23 @@ def select_compactor_model(config, total_tokens: int) -> str | None:
         total_tokens: Total tokens in the conversation history.
 
     Returns:
-        Physical model name string, or None if no model can handle the size.
+        ``(model_name, context_window)`` tuple, or ``(None, None)`` if no model can handle the size.
     """
     compactador_pm = config.pseudo_models.get("compactador")
     if not compactador_pm or not compactador_pm.physical_models:
-        return None
+        return None, None
 
     # Try to find a model with enough context window
     for phys in compactador_pm.physical_models:
         if phys.context_window and phys.context_window >= total_tokens:
-            return phys.model
+            return phys.model, phys.context_window
 
     # Fall back to the model with the largest context window
     largest = max(
         compactador_pm.physical_models,
         key=lambda m: m.context_window or 0,
     )
-    return largest.model if largest.context_window else None
+    return largest.model, largest.context_window
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────
@@ -80,28 +80,56 @@ def _build_compaction_history(turns: list[ConversationTurn]) -> list[dict]:
 async def _run_compaction_sync(
     conversation_id: str,
     compactor_model: str,
+    compactor_ctx: int | None,
     all_messages: list[dict],
     total_tokens: int,
     db: AsyncSession,
+    conv: Conversation | None = None,
 ) -> dict:
     """Run compaction synchronously and store the snapshot.
 
-    This is called directly for histories <=500K tokens, or from the
-    arq worker for larger histories.
-
-    Args:
-        conversation_id: UUID string of the conversation.
-        compactor_model: Physical model name to use for compaction.
-        all_messages: Complete message history array.
-        total_tokens: Estimated total tokens.
-        db: Async DB session.
-
-    Returns:
-        Dict with compaction result metadata.
+    All DB operations happen *before* the compactor API call to avoid
+    losing the SQLAlchemy greenlet context (known issue when calling
+    async HTTP clients and then re-entering the async session).
     """
     conv_uuid = _parse_uuid(conversation_id)
     compaction_prompt = build_explicit_compaction_prompt()
 
+    # ── DB operations BEFORE the API call ──────────────────────────────
+    # Count turns
+    result = await db.execute(
+        select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)
+    )
+    all_turns = result.scalars().all()
+    turn_count = len(all_turns)
+
+    # Load conversation if not passed in
+    if conv is None:
+        conv = await db.get(Conversation, conv_uuid)
+
+    # Create snapshot (added + flushed before the API call)
+    new_snapshot = ConversationSnapshot(
+        conversation_id=conv_uuid,
+        snapshot_type="explicit",
+        tokens_before=total_tokens,
+        tokens_after=0,  # placeholder
+        compactor_model=compactor_model,
+        snapshot_content="",  # placeholder
+        turn_number_at_compaction=turn_count,
+    )
+    db.add(new_snapshot)
+    await db.flush()
+
+    # Chain with previous snapshot
+    if conv and conv.active_snapshot_id:
+        old = await db.get(ConversationSnapshot, conv.active_snapshot_id)
+        if old:
+            old.superseded_by = new_snapshot.id
+
+    if conv:
+        conv.active_snapshot_id = new_snapshot.id
+
+    # ── Call compactor model API ───────────────────────────────────────
     compaction_messages = [
         {"role": "system", "content": compaction_prompt},
         {"role": "user", "content": json.dumps(all_messages, default=str)},
@@ -142,40 +170,9 @@ async def _run_compaction_sync(
             },
         )
 
-    # Load conversation for snapshot storage
-    conv = await db.get(Conversation, conv_uuid)
-
-    # Store snapshot (reuses existing ConversationSnapshot model)
-    new_snapshot = ConversationSnapshot(
-        conversation_id=conv_uuid,
-        snapshot_type="explicit",
-        tokens_before=total_tokens,
-        tokens_after=snapshot_tokens,
-        compactor_model=compactor_model,
-        snapshot_content=snapshot_content or "",
-        turn_number_at_compaction=len(
-            [t for t in (conv.turns if conv else []) if hasattr(t, "turn_number")]
-        ),
-    )
-
-    # Count turns
-    result = await db.execute(
-        select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)
-    )
-    all_turns = result.scalars().all()
-    new_snapshot.turn_number_at_compaction = len(all_turns)
-
-    db.add(new_snapshot)
-    await db.flush()
-
-    # Chain with previous snapshot
-    if conv and conv.active_snapshot_id:
-        old = await db.get(ConversationSnapshot, conv.active_snapshot_id)
-        if old:
-            old.superseded_by = new_snapshot.id
-
-    if conv:
-        conv.active_snapshot_id = new_snapshot.id
+    # ── Update snapshot with API results ───────────────────────────────
+    new_snapshot.tokens_after = snapshot_tokens
+    new_snapshot.snapshot_content = snapshot_content or ""
     await db.commit()
 
     return {
@@ -262,7 +259,7 @@ async def compact_conversation(
     total_tokens = conv.total_tokens
 
     # Select compactador model
-    compactor_model = select_compactor_model(config, total_tokens)
+    compactor_model, compactor_ctx = select_compactor_model(config, total_tokens)
     if not compactor_model:
         compactador_pm = config.pseudo_models.get("compactador")
         max_window = 0
@@ -304,9 +301,11 @@ async def compact_conversation(
     return await _run_compaction_sync(
         conversation_id=conversation_id,
         compactor_model=compactor_model,
+        compactor_ctx=compactor_ctx,
         all_messages=all_messages,
         total_tokens=total_tokens,
         db=db,
+        conv=conv,
     )
 
 
@@ -354,12 +353,17 @@ async def _compact_async(
         all_messages.extend(_build_compaction_history(turns))
         total_tokens = conv.total_tokens
 
+        # Get context window for the selected compactor model
+        _, compactor_ctx = select_compactor_model(config, total_tokens)
+
         return await _run_compaction_sync(
             conversation_id=conversation_id,
             compactor_model=compactor_model,
+            compactor_ctx=compactor_ctx,
             all_messages=all_messages,
             total_tokens=total_tokens,
             db=db,
+            conv=conv,
         )
     finally:
         await db.close()

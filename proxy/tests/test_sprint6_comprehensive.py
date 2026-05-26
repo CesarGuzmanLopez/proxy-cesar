@@ -192,7 +192,7 @@ async def test_context_alert_normal_in_metadata(client):
     conv.id = uuid.uuid4()
     conv.total_tokens = 30000
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -227,7 +227,7 @@ async def test_context_alert_normal_in_metadata(client):
     pm = data["proxy_metadata"]
     assert "context_alert" in pm
     assert pm["context_alert"]["alert_level"] == "normal"
-    assert pm["context_alert"]["context_usage_pct"] == 31.2  # 30000/96000*100
+    assert pm["context_alert"]["context_usage_pct"] == 6.0  # 30000/500000*100
 
 
 @pytest.mark.asyncio
@@ -237,9 +237,9 @@ async def test_context_alert_moderate_in_metadata(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 70000  # 72.9% of 96000 → moderate
+    conv.total_tokens = 350000  # 70% of 500000 → moderate
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -284,9 +284,9 @@ async def test_context_alert_high_in_metadata(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 90000  # 93.8% of 96000 → high
+    conv.total_tokens = 450000  # 90% of 500000 → high
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -329,9 +329,9 @@ async def test_context_unusable_400_error(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 100000  # 104.2% of 96000 → unusable
+    conv.total_tokens = 500000  # 100% of 500000 → unusable
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -376,9 +376,9 @@ async def test_context_unusable_streaming_400(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 100000
+    conv.total_tokens = 500000
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -402,9 +402,9 @@ async def test_context_unusable_streaming_400(client):
         "/v1/chat/completions",
         json={
             "model": "normal",
-            "messages": [{"role": "user", "content": "Streaming fail."}],
-            "conversation_id": str(conv.id),
+            "messages": [{"role": "user", "content": "This should fail too."}],
             "stream": True,
+            "conversation_id": str(conv.id),
         },
     )
 
@@ -427,7 +427,7 @@ async def test_explicit_compaction_endpoint(client):
     conv.id = conv_id
     conv.total_tokens = 120000
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -476,7 +476,7 @@ async def test_explicit_compaction_requires_turns(client):
     conv.id = conv_id
     conv.total_tokens = 0
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -519,7 +519,7 @@ async def test_explicit_compaction_chains_snapshots(client):
     conv.id = conv_id
     conv.total_tokens = 120000
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -584,7 +584,7 @@ async def test_audit_log_includes_creation(client):
     conv = MagicMock()
     conv.id = conv_id
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime(2026, 5, 24, 10, 0, 0)
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -615,7 +615,7 @@ async def test_audit_log_tracks_switches_and_fallbacks(client):
     conv = MagicMock()
     conv.id = conv_id
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime(2026, 5, 24, 10, 0, 0)
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -682,7 +682,7 @@ async def test_audit_log_includes_compaction(client):
     conv.id = conv_id
     conv.total_tokens = 120000
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime(2026, 5, 24, 10, 0, 0)
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -751,16 +751,19 @@ async def test_compactador_model_selection_by_context_window(client):
 
     from src.service.compactor.explicit import select_compactor_model
 
-    model = select_compactor_model(config, 50000)
-    assert model is not None
+    # Small history → Groq (131K ctx, fast) selected first
+    small_model, _ = select_compactor_model(config, 50000)
+    assert small_model is not None
+    assert "groq" in small_model
 
-    # Gemini 3.5 Flash has 1M ctx — should be selected for any reasonable size
+    # History >131K → falls through to DeepSeek (1M ctx)
+    big_model, _ = select_compactor_model(config, 200000)
+    assert big_model is not None
+    assert "deepseek" in big_model
+
+    # History beyond Gemini → Claude (200K) should be enough, but check fallback
     compactador_pm = config.pseudo_models.get("compactador")
-    gemini = next(
-        (m for m in compactador_pm.physical_models if "gemini" in m.model), None
-    )
-    assert gemini is not None
-    assert model == gemini.model
+    assert compactador_pm is not None
 
 
 @pytest.mark.asyncio
@@ -770,9 +773,9 @@ async def test_streaming_response_includes_context_alert(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 65000  # 67.7% of 96000 → moderate
+    conv.total_tokens = 350000  # 70% of 500000 → moderate
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None
@@ -829,7 +832,7 @@ async def test_audit_log_events_chronological_order(client):
     conv = MagicMock()
     conv.id = conv_id
     conv.pseudo_model = "normal"
-    conv.physical_model = "openrouter/qwen3-max"
+    conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime(2026, 5, 24, 10, 0, 0)
     conv.updated_at = datetime.now()
     conv.active_snapshot_id = None

@@ -39,7 +39,10 @@ from src.service.capability_detector import (
     load_session_capabilities,
 )
 from src.service.compatibility import validate_incoming_content, validate_switch
-from src.service.model_resolver import normalize_model_name
+from src.service.model_resolver import (
+    build_passthrough_pseudo_model,
+    normalize_model_name,
+)
 from src.service.threshold_guard import check_input_threshold
 from src.service.tool_filter import get_eligible_models, is_pinned_model_eligible
 from src.service.tools_canonical import (
@@ -418,7 +421,7 @@ async def _run_compaction_pipeline(
         "continuous_compaction_metadata": None,
     }
 
-    # Pre-compaction
+    # Pre-compaction (caller must provide estimated_input — no recalculation)
     if pm_schema.pre_compaction.enabled and estimated_input > (
         pm_schema.pre_compaction.threshold or 0
     ):
@@ -426,6 +429,7 @@ async def _run_compaction_pipeline(
             messages=messages,
             pseudo_model=pm_schema,
             config=config,
+            input_tokens=estimated_input,
         )
         state["pre_compaction_applied"] = meta.get("applied", False)
         state["pre_compaction_metadata"] = meta
@@ -497,16 +501,9 @@ async def _handle_streaming_with_db(
     # Resolve model
     resolved_model = normalize_model_name(pseudo_model_name, config)
     if resolved_model not in config.pseudo_models:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "UNKNOWN_PSEUDO_MODEL",
-                "message": f"Unknown pseudo-model: '{resolved_model}'",
-                "available": list(config.pseudo_models.keys()),
-            },
-        )
-
-    pm_schema = config.pseudo_models[resolved_model]
+        pm_schema = build_passthrough_pseudo_model(resolved_model)
+    else:
+        pm_schema = config.pseudo_models[resolved_model]
 
     # Detect capabilities in incoming messages
     turn_caps = detect_turn_capabilities(messages, tools)
@@ -618,6 +615,11 @@ async def _handle_streaming_with_db(
     )
     active_messages = comp_state["active_messages"]
 
+    # Recalculate after compaction — pre-compaction may have reduced the
+    # input or skipped.  The stale estimate would cause call_with_fallback
+    # to incorrectly skip models with adequate context windows.
+    estimated_input = estimate_tokens(active_messages)
+
     # ── Sprint 6: Context alerts ──────────────────────────────────────────
     context_alert = get_context_alert(
         total_tokens=conv.total_tokens if conv else 0,
@@ -657,6 +659,7 @@ async def _handle_streaming_with_db(
         pseudo_model_schema=pm_schema,
         messages=active_messages,
         stream=True,
+        estimated_input=estimated_input,
         temperature=temperature,
         max_tokens=max_tokens,
         tools=tools,

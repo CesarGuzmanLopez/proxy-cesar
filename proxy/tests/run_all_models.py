@@ -222,11 +222,11 @@ async def main():
     MODELS = [
         "pensamiento-profundo-caro",
         "tareas-avanzadas",
-        "avanzada-vision",
+        "vision",
         "normal",
         "deep-flash",
         "flash-lowcost",
-        "flash-vision",
+        "vision",
     ]
     print("\n[2] Pseudo-models — simple text chat")
     for m in MODELS:
@@ -250,7 +250,7 @@ async def main():
 
     # ── 3. Vision models with captura.png ────────────────────────────────
     print("\n[3] Vision models — with captura.png")
-    for m in ["avanzada-vision", "flash-vision"]:
+    for m in ["vision", "vision"]:
         st, data = await vision_chat(m, DATA_URL)
         if st == 200:
             c = (
@@ -335,7 +335,7 @@ async def main():
     print("\n[6] Auto-describe on pseudo-model switch")
     conv_switch = str(uuid.uuid4())
     st, err_data, data, meta = await switch_chat(
-        "avanzada-vision", "pensamiento-profundo-caro", conv_switch, DATA_URL
+        "vision", "pensamiento-profundo-caro", conv_switch, DATA_URL
     )
 
     if st == 200 and data and meta:
@@ -377,7 +377,7 @@ async def main():
         r_vis = await client.post(
             f"{BASE}/v1/chat/completions",
             json={
-                "model": "avanzada-vision",
+                "model": "vision",
                 "conversation_id": conv_deg,
                 "messages": [
                     {
@@ -429,7 +429,7 @@ async def main():
         r_b1 = await client.post(
             f"{BASE}/v1/chat/completions",
             json={
-                "model": "avanzada-vision",
+                "model": "vision",
                 "conversation_id": conv_block,
                 "messages": [{"role": "user", "content": "hello"}],
                 "max_tokens": 100,
@@ -442,7 +442,7 @@ async def main():
             r_img = await client.post(
                 f"{BASE}/v1/chat/completions",
                 json={
-                    "model": "avanzada-vision",
+                    "model": "vision",
                     "conversation_id": conv_block,
                     "messages": [
                         {
