@@ -58,7 +58,6 @@ from src.service.compatibility import (
     _any_vision as _any_vision_comp,
 )
 from src.service.context_alert import ContextAlert, get_context_alert
-from src.service.inline_commands import handle_inline_command
 from src.service.model_resolver import (
     build_passthrough_pseudo_model,
     normalize_model_name,
@@ -129,25 +128,6 @@ async def process_chat_request(
     metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())
     conv_uuid = _parse_uuid(conv_id)
-
-    # Sprint 9: Check for inline commands BEFORE any LLM processing.
-    # If the user typed @compact, @degrade, @status, or @help, handle
-    # it here and return immediately without calling the LLM.
-    cmd_result = await handle_inline_command(
-        messages=messages,
-        conversation_id=conversation_id,
-        db=db,
-    )
-    if cmd_result.handled and cmd_result.skip_llm:
-        logger.info(
-            "inline_cmd | trace=%s conv=%s cmd=%s",
-            _req_id,
-            conv_id[:12],
-            _extract_cmd_name(messages),
-        )
-        return _build_command_chat_result(
-            cmd_result, pseudo_model_name, pm_schema, conv_id, _req_id
-        )
 
     # Step 4-11: Load session, check switch, load/create conversation, resolve model, set affinity
     (

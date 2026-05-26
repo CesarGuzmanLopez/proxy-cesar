@@ -9,6 +9,7 @@ Images from the same message are described together in a single vision
 model call, using the user's original text prompt for context.
 """
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -127,25 +128,27 @@ async def _transcribe_audio(raw_data: str, config) -> str:
         return ""
 
 
-def _try_extract_pdf_text(base64_data: str) -> str:
-    """Extract text from a base64-encoded PDF using PyMuPDF."""
-    try:
-        pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        page_count = len(doc)
-        text = "\n".join(page.get_text() for page in doc)
-        doc.close()
-        text = text.strip()
-        size_kb = len(pdf_bytes) // 1024
-        meta = f"[PDF: {page_count} pages, {size_kb} KB."
-        if text:
-            if len(text) > _CONTENT_PREVIEW_MAX:
-                remainder = len(text) - _CONTENT_PREVIEW_MAX
-                return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
-            return f"{meta}\n\n{text}]"
-        return f"{meta} PyMuPDF could not extract text — scanned or image-based PDF.]"
-    except Exception as exc:
-        return f"[PDF could not parse: {str(exc)[:100]}]"
+async def _try_extract_pdf_text(base64_data: str) -> str:
+    """Extract text from a base64-encoded PDF using PyMuPDF (offloaded to thread pool)."""
+    def _sync_extract() -> str:
+        try:
+            pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            page_count = len(doc)
+            text = "\n".join(page.get_text() for page in doc)
+            doc.close()
+            text = text.strip()
+            size_kb = len(pdf_bytes) // 1024
+            meta = f"[PDF: {page_count} pages, {size_kb} KB."
+            if text:
+                if len(text) > _CONTENT_PREVIEW_MAX:
+                    remainder = len(text) - _CONTENT_PREVIEW_MAX
+                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
+                return f"{meta}\n\n{text}]"
+            return f"{meta} PyMuPDF could not extract text — scanned or image-based PDF.]"
+        except Exception as exc:
+            return f"[PDF could not parse: {str(exc)[:100]}]"
+    return await asyncio.to_thread(_sync_extract)
 
 
 async def replace_base64_with_blob_refs(
@@ -159,6 +162,7 @@ async def replace_base64_with_blob_refs(
     Groups images from the same message and describes them together
     using the user's original prompt for context.
     Real URLs pass through unchanged.
+    Optimized with cache checks and parallel operations.
     """
     if valkey is None:
         return messages
@@ -175,12 +179,13 @@ async def replace_base64_with_blob_refs(
             new_messages.append(msg)
             continue
 
-        # ── Pass 1: classify parts, store blobs ──
+        # ── Pass 1: classify parts, check cache, store only new blobs ──
         user_text = _extract_user_text(content)
-        image_blobs: list[tuple[str, str, str, str]] = []  # (hash, raw, mime, size_kb)
+        image_blobs: list[tuple[str, str, str, str]] = []
         audio_blobs: list[tuple[str, str, str, str]] = []
         file_blobs: list[tuple[str, str, str, str]] = []
         other_parts: list[dict] = []
+        store_tasks = []
 
         for part in content:
             if not isinstance(part, dict):
@@ -206,13 +211,11 @@ async def replace_base64_with_blob_refs(
             h = _hash_content(raw)
             mime = _extract_mime(raw) or f"{ptype}/unknown"
             size_kb = str(len(raw) // 1024)
-
-            try:
-                await valkey.set(f"{prefix}:{h}", raw, ex=BLOB_TTL)
-            except Exception:
-                pass
-
             info = (h, raw, mime, size_kb)
+
+            # Check if blob already exists before storing
+            store_tasks.append(_store_blob_if_missing(valkey, f"{prefix}:{h}", raw))
+
             if ptype == "image_url":
                 image_blobs.append(info)
             elif ptype == "input_audio":
@@ -220,27 +223,58 @@ async def replace_base64_with_blob_refs(
             elif ptype == "file":
                 file_blobs.append(info)
 
-        # ── Pass 2: describe images together ──
+        if store_tasks:
+            await asyncio.gather(*store_tasks)
+
+        # ── Pass 2: describe/transcribe/extract with cache check ──
+        async def _get_cached(key: str) -> str:
+            try:
+                v = await valkey.get(key)
+                return v or ""
+            except Exception:
+                return ""
+
+        # Images: batch describe (always regenerate with new context)
         descriptions: list[str] = []
         if image_blobs:
-            descriptions = await _describe_image_batch(
-                [(h, r) for h, r, _, _ in image_blobs], user_text, config
-            )
-            while len(descriptions) < len(image_blobs):
-                descriptions.append("")
-            for (h, _, _, _), desc in zip(image_blobs, descriptions):
-                if desc:
-                    try:
-                        await valkey.setnx(f"{prefix}:{h}:desc", desc)
-                        await valkey.expire(f"{prefix}:{h}:desc", BLOB_TTL)
-                    except Exception:
-                        pass
+            # Check if ALL descriptions already cached (skip vision call)
+            cached_descs = await asyncio.gather(*[
+                _get_cached(f"{prefix}:{h}:desc") for h, _, _, _ in image_blobs
+            ])
+            if all(cached_descs):
+                descriptions = cached_descs
+            else:
+                descs = await _describe_image_batch(
+                    [(h, r) for h, r, _, _ in image_blobs], user_text, config
+                )
+                while len(descs) < len(image_blobs):
+                    descs.append("")
+                descriptions = descs
+                # Store only new descriptions
+                store = []
+                for (h, _, _, _), d in zip(image_blobs, descriptions):
+                    if d:
+                        store.append(_store_desc(valkey, f"{prefix}:{h}:desc", d))
+                if store:
+                    await asyncio.gather(*store)
+
+        # Audio: transcribe if not cached
+        audio_tasks = []
+        for h, raw, mime, sz in audio_blobs:
+            audio_tasks.append(_describe_audio(valkey, f"{prefix}:{h}", f"{prefix}:{h}:desc", raw, config))
+        audio_results = await asyncio.gather(*audio_tasks) if audio_tasks else []
+
+        # PDF: extract text if not cached
+        pdf_tasks = []
+        for h, raw, mime, sz in file_blobs:
+            pdf_tasks.append(_describe_pdf(valkey, f"{prefix}:{h}", f"{prefix}:{h}:desc", raw))
+        pdf_results = await asyncio.gather(*pdf_tasks) if pdf_tasks else []
 
         # ── Pass 3: build output ──
         out: list[dict[str, Any]] = list(other_parts)
 
-        def _blob_text(h, mime, size_kb, label, desc=""):
-            t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {size_kb} KB"
+        def _blob_text(h, mime, sz, label, desc=""):
+            t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {sz} KB"
             if desc:
                 t += f"\n{desc}"
             t += "]"
@@ -249,26 +283,59 @@ async def replace_base64_with_blob_refs(
         for i, (h, _, mime, sz) in enumerate(image_blobs):
             out.append(_blob_text(h, mime, sz, "image", descriptions[i] if i < len(descriptions) else ""))
 
-        for h, raw, mime, sz in audio_blobs:
-            desc = await _transcribe_audio(raw, config)
-            if desc:
-                try:
-                    await valkey.setnx(f"{prefix}:{h}:desc", desc)
-                    await valkey.expire(f"{prefix}:{h}:desc", BLOB_TTL)
-                except Exception:
-                    pass
+        for (h, _, mime, sz), desc in zip(audio_blobs, audio_results):
             out.append(_blob_text(h, mime, sz, "audio file", desc))
 
-        for h, raw, mime, sz in file_blobs:
-            desc = _try_extract_pdf_text(raw) if "pdf" in mime else ""
-            if desc:
-                try:
-                    await valkey.setnx(f"{prefix}:{h}:desc", desc)
-                    await valkey.expire(f"{prefix}:{h}:desc", BLOB_TTL)
-                except Exception:
-                    pass
+        for (h, _, mime, sz), desc in zip(file_blobs, pdf_results):
             out.append(_blob_text(h, mime, sz, "file", desc))
 
         new_messages.append({**msg, "content": out})
 
     return new_messages
+
+
+async def _store_blob_if_missing(valkey, key: str, raw: str) -> None:
+    """Store blob only if it doesn't exist yet."""
+    try:
+        exists = await valkey.exists(key)
+        if not exists:
+            await valkey.set(key, raw, ex=BLOB_TTL)
+    except Exception:
+        pass
+
+
+async def _store_desc(valkey, key: str, desc: str) -> None:
+    """Store description with SETNX + EXPIRE."""
+    try:
+        await valkey.setnx(key, desc)
+        await valkey.expire(key, BLOB_TTL)
+    except Exception:
+        pass
+
+
+async def _describe_audio(valkey, blob_key: str, desc_key: str, raw: str, config) -> str:
+    """Transcribe audio if not already cached."""
+    try:
+        cached = await valkey.get(desc_key)
+        if cached:
+            return cached
+    except Exception:
+        pass
+    desc = await _transcribe_audio(raw, config)
+    if desc:
+        await _store_desc(valkey, desc_key, desc)
+    return desc
+
+
+async def _describe_pdf(valkey, blob_key: str, desc_key: str, raw: str) -> str:
+    """Extract PDF text if not already cached."""
+    try:
+        cached = await valkey.get(desc_key)
+        if cached:
+            return cached
+    except Exception:
+        pass
+    desc = await _try_extract_pdf_text(raw)
+    if desc:
+        await _store_desc(valkey, desc_key, desc)
+    return desc
