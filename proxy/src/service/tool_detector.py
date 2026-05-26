@@ -349,41 +349,90 @@ async def replace_base64_with_blob_refs(
     return new_messages
 
 
-def delegate_images_to_tool(
+def _has_image_content(content: list[dict[str, Any]]) -> bool:
+    """Check if a content list has any image_url parts."""
+    return any(
+        isinstance(p, dict) and p.get("type") == "image_url" for p in content
+    )
+
+
+async def _build_delegated_image_ref(
+    part: dict,
+    tool_name: str,
+    param_name: str,
+    prefix: str,
+    valkey,
+    config,
+) -> dict[str, Any]:
+    """Build a text reference for a delegated image, storing base64 as blob."""
+    raw = part.get("image_url", {}).get("url", "")
+
+    # Base64 → store as blob, reference with BLOB:hash
+    if raw.startswith("data:") and valkey is not None:
+        h = _hash_content(raw)
+        mime = _extract_mime(raw) or "image/unknown"
+        blob_key = f"{prefix}:{h}"
+        desc_key = f"{prefix}:{h}:desc"
+        desc = await _store_blob_with_description(
+            valkey, blob_key, desc_key, raw, mime, config
+        )
+        ref = (
+            f"[Image path delegated to tool '{tool_name}' "
+            f"as parameter '{param_name}'. "
+            f"blob: {BLOB_PREFIX}:{h}:{mime}"
+        )
+        if desc:
+            ref += f" | {desc}"
+        ref += "]"
+        return {"type": "text", "text": ref}
+
+    # Real URL → pass as-is
+    return {
+        "type": "text",
+        "text": (
+            f"[Image path delegated to tool '{tool_name}' "
+            f"as parameter '{param_name}']: {raw}"
+        ),
+    }
+
+
+async def delegate_images_to_tool(
     messages: list[dict[str, Any]],
     tool_name: str,
     param_name: str,
+    conversation_id: str | None = None,
+    valkey=None,
+    config=None,
 ) -> list[dict[str, Any]]:
-    """Replace image_url content parts with text instructions for tool use."""
+    """Replace image_url content parts with text instructions for tool use.
+
+    If the image is base64, stores it as a blob first and references it
+    with a BLOB:hash so the model can pass it to the tool without
+    flooding the context with raw base64 data.
+    """
+    prefix = f"blob:{conversation_id or 'anon'}"
     new_messages: list[dict[str, Any]] = []
+
     for msg in messages:
         if msg.get("role") != "user":
             new_messages.append(msg)
             continue
+
         content = msg.get("content", "")
-        if not isinstance(content, list):
+        if not isinstance(content, list) or not _has_image_content(content):
             new_messages.append(msg)
             continue
-        has_image = any(
-            isinstance(p, dict) and p.get("type") == "image_url" for p in content
-        )
-        if not has_image:
-            new_messages.append(msg)
-            continue
+
         new_content: list[dict[str, Any]] = []
         for part in content:
             if isinstance(part, dict) and part.get("type") == "image_url":
-                url = part.get("image_url", {}).get("url", "")
-                new_content.append(
-                    {
-                        "type": "text",
-                        "text": (
-                            f"[Image path delegated to tool '{tool_name}' "
-                            f"as parameter '{param_name}']: {url}"
-                        ),
-                    }
+                new_part = await _build_delegated_image_ref(
+                    part, tool_name, param_name, prefix, valkey, config
                 )
+                new_content.append(new_part)
             else:
                 new_content.append(part)
+
         new_messages.append({**msg, "content": new_content})
+
     return new_messages

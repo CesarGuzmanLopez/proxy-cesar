@@ -992,10 +992,14 @@ async def _apply_content_delegation(
 
     action = delegation.get("action")
     if action == "delegate_images":
-        return delegate_images_to_tool(
+        valkey_client = valkey or getattr(affinity, "_client", None)
+        return await delegate_images_to_tool(
             messages,
             delegation["tool_name"],
             delegation["param_name"],
+            conversation_id,
+            valkey_client,
+            config,
         )
     if action == "transform_unsupported":
         return await replace_base64_with_blob_refs(
