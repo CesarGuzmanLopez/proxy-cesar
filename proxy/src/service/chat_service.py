@@ -122,25 +122,9 @@ async def process_chat_request(
         config,
     )
     # Apply image→tool delegation or blob storage for unsupported content
-    if delegation:
-        from src.service.tool_detector import (
-            delegate_images_to_tool,
-            replace_base64_with_blob_refs,
-        )
-
-        if delegation.get("action") == "delegate_images":
-            messages = delegate_images_to_tool(
-                messages,
-                delegation["tool_name"],
-                delegation["param_name"],
-            )
-        elif delegation.get("action") == "transform_unsupported":
-            messages = await replace_base64_with_blob_refs(
-                messages,
-                conversation_id,
-                valkey or getattr(affinity, "_client", None),
-                config,
-            )
+    messages = await _apply_content_delegation(
+        delegation, messages, conversation_id, affinity, valkey, config
+    )
     # Sprint 8: track request metrics
     metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())
@@ -987,6 +971,40 @@ def _build_command_chat_result(
         context_alert=ContextAlert(alert_level="none", context_usage_pct=None),
         cache_metadata={},
     )
+
+
+async def _apply_content_delegation(
+    delegation: dict | None,
+    messages: list[dict],
+    conversation_id: str | None,
+    affinity,
+    valkey,
+    config,
+) -> list[dict]:
+    """Apply image→tool delegation or blob storage for unsupported content."""
+    if not delegation:
+        return messages
+
+    from src.service.tool_detector import (
+        delegate_images_to_tool,
+        replace_base64_with_blob_refs,
+    )
+
+    action = delegation.get("action")
+    if action == "delegate_images":
+        return delegate_images_to_tool(
+            messages,
+            delegation["tool_name"],
+            delegation["param_name"],
+        )
+    if action == "transform_unsupported":
+        return await replace_base64_with_blob_refs(
+            messages,
+            conversation_id,
+            valkey or getattr(affinity, "_client", None),
+            config,
+        )
+    return messages
 
 
 def _raise_if_context_unusable(
