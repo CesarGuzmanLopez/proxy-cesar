@@ -50,7 +50,7 @@ _CONFIG = load_config()
         ("local/gemini-2.5-flash", "vision"),
         # Default fallback for unknown models
         ("unknown-model", "normal"),
-        ("local/unknown-thing", "normal"),
+        ("local/unknown-thing", "local/unknown-thing"),
     ],
 )
 def test_model_name_normalization(raw_name, expected):
@@ -61,10 +61,10 @@ def test_model_name_normalization(raw_name, expected):
     )
 
 
-def test_unknown_model_with_prefix_falls_back_to_default():
-    """Unknown model with prefix strips prefix then falls back to default."""
+def test_unknown_model_with_prefix_passthrough():
+    """Unknown model with prefix is used as-is (passthrough)."""
     result = normalize_model_name("some-client/unknown", _CONFIG)
-    assert result == "normal"  # default alias
+    assert result == "some-client/unknown"  # passthrough directo
 
 
 def test_all_known_pseudo_models_normalize_to_themselves():

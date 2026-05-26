@@ -10,9 +10,10 @@
 
 **Criterios:**
 - POST `/v1/chat/completions` con `model: "normal"` → 200, respuesta no vacía
-- Usa `deepseek/deepseek-v4-flash` (fallback: `zai/glm-4.5-flash`)
+- Usa `deepseek/deepseek-v4-flash` (fallback: `openrouter/google/gemini-3.1-flash-lite`)
 - Tools strict = true, parallel tools = true
-- Compactación continua activa al 80% del context window
+- Si input supera 500K tokens → error 400 `INPUT_EXCEEDS_THRESHOLD`
+- No hay compactación automática — el usuario debe usar `POST /compact`
 
 **Comando online:**
 ```bash
@@ -22,9 +23,17 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
   | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:100])"
 ```
 
+**Verificar proxy_metadata:**
+```bash
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"normal","messages":[{"role":"user","content":"Hola"}],"stream":false}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);md=d.get('proxy_metadata',{});print(f'model={md.get(\"physical_model\")} affinity={md.get(\"affinity_maintained\")} fallback={md.get(\"fallback_applied\")}')"
+```
+
 ---
 
-## HU-2: Pensamiento profundo (GLM-5 + DeepSeek V4 Pro + Claude)
+## HU-2: Pensamiento profundo (DeepSeek V4 Pro)
 
 **Como** usuario
 **Quiero** usar el modelo `pensamiento-profundo-caro`
@@ -32,10 +41,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST con `model: "pensamiento-profundo-caro"` → 200
-- Primary: `zai/glm-5` (200K ctx)
-- Fallbacks: `deepseek/deepseek-v4-pro` (1M ctx), `anthropic/claude-haiku-4-5` (200K ctx)
-- Fallback strategy: sequential (si uno falla, pasa al siguiente)
-- Compactación continua activa al 70%, preserve 16K
+- Primary: `deepseek/deepseek-v4-pro` (1M ctx)
+- Fallbacks: `openrouter/google/gemini-3.5-flash` (1M ctx, visión+audio)
 - Router LLM activo con `flash-lowcost` como suggester (solo en downgrade)
 - Imágenes: auto_describe en downgrade
 
@@ -66,9 +73,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 **Criterios:**
 - POST con `model: "tareas-avanzadas"` → 200
 - Primary: `deepseek/deepseek-v4-pro` (1M ctx)
-- Fallbacks: `deepseek/deepseek-v4-flash` (1M ctx), `zai/glm-4.5-flash` (128K ctx)
-- Compactación continua al 75%, preserve 32K
-- Sin router LLM, sin pre-compaction
+- Fallback: `deepseek/deepseek-v4-flash` (1M ctx)
+- Sin router LLM
 - Imágenes: block en downgrade
 
 **Comando online:**
@@ -81,20 +87,17 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-4: Visión (Gemini Flash + Lite + Ollama)
+## HU-4: Visión (Llama 4 Scout via Groq)
 
 **Como** usuario
 **Quiero** usar el modelo `vision`
-**Para** OCR, diagramas, UI, screenshots con calidad decreciente
+**Para** OCR, diagramas, UI, screenshots
 
 **Criterios:**
 - POST con `model: "vision"` → 200
-- Primary: `gemini/gemini-3.5-flash` (1M ctx, mejor calidad)
-- Fallback 1: `gemini/gemini-3.1-flash-lite` (1M ctx, barato)
-- Fallback 2: `ollama/llava` (4K ctx, local gratuito)
-- Sin compactación continua, sin router LLM
+- Único físico: `groq/meta-llama/llama-4-scout-17b-16e-instruct` (131K ctx, visión)
+- Sin compactación, sin router LLM
 - Imágenes: auto_describe en downgrade
-- Todos los físicos deben tener `vision: true`
 
 **Comando online (con imagen):**
 ```bash
@@ -112,36 +115,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-5: Vision Lite (Z.ai + Groq)
-
-**Como** usuario
-**Quiero** usar el modelo `vision-lite`
-**Para** visión rápida y gratuita sin tools
-
-**Criterios:**
-- POST con `model: "vision-lite"` → 200
-- Primary: `zai/glm-4.6v-flash` (128K ctx, gratis vía Z.ai)
-- Fallback: `groq/meta-llama/llama-4-scout-17b-16e-instruct` (131K ctx, visión Groq)
-- Sin compactación, sin router LLM
-- Todos los físicos con `vision: true`
-
-**Comando online:**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model":"vision-lite",
-    "messages":[{"role":"user","content":[
-      {"type":"text","text":"Describe esta imagen"},
-      {"type":"image_url","image_url":{"url":"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/300px-PNG_transparency_demonstration_1.png","detail":"auto"}}
-    ]}],
-    "stream":false
-  }' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:200])"
-```
-
----
-
-## HU-6: Normal gratis (OpenRouter + Z.ai)
+## HU-5: Normal gratis (OpenRouter)
 
 **Como** usuario
 **Quiero** usar el modelo `normal-gratis`
@@ -150,9 +124,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 **Criterios:**
 - POST con `model: "normal-gratis"` → 200
 - Primary: `openrouter/nvidia/nemotron-3-super-120b-a12b:free` (1M ctx)
-- Fallbacks: `zai/glm-4.7-flash` (203K), `openrouter/google/gemma-4-31b-it:free` (262K, con visión), `zai/glm-4.5-flash` (128K)
-- Sin compactación continua, sin router LLM
-- Fallback strategy: sequential
+- Fallback: `groq/qwen/qwen3-32b` (131K ctx)
+- Sin compactación, sin router LLM
 - Imágenes: auto_describe en downgrade
 
 **Comando online:**
@@ -165,29 +138,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-7: Deep Flash (DeepSeek V4 Flash directo)
-
-**Como** usuario
-**Quiero** usar el modelo `deep-flash`
-**Para** velocidad y costo mínimo en tareas masivas, lectura de docs gigantes, traducciones
-
-**Criterios:**
-- POST con `model: "deep-flash"` → 200
-- Único físico: `deepseek/deepseek-v4-flash` (1M ctx)
-- Sin compactación, sin router LLM
-- Imágenes: block en downgrade
-
-**Comando online:**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deep-flash","messages":[{"role":"user","content":"Traduce al inglés: Hola mundo"}],"stream":false}' \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:100])"
-```
-
----
-
-## HU-8: Massive Fast (Groq — GPT-OSS 20B + Qwen 32B)
+## HU-6: Massive Fast (Groq — GPT-OSS 20B)
 
 **Como** usuario
 **Quiero** usar el modelo `massive-fast`
@@ -195,10 +146,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST con `model: "massive-fast"` → 200
-- Primary: `groq/openai/gpt-oss-20b` (131K ctx) — LiteLLM format con `openai/` intermedio
-- Fallback: `groq/qwen/qwen3-32b` (131K ctx)
+- Único físico: `groq/openai/gpt-oss-20b` (131K ctx, 1000+ t/s)
 - Sin compactación, sin router LLM
-- Tools regulares en emergencia
 
 **Comando online:**
 ```bash
@@ -210,7 +159,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-9: Flash Lowcost (Z.ai + Ollama)
+## HU-7: Flash Lowcost (Gemini Flash Lite)
 
 **Como** usuario
 **Quiero** usar el modelo `flash-lowcost`
@@ -218,10 +167,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST con `model: "flash-lowcost"` → 200
-- Primary: `zai/glm-4.5-flash` (128K ctx, barato)
-- Fallback: `ollama/llama3.2` (128K ctx, local gratuito)
+- Único físico: `openrouter/google/gemini-3.1-flash-lite` (1M ctx, $0.00025/$0.0015 por M tok)
 - Sin compactación, sin router LLM
-- Imágenes: block en downgrade
 
 **Comando online:**
 ```bash
@@ -233,20 +180,62 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
+## HU-8: Audio (Whisper via Groq)
+
+**Como** usuario
+**Quiero** usar el modelo `audio`
+**Para** transcripción de audio a texto
+
+**Criterios:**
+- POST con `model: "audio"` → 200
+- Primary: `groq/whisper-large-v3` (131K ctx)
+- Fallback: `groq/whisper-large-v3-turbo` (131K ctx)
+- Sin compactación, sin router LLM
+
+**Comando online:**
+```bash
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"audio","messages":[{"role":"user","content":"Transcribe este audio"}],"stream":false}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:100])"
+```
+
+---
+
+## HU-9: Imagen (Pruna P-Image)
+
+**Como** usuario
+**Quiero** usar el modelo `imagen`
+**Para** generar imágenes desde texto
+
+**Criterios:**
+- POST con `model: "imagen"` → 200
+- Único físico: `pruna/p-image` (texto a imagen en <1s, $0.002/imagen)
+- Sin compactación, sin router LLM
+
+**Comando online:**
+```bash
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"imagen","messages":[{"role":"user","content":"Un gato volador"}],"stream":false}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:200])"
+```
+
+---
+
 ## HU-10: Compactador explícito (POST /compact)
 
 **Como** usuario
 **Quiero** compactar una conversación explícitamente
-**Para** reducir tokens usando Groq (rápido y barato) o Gemini (historias masivas)
+**Para** reducir tokens cuando el input supera el umbral
 
 **Criterios:**
 - POST `/conversations/{id}/compact` en conversación con turns → 200, `status: completed`
-- Historia ≤ 131K tokens → usa `groq/openai/gpt-oss-120b` (primary, 500+ t/s)
-- Historia > 131K tokens → usa `gemini/gemini-3.5-flash` (1M ctx)
-- Fallbacks disponibles: `groq/openai/gpt-oss-20b`, `groq/qwen/qwen3-32b`, `anthropic/claude-haiku-4-5`, `zai/glm-4.5-flash`
-- Selección por `by_context_window` (elige el primer físico con `context_window >= total_tokens`)
+- Historia ≤ 131K tokens → usa `groq/openai/gpt-oss-20b` (primary, 1000+ t/s)
+- Historia > 131K tokens → usa `deepseek/deepseek-v4-flash` (1M ctx)
+- Selección por `by_context_window`
 - Conversación vacía → 400 `EMPTY_CONVERSATION`
-- **NO** debe fallar con `greenlet_spawn` (error preexistente corregido moviendo DB ops antes del API call)
+- Si hay imágenes en el historial → delega a modelo con visión para describirlas antes de compactar
 - Compactación múltiple: segundo compact genera nuevo `snapshot_id` y encadena con `superseded_by`
 
 **Comando online — compactar conversación existente:**
@@ -263,7 +252,7 @@ curl -s -X POST "http://localhost:9110/conversations/$CONV_ID/compact" \
   -d '{}' | python3 -m json.tool
 ```
 
-**Comando online — compactar conversación vacía (debe fallar):**
+**Comando online — compactar conversación vacía (debe fallar con 400):**
 ```bash
 CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 curl -s -w "\nHTTP: %{http_code}" -X POST "http://localhost:9110/conversations/$CONV_ID/compact" \
@@ -271,153 +260,18 @@ curl -s -w "\nHTTP: %{http_code}" -X POST "http://localhost:9110/conversations/$
   -d '{}'
 ```
 
-**Comando online — doble compactación (verificar chaining):**
-```bash
-curl -s -X POST "http://localhost:9110/conversations/$CONV_ID/compact" \
-  -H "Content-Type: application/json" \
-  -d '{}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(f'status={d[\"status\"]} snapshot={d[\"snapshot_id\"][:8]}')"
-```
-
-**Comando online — ver estado de la conversación (ver active_snapshot_id):**
-```bash
-curl -s "http://localhost:9110/conversations/$CONV_ID" | python3 -c "import sys,json;d=json.load(sys.stdin);print(f'tokens={d.get(\"total_tokens\")} turns={d.get(\"turn_count\")} snapshot={d.get(\"active_snapshot_id\",\"-\")[:8] if d.get(\"active_snapshot_id\") else \"none\"}')"
-```
-
 ---
 
-## HU-11: Compactación continua (automática al chatear)
-
-**Como** sistema
-**Quiero** compactar automáticamente cuando el contexto supera el `trigger_pct`
-**Para** mantener la conversación dentro del context window sin intervención del usuario
-
-**Criterios:**
-- Se activa en pseudo-models con `continuous_compaction.enabled: true` (normal, pensamiento-profundo-caro, tareas-avanzadas)
-- Se ejecuta en `_run_compaction_pipeline` antes de cada request de chat
-- Si `total_tokens > context_window * trigger_pct / 100` → compacta
-- Usa `groq/openai/gpt-oss-120b` como compactador primario
-- Preserva los últimos `compact_preserve_recent` tokens (no se compactan)
-- Almacena snapshot con `snapshot_type="continuous"`
-- Actualiza `conversation.total_tokens = snapshot_tokens + preserved_tokens`
-- Usa `/compact` inline command si el usuario quiere forzar compactación continua
-
-**Comando online — forzar compactación continua vía inline command:**
-```bash
-CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-# Enviar muchos mensajes para llenar contexto
-for i in $(seq 1 20); do
-  curl -s -X POST http://localhost:9110/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"Mensaje largo $i $(python3 -c \"print('x'*500)\")\"}],\"conversation_id\":\"$CONV_ID\",\"stream\":false}" > /dev/null
-done
-
-# Ver estado (tokens deben estar controlados por compactación continua)
-curl -s "http://localhost:9110/conversations/$CONV_ID" \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);print(f'tokens={d.get(\"total_tokens\")} turns={d.get(\"turn_count\")} snapshot={d.get(\"active_snapshot_id\",\"-\")[:8] if d.get(\"active_snapshot_id\") else \"none\"}')"
-```
-
-**Comando online — inline /compact (fuerza compactación continua desde el chat):**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"/compact\"}],\"conversation_id\":\"$CONV_ID\",\"stream\":false}"
-```
-
----
-
-## HU-12: Degradación de imágenes online
-
-**Como** usuario
-**Quiero** degradar imágenes en una conversación
-**Para** poder cambiar a un modelo sin visión sin perder contexto
-
-**Criterios:**
-- Envío de imagen a modelo `vision` → se almacena como mensaje con imagen
-- POST `/conversations/{id}/degrade-images` → describe todas las imágenes y las reemplaza por texto
-- Después de degradar, cambiar a `normal` debe ser seguro (no más imágenes)
-- Si el pseudo-model destino tiene `on_downgrade: auto_describe` → la degradación ocurre automáticamente al cambiar
-- Si el destino tiene `on_downgrade: block` → el cambio se bloquea hasta degradar manualmente
-
-**Comando online — enviar imagen a vision:**
-```bash
-CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"model\":\"vision\",
-    \"messages\":[{\"role\":\"user\",\"content\":[
-      {\"type\":\"text\",\"text\":\"Describe\"},
-      {\"type\":\"image_url\",\"image_url\":{\"url\":\"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/300px-PNG_transparency_demonstration_1.png\"}}
-    ]}],
-    \"conversation_id\":\"$CONV_ID\",
-    \"stream\":false
-  }" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:150])"
-```
-
-**Comando online — degradación manual:**
-```bash
-curl -s -X POST "http://localhost:9110/conversations/$CONV_ID/degrade-images" \
-  -H "Content-Type: application/json" \
-  -d '{}' | python3 -m json.tool
-```
-
-**Comando online — verificar compatibilidad después de degradar:**
-```bash
-curl -s "http://localhost:9110/conversations/$CONV_ID/compatible-models" \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);[print(f'{m[\"name\"]}: {m[\"status\"]}') for m in d.get('models',[])]"
-```
-
-**Comando online — cambiar a normal después de degradar (debe funcionar):**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"Mensaje después de degradar\"}],\"conversation_id\":\"$CONV_ID\",\"stream\":false}" \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','')[:100];print(c)"
-```
-
-**Comando online — enviar imagen directo a modelo sin visión (debe fallar):**
-```bash
-curl -s -w "\nHTTP: %{http_code}" -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model":"normal",
-    "messages":[{"role":"user","content":[
-      {"type":"text","text":"Describe"},
-      {"type":"image_url","image_url":{"url":"https://example.com/img.png"}}
-    ]}],
-    "stream":false
-  }'
-```
-
----
-
-## HU-13: Auditoría (GET audit-log)
-
-**Como** usuario
-**Quiero** ver el log de eventos de una conversación
-**Para** saber qué compactaciones, degradaciones y cambios de modelo ocurrieron
-
-**Criterios:**
-- GET `/conversations/{id}/audit-log` → 200 con array de eventos cronológicos
-- Incluye eventos de creación, cambios de pseudo-model, fallbacks, compactaciones explícitas y continuas, degradaciones de imagen
-
-**Comando online:**
-```bash
-curl -s "http://localhost:9110/conversations/$CONV_ID/audit-log" \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);[print(f'{e.get(\"event_type\")}: {json.dumps(e.get(\"details\",{}))}') for e in d.get('events',[])]"
-```
-
----
-
-## HU-14: Streaming
+## HU-11: Streaming SSE
 
 **Como** usuario
 **Quiero** recibir respuestas en streaming
 **Para** ver el contenido mientras se genera
 
 **Criterios:**
-- POST con `stream: true` retorna chunks SSE
+- POST con `stream: true` retorna chunks SSE (`data: ...\n\n`)
 - Termina con `data: [DONE]`
+- El último chunk antes de `[DONE]` contiene `proxy_metadata`
 - Funciona con cualquier pseudo-modelo
 
 **Comando online:**
@@ -428,9 +282,26 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
   | head -15
 ```
 
+**Verificar metadata final:**
+```bash
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"normal","messages":[{"role":"user","content":"Hola"}],"stream":true}' \
+  | python3 -c "
+import sys
+for line in sys.stdin:
+    line = line.strip()
+    if line.startswith('data: ') and line != 'data: [DONE]':
+        import json
+        d = json.loads(line[6:])
+        if 'proxy_metadata' in d:
+            print('Metadata found:', list(d['proxy_metadata'].keys()))
+"
+```
+
 ---
 
-## HU-15: Model aliases
+## HU-12: Model aliases
 
 **Como** usuario
 **Quiero** usar alias como `gpt-4o`, `claude-haiku-3-5`, etc.
@@ -438,11 +309,11 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - `gpt-4o` → resuelve a `normal`
-- `gpt-4o-mini` → resuelve a `deep-flash`
+- `gpt-4o-mini` → resuelve a `normal`
 - `gpt-4.1` → resuelve a `tareas-avanzadas`
 - `o3`, `o4-mini` → resuelven a `pensamiento-profundo-caro`
+- `gemini-2.5-flash` → resuelve a `vision`
 - `claude-haiku-3-5-20241022` → resuelve a `flash-lowcost`
-- `gemini-2.5-flash`, `gemini-2.5-pro` → resuelven a `vision`
 - `default` → resuelve a `normal`
 
 **Comando online:**
@@ -458,17 +329,91 @@ done
 
 ---
 
-## HU-16: Fallback strategy
+## HU-13: KeyVault — Protección de Secrets
+
+**Como** usuario
+**Quiero** que mis API keys sean interceptadas antes de llegar al LLM
+**Para** que el modelo nunca vea mis credenciales
+
+**Criterios:**
+- Enviar mensaje con API key (ej: `sk-...`) → proxy la detecta
+- La key se reemplaza por `[KEYVAULT:hash]` en el mensaje al LLM
+- La key se guarda en Valkey con TTL de 1 hora
+- En la respuesta, el placeholder se reinyecta con el valor real
+- Funciona tanto en streaming como no-streaming
+- Se inyecta system prompt explicando el uso de placeholders
+
+**Comando online — verificar sanitización (no-streaming):**
+```bash
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"normal","messages":[{"role":"user","content":"Mi key es sk-proj-abc123def456ghi789jkl012"}],"conversation_id":"conv-keyvault","stream":false}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','')[:100];print('OK:', bool(c))"
+```
+
+**Comando online — verificar sanitización (streaming):**
+```bash
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"normal","messages":[{"role":"user","content":"Mi key es sk-proj-abc123def456ghi789jkl012"}],"conversation_id":"conv-keyvault-stream","stream":true}' \
+  | tail -5
+```
+
+---
+
+## HU-14: Delegación de imágenes a tools
+
+**Como** usuario
+**Quiero** enviar una imagen a un modelo sin visión junto con una tool que sí puede procesarla
+**Para** que el modelo use la tool para procesar la imagen en vez de rechazar el request
+
+**Criterios:**
+- POST con imagen + tool compatible + modelo sin visión → 200 (no error)
+- El `image_url` se reemplaza por texto URL + instrucción para la tool
+- POST con imagen + modelo sin visión + SIN tools → 400 `IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL`
+
+**Comando online — imagen + tool + modelo sin visión (debe funcionar):**
+```bash
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"normal",
+    "messages":[{"role":"user","content":[
+      {"type":"text","text":"Describe esta imagen usando la tool analyze_image"},
+      {"type":"image_url","image_url":{"url":"https://example.com/img.png"}}
+    ]}],
+    "tools":[{"function":{"name":"analyze_image","parameters":{"type":"object","properties":{"image_url":{"type":"string"}}}}}],
+    "stream":false
+  }' | python3 -c "import sys,json;d=json.load(sys.stdin);print('HTTP 200:', d.get('id','')[:20])"
+```
+
+**Comando online — imagen sin tools (debe fallar con 400):**
+```bash
+curl -s -w "\nHTTP: %{http_code}" -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"normal",
+    "messages":[{"role":"user","content":[
+      {"type":"text","text":"Describe"},
+      {"type":"image_url","image_url":{"url":"https://example.com/img.png"}}
+    ]}],
+    "stream":false
+  }'
+```
+
+---
+
+## HU-15: Fallback strategy
 
 **Como** sistema
 **Quiero** que cuando el physical primario falle (timeout, rate limit, error)
 **Para** pasar automáticamente al siguiente físico en la lista
 
 **Criterios:**
-- `pensamiento-profundo-caro`: sequential → GLM-5 → DeepSeek V4 Pro → Claude
+- `pensamiento-profundo-caro`: sequential → DeepSeek V4 Pro → Gemini 3.5 Flash
 - `compactador`: by_context_window → elige según tamaño de historia
 - Todos los demás: sequential
-- Si todos los físicos fallan → error 502 `COMPACTION_FAILED` o 5xx según el contexto
+- Si todos los físicos fallan → error 503 `ALL_MODELS_FAILED` (o 413 si todos saltaron por contexto)
 
 **Comando online — ver physical model real usado:**
 ```bash
@@ -480,17 +425,71 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-17: Health check
+## HU-16: Auditoría (GET audit-log)
 
-**Como** operador
-**Quiero** consultar `/health`
-**Para** saber qué proveedores están configurados
+**Como** usuario
+**Quiero** ver el log de eventos de una conversación
+**Para** saber qué cambios de modelo, fallbacks y compactaciones ocurrieron
 
 **Criterios:**
-- GET `/health` retorna 200
-- Todos los proveedores esperados aparecen como `true` (anthropic, openrouter, google, deepseek, groq, zhipuai, zai)
+- GET `/conversations/{id}/audit-log` → 200 con array de eventos cronológicos
+- Incluye eventos de creación, cambios de pseudo-model, fallbacks, compactaciones explícitas
+
+**Comando online:**
+```bash
+CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"Hola\"}],\"conversation_id\":\"$CONV_ID\",\"stream\":false}" > /dev/null
+
+curl -s "http://localhost:9110/conversations/$CONV_ID/audit-log" \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);[print(f'{e.get(\"event_type\")}: {json.dumps(e.get(\"details\",{}))}') for e in d.get('events',[])]"
+```
+
+---
+
+## HU-17: Health check + Metrics
+
+**Como** operador
+**Quiero** consultar `/health` y `/metrics`
+**Para** saber qué proveedores están configurados y el estado del proxy
+
+**Criterios:**
+- GET `/health` → 200 con proveedores configurados
+- GET `/metrics` → 200 con métricas de uso
 
 **Comando online:**
 ```bash
 curl -s http://localhost:9110/health | python3 -m json.tool
+```
+
+**Verificar métricas:**
+```bash
+curl -s http://localhost:9110/metrics | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print(f'requests: {d[\"total_requests\"]}')
+print(f'compactions: {d[\"compactions\"]}')
+print(f'uptime: {d[\"uptime_seconds\"]}s')
+"
+```
+
+---
+
+## HU-18: Threshold exceeded → error explícito
+
+**Como** usuario
+**Quiero** que si mi input supera el umbral del pseudo-modelo
+**Para** recibir un error claro en vez de compactación silenciosa, y decidir si compacto manualmente
+
+**Criterios:**
+- POST con input > `input_token_threshold` → 400 `INPUT_EXCEEDS_THRESHOLD`
+- El error incluye el número de tokens y los modelos sugeridos
+- El usuario debe usar `POST /compact` para reducir el contexto
+
+**Comando online — enviar input masivo para superar umbral:**
+```bash
+curl -s -w "\nHTTP: %{http_code}" -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"$(python3 -c \"print('x'*200000)\")\"}],\"stream\":false}"
 ```

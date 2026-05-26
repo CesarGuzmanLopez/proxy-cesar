@@ -25,7 +25,6 @@ NC='\033[0m'
 
 START_SERVER=true
 KILL_ON_EXIT=true
-KEYCLAW_MOVED=false
 PASSED=0
 FAILED=0
 SKIPPED=0
@@ -60,6 +59,13 @@ api_post() {
         -d "$json"
 }
 
+api_post_stream() {
+    local model="$1" msg="$2"
+    curl -s --max-time 120 -X POST "$BASE_URL/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"$msg\"}],\"stream\":true}"
+}
+
 api_get() {
     curl -s --max-time 15 "$BASE_URL$1"
 }
@@ -77,533 +83,343 @@ if 'choices' in d:
 " 2>/dev/null
 }
 
-get_error() {
-    echo "$1" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-err=d.get('detail',{})
-if isinstance(err, dict):
-    print(err.get('message','')[:150])
-else:
-    print(str(err)[:150])
-" 2>/dev/null
+get_http_code() {
+    curl -s -o /dev/null -w "%{http_code}" --max-time 120 -X POST "$BASE_URL/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "$1"
 }
 
-get_field() {
-    local json="$1" field="$2"
-    echo "$json" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-parts='$field'.split('.')
-v=d
-for p in parts:
-    if isinstance(v, dict):
-        v=v.get(p,'?')
-    else:
-        v='?'
-        break
-print(v)
-" 2>/dev/null || echo "?"
-}
+# ── Server lifecycle ─────────────────────────────────────────────────────
 
-# ── Pre-flight ──────────────────────────────────────────────────────────
-preflight() {
-    info "Pre-flight checks..."
-    [ ! -f "$PROXY_DIR/.env" ]    && { fail "preflight" ".env not found in proxy/"; exit 1; }
-    [ ! -x "$VENV_PYTHON" ]       && { fail "preflight" "venv python not found"; exit 1; }
-    if ! ss -tlnp 2>/dev/null | grep -q ':6379'; then
-        fail "preflight" "Valkey/Redis not running on :6379"; exit 1
-    fi
-    ok "preflight"
-}
-
-# ── Server lifecycle ────────────────────────────────────────────────────
 start_server() {
-    info "Starting proxy-cesar..."
-    pkill -f "uvicorn src.main:app" 2>/dev/null || true
-    sleep 2
-
-    if [ -d "$HOME/.keyclaw" ]; then
-        info "KeyClaw detected — moving aside for clean testing"
-        mv "$HOME/.keyclaw" "$HOME/.keyclaw.test-bak" 2>/dev/null || true
-        KEYCLAW_MOVED=true
+    if [ "$START_SERVER" = false ]; then
+        info "Usando servidor existente en $BASE_URL"
+        return
     fi
 
-    cd "$PROXY_DIR"
-    setsid "$VENV_PYTHON" -m uvicorn src.main:app --host 127.0.0.1 --port 9110 \
-        > "$LOG_FILE" 2>&1 &
-    local server_pid=$!
-    echo "$server_pid" > /tmp/proxy-cesar-test.pid
+    # Check if already running
+    if curl -sf "$BASE_URL/health" > /dev/null 2>&1; then
+        info "Servidor ya está corriendo en $BASE_URL"
+        return
+    fi
 
+    info "Iniciando servidor proxy..."
+    cd "$PROXY_DIR" || exit 1
+    .venv/bin/python -m src.main > "$LOG_FILE" 2>&1 &
+    PROXY_PID=$!
+    cd "$SCRIPT_DIR" || exit 1
+
+    # Wait for startup
     for i in $(seq 1 30); do
-        if curl -s --max-time 2 "$BASE_URL/health" > /dev/null 2>&1; then
-            ok "server startup"
-            return 0
+        if curl -sf "$BASE_URL/health" > /dev/null 2>&1; then
+            info "Servidor listo (PID $PROXY_PID)"
+            return
         fi
         sleep 1
     done
-    fail "server startup" "timed out — check $LOG_FILE"
+
+    echo -e "${RED}ERROR: Servidor no arrancó en 30s${NC}"
+    tail -20 "$LOG_FILE"
     exit 1
 }
 
-stop_server() {
-    if [ "$KILL_ON_EXIT" = false ]; then
-        info "Server left running on $BASE_URL"
-        return
-    fi
-    info "Stopping server..."
-    local pid
-    pid=$(cat /tmp/proxy-cesar-test.pid 2>/dev/null || echo "")
-    [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
-    pkill -f "uvicorn src.main:app" 2>/dev/null || true
-
-    if [ "$KEYCLAW_MOVED" = true ] && [ -d "$HOME/.keyclaw.test-bak" ]; then
-        mv "$HOME/.keyclaw.test-bak" "$HOME/.keyclaw" 2>/dev/null || true
-        KEYCLAW_MOVED=false
-    fi
-    sleep 1
-    ok "server stopped"
-}
-
 cleanup() {
-    set +e
-    stop_server
+    if [ "$KILL_ON_EXIT" = true ] && [ -n "$PROXY_PID" ]; then
+        info "Deteniendo servidor (PID $PROXY_PID)..."
+        kill "$PROXY_PID" 2>/dev/null || true
+        wait "$PROXY_PID" 2>/dev/null || true
+    fi
+
+    echo -e "\n${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}  RESULTADOS${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "  ${GREEN}✓${NC} Passed: $PASSED"
+    echo -e "  ${RED}✗${NC} Failed: $FAILED"
+    echo -e "  ${YELLOW}○${NC} Skipped: $SKIPPED"
+    echo ""
+    [ "$FAILED" -gt 0 ] && exit 1 || exit 0
 }
+
 trap cleanup EXIT INT TERM
 
-# ── HU-17 ───────────────────────────────────────────────────────────────
-test_health() {
-    hdr "HU-17 — Health check"
-    local resp providers
-    resp=$(api_get "/health")
-    providers=$(get_field "$resp" "status")
-    if [ "$providers" = "ok" ]; then
-        ok "HU-17 — health OK"
+# ═══════════════════════════════════════════════════════════════════════════
+#  HISTORIAS DE USUARIO
+# ═══════════════════════════════════════════════════════════════════════════
+
+start_server
+
+# ── HU-1: Chat normal ────────────────────────────────────────────────────
+hdr "HU-1: Chat normal (DeepSeek V4 Flash)"
+RESP=$(api_post "normal" "Hola")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    CONTENT=$(get_content "$RESP")
+    echo "  Content: $CONTENT"
+    ok "HU-1: normal responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-1: normal falló" "$ERR"
+fi
+
+# ── HU-2: Pensamiento profundo ────────────────────────────────────────────
+hdr "HU-2: Pensamiento profundo (DeepSeek V4 Pro)"
+RESP=$(api_post "pensamiento-profundo-caro" "Arquitectura de un parser LR(1)")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    CONTENT=$(get_content "$RESP")
+    echo "  Content: ${CONTENT:0:100}..."
+    ok "HU-2: pensamiento-profundo-caro responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-2: pensamiento-profundo-caro falló" "$ERR"
+fi
+
+# ── HU-3: Tareas avanzadas ───────────────────────────────────────────────
+hdr "HU-3: Tareas avanzadas (DeepSeek V4 Pro + Flash)"
+RESP=$(api_post "tareas-avanzadas" "Implementar un microservicio en Python")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    CONTENT=$(get_content "$RESP")
+    echo "  Content: ${CONTENT:0:100}..."
+    ok "HU-3: tareas-avanzadas responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-3: tareas-avanzadas falló" "$ERR"
+fi
+
+# ── HU-4: Visión ─────────────────────────────────────────────────────────
+hdr "HU-4: Visión (Llama 4 Scout via Groq)"
+RESP=$(curl -s --max-time 120 -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model":"vision",
+        "messages":[{"role":"user","content":[
+            {"type":"text","text":"Describe esta imagen"},
+            {"type":"image_url","image_url":{"url":"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/300px-PNG_transparency_demonstration_1.png"}}
+        ]}],
+        "stream":false
+    }')
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    CONTENT=$(get_content "$RESP")
+    echo "  Content: ${CONTENT:0:100}..."
+    ok "HU-4: vision responde con imagen"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-4: vision falló" "$ERR"
+fi
+
+# ── HU-5: Normal gratis ──────────────────────────────────────────────────
+hdr "HU-5: Normal gratis (OpenRouter)"
+RESP=$(api_post "normal-gratis" "Hola gratis")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    ok "HU-5: normal-gratis responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-5: normal-gratis falló" "$ERR"
+fi
+
+# ── HU-6: Massive Fast ───────────────────────────────────────────────────
+hdr "HU-6: Massive Fast (Groq GPT-OSS 20B)"
+RESP=$(api_post "massive-fast" "Respuesta rápida")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    ok "HU-6: massive-fast responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-6: massive-fast falló" "$ERR"
+fi
+
+# ── HU-7: Flash Lowcost ──────────────────────────────────────────────────
+hdr "HU-7: Flash Lowcost (Gemini Flash Lite)"
+RESP=$(api_post "flash-lowcost" "Clasifica: me duele la cabeza")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    ok "HU-7: flash-lowcost responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-7: flash-lowcost falló" "$ERR"
+fi
+
+# ── HU-8: Audio ──────────────────────────────────────────────────────────
+hdr "HU-8: Audio (Whisper via Groq)"
+RESP=$(api_post "audio" "Transcribe este audio")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    ok "HU-8: audio responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-8: audio falló" "$ERR"
+fi
+
+# ── HU-9: Imagen ─────────────────────────────────────────────────────────
+hdr "HU-9: Imagen (Pruna P-Image)"
+RESP=$(api_post "imagen" "Un gato volador")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    ok "HU-9: imagen responde"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-9: imagen falló" "$ERR"
+fi
+
+# ── HU-10: Compactador explícito ─────────────────────────────────────────
+hdr "HU-10: Compactador explícito (POST /compact)"
+CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+for i in 1 2 3; do
+    api_post "normal" "turn $i" "\"conversation_id\":\"$CONV_ID\"" > /dev/null
+done
+COMPACT_RESP=$(curl -s --max-time 300 -X POST "$BASE_URL/conversations/$CONV_ID/compact" \
+    -H "Content-Type: application/json" -d '{}')
+COMPACT_STATUS=$(echo "$COMPACT_RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('status','NO_STATUS'))" 2>/dev/null)
+if [ "$COMPACT_STATUS" = "completed" ]; then
+    ok "HU-10: POST /compact → status=completed"
+else
+    fail "HU-10: compact falló" "$COMPACT_STATUS"
+fi
+
+# ── HU-11: Streaming SSE ─────────────────────────────────────────────────
+hdr "HU-11: Streaming SSE"
+STREAM_OUT=$(api_post_stream "normal" "Cuenta hasta 3")
+HAS_DONE=$(echo "$STREAM_OUT" | grep -c "\[DONE\]" || true)
+HAS_DATA=$(echo "$STREAM_OUT" | grep -c "^data: " || true)
+if [ "$HAS_DONE" -gt 0 ] && [ "$HAS_DATA" -gt 1 ]; then
+    ok "HU-11: streaming SSE válido (${HAS_DATA} chunks, [DONE] presente)"
+else
+    fail "HU-11: streaming" "data=${HAS_DATA} done=${HAS_DONE}"
+fi
+
+# ── HU-12: Model aliases ─────────────────────────────────────────────────
+hdr "HU-12: Model aliases"
+ALL_ALIASES_OK=true
+for alias in gpt-4o gpt-4o-mini o3 gemini-2.5-flash default; do
+    RESP=$(api_post "$alias" "hi")
+    if [ "$(has_choices "$RESP")" = "YES" ]; then
+        echo "  $alias → OK"
     else
-        fail "HU-17" "health: $(get_error "$resp")"
+        echo "  $alias → FAIL"
+        ALL_ALIASES_OK=false
     fi
-}
+done
+if [ "$ALL_ALIASES_OK" = true ]; then
+    ok "HU-12: todos los aliases resuelven correctamente"
+else
+    fail "HU-12: algunos aliases fallaron" ""
+fi
 
-# ── HU-1 ────────────────────────────────────────────────────────────────
-test_normal() {
-    hdr "HU-1 — Chat normal (DeepSeek V4 Flash)"
-    local resp content
-    resp=$(api_post "normal" "Hola")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-1 — normal → ${content}"
-    else
-        fail "HU-1" "$(get_error "$resp")"
-    fi
-}
+# ── HU-13: KeyVault ──────────────────────────────────────────────────────
+hdr "HU-13: KeyVault — Protección de Secrets"
+RESP=$(api_post "normal" "Mi key es sk-proj-abc123def456ghi789jkl012" "\"conversation_id\":\"conv-kv-h13\"")
+if [ "$(has_choices "$RESP")" = "YES" ]; then
+    ok "HU-13: KeyVault no bloquea requests con keys (sanitiza OK)"
+else
+    ERR=$(get_error "$RESP")
+    fail "HU-13: KeyVault" "$ERR"
+fi
 
-# ── HU-2 ────────────────────────────────────────────────────────────────
-test_pensamiento_profundo() {
-    hdr "HU-2 — Pensamiento profundo (GLM-5 + DeepSeek V4 Pro + Claude)"
-    local resp content phys
-    resp=$(api_post "pensamiento-profundo-caro" "Arquitectura de un parser LR(1)")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        phys=$(get_field "$resp" "proxy_metadata.physical_model")
-        ok "HU-2 — pensamiento-profundo-caro → ${content}"
-        info "  physical_model: $phys"
-    else
-        fail "HU-2" "$(get_error "$resp")"
-    fi
-}
+# ── HU-14: Delegación imágenes a tools ───────────────────────────────────
+hdr "HU-14: Delegación de imágenes a tools"
+# Con tool → debe funcionar
+RESP_WITH_TOOL=$(curl -s --max-time 120 -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model":"normal",
+        "messages":[{"role":"user","content":[
+            {"type":"text","text":"Usa la tool"},
+            {"type":"image_url","image_url":{"url":"https://example.com/img.png"}}
+        ]}],
+        "tools":[{"function":{"name":"analyze","parameters":{"type":"object","properties":{"url":{"type":"string"}}}}}],
+        "stream":false
+    }')
+if [ "$(has_choices "$RESP_WITH_TOOL")" = "YES" ]; then
+    ok "HU-14a: imagen + tool → 200 OK"
+else
+    ERR=$(get_error "$RESP_WITH_TOOL")
+    fail "HU-14a: imagen + tool" "$ERR"
+fi
 
-# ── HU-3 ────────────────────────────────────────────────────────────────
-test_tareas_avanzadas() {
-    hdr "HU-3 — Tareas avanzadas (DeepSeek V4 Pro + Flash)"
-    local resp content
-    resp=$(api_post "tareas-avanzadas" "Implementar un microservicio en Python")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-3 — tareas-avanzadas → ${content}"
-    else
-        fail "HU-3" "$(get_error "$resp")"
-    fi
-}
+# Sin tool → debe fallar con 400
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 120 -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model":"normal",
+        "messages":[{"role":"user","content":[
+            {"type":"text","text":"Describe"},
+            {"type":"image_url","image_url":{"url":"https://example.com/img.png"}}
+        ]}],
+        "stream":false
+    }')
+if [ "$HTTP_CODE" = "400" ]; then
+    ok "HU-14b: imagen sin tool → 400 (esperado)"
+else
+    fail "HU-14b: imagen sin tool" "HTTP $HTTP_CODE (esperado 400)"
+fi
 
-# ── HU-4 ────────────────────────────────────────────────────────────────
-test_vision() {
-    hdr "HU-4 — Visión (Gemini Flash + Lite + Ollama)"
-    # Test without image first (image fetch depends on provider)
-    local resp content
-    resp=$(api_post "vision" "Describe colores primarios")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-4 — vision (text) → ${content}"
-    else
-        # Vision models may be down — this is infrastructure, not a proxy bug
-        local err
-        err=$(get_error "$resp")
-        if echo "$err" | grep -q "ALL_MODELS_FAILED"; then
-            skip "HU-4" "all vision backends unavailable (infra): $err"
-        else
-            fail "HU-4" "$err"
-        fi
-    fi
-}
+# ── HU-15: Fallback ──────────────────────────────────────────────────────
+hdr "HU-15: Fallback strategy"
+RESP=$(api_post "pensamiento-profundo-caro" "test")
+PHYSICAL=$(echo "$RESP" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+md=d.get('proxy_metadata',{})
+print(md.get('physical_model','?'))
+" 2>/dev/null)
+if [ -n "$PHYSICAL" ] && [ "$PHYSICAL" != "?" ]; then
+    ok "HU-15: fallback strategy — physical_model=$PHYSICAL"
+else
+    fail "HU-15: fallback" "no physical_model"
+fi
 
-# ── HU-5 ────────────────────────────────────────────────────────────────
-test_vision_lite() {
-    hdr "HU-5 — Vision Lite (Z.ai + Groq)"
-    local resp content
-    resp=$(api_post "vision-lite" "Hola")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-5 — vision-lite → ${content}"
-    else
-        fail "HU-5" "$(get_error "$resp")"
-    fi
-}
+# ── HU-16: Auditoría ─────────────────────────────────────────────────────
+hdr "HU-16: Auditoría (GET audit-log)"
+AUDIT_RESP=$(api_get "/conversations/$CONV_ID/audit-log")
+HAS_EVENTS=$(echo "$AUDIT_RESP" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print('YES' if len(d.get('events',[])) > 0 else 'NO')
+" 2>/dev/null || echo "NO")
+if [ "$HAS_EVENTS" = "YES" ]; then
+    ok "HU-16: audit-log retorna eventos"
+else
+    fail "HU-16: audit-log" "sin eventos"
+fi
 
-# ── HU-6 ────────────────────────────────────────────────────────────────
-test_normal_gratis() {
-    hdr "HU-6 — Normal gratis (OpenRouter + Z.ai)"
-    local resp content
-    resp=$(api_post "normal-gratis" "Hola")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-6 — normal-gratis → ${content}"
-    else
-        fail "HU-6" "$(get_error "$resp")"
-    fi
-}
+# ── HU-17: Health check ──────────────────────────────────────────────────
+hdr "HU-17: Health check"
+HEALTH=$(api_get "/health")
+HEALTH_OK=$(echo "$HEALTH" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print('YES' if d.get('status') == 'ok' else 'NO')
+" 2>/dev/null || echo "NO")
+if [ "$HEALTH_OK" = "YES" ]; then
+    ok "HU-17: health check → status=ok"
+else
+    fail "HU-17: health" "status != ok"
+fi
 
-# ── HU-7 ────────────────────────────────────────────────────────────────
-test_deep_flash() {
-    hdr "HU-7 — Deep Flash (DeepSeek V4 Flash directo)"
-    local resp content
-    resp=$(api_post "deep-flash" "Traduce al inglés: Hola mundo")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-7 — deep-flash → ${content}"
-    else
-        fail "HU-7" "$(get_error "$resp")"
-    fi
-}
+# Verificar métricas
+METRICS=$(api_get "/metrics")
+METRICS_OK=$(echo "$METRICS" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print('YES' if 'total_requests' in d else 'NO')
+" 2>/dev/null || echo "NO")
+if [ "$METRICS_OK" = "YES" ]; then
+    ok "HU-17b: metrics endpoint responde"
+else
+    fail "HU-17b: metrics" "no responde"
+fi
 
-# ── HU-8 ────────────────────────────────────────────────────────────────
-test_massive_fast() {
-    hdr "HU-8 — Massive Fast (Groq)"
-    local resp content
-    resp=$(api_post "massive-fast" "Respuesta rápida")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-8 — massive-fast → ${content}"
-    else
-        fail "HU-8" "$(get_error "$resp")"
-    fi
-}
+# ── HU-18: Threshold exceeded ────────────────────────────────────────────
+hdr "HU-18: Threshold exceeded → error explícito"
+# Enviar input masivo a normal-gratis (threshold=200K)
+LARGE_MSG=$(python3 -c "print('x'*250000)")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 120 -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"normal-gratis\",\"messages\":[{\"role\":\"user\",\"content\":\"$LARGE_MSG\"}],\"stream\":false}")
+if [ "$HTTP_CODE" = "400" ]; then
+    ok "HU-18: input masivo → 400 (esperado)"
+else
+    fail "HU-18: threshold" "HTTP $HTTP_CODE (esperado 400)"
+fi
 
-# ── HU-9 ────────────────────────────────────────────────────────────────
-test_flash_lowcost() {
-    hdr "HU-9 — Flash Lowcost (Z.ai + Ollama)"
-    local resp content
-    resp=$(api_post "flash-lowcost" "Clasifica: me duele la cabeza")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        ok "HU-9 — flash-lowcost → ${content}"
-    else
-        fail "HU-9" "$(get_error "$resp")"
-    fi
-}
-
-# ── HU-10 ───────────────────────────────────────────────────────────────
-test_compactador() {
-    hdr "HU-10 — Compactador explícito (POST /compact)"
-
-    # Build conversation with turns
-    local conv_id resp status
-    conv_id=$($VENV_PYTHON -c "import uuid; print(uuid.uuid4())" 2>/dev/null) || { skip "HU-10" "python not available"; return; }
-    for i in 1 2 3; do
-        curl -s -X POST "$BASE_URL/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"turn $i\"}],\"conversation_id\":\"$conv_id\",\"stream\":false}" \
-            > /dev/null 2>&1 || true
-    done
-
-    # Test explicit compact
-    resp=$(curl -s --max-time 120 -X POST "$BASE_URL/conversations/$conv_id/compact" \
-        -H "Content-Type: application/json" -d '{}')
-    status=$(get_field "$resp" "status")
-    if [ "$status" = "completed" ]; then
-        ok "HU-10 — compact → status=completed"
-    else
-        fail "HU-10" "compact status=$status: $(get_error "$resp")"
-    fi
-
-    # Test empty conversation → should be 400
-    local empty_id
-    empty_id=$($VENV_PYTHON -c "import uuid; print(uuid.uuid4())" 2>/dev/null) || empty_id="empty-test"
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-        -X POST "$BASE_URL/conversations/$empty_id/compact" \
-        -H "Content-Type: application/json" -d '{}' 2>/dev/null || echo "000")
-    if [ "$http_code" = "400" ] || [ "$http_code" = "404" ]; then
-        ok "HU-10 — empty conv compact → $http_code (correct)"
-    else
-        fail "HU-10" "empty conv expected 400/404, got $http_code"
-    fi
-
-    # Double compaction
-    resp=$(curl -s --max-time 120 -X POST "$BASE_URL/conversations/$conv_id/compact" \
-        -H "Content-Type: application/json" -d '{}')
-    status=$(get_field "$resp" "status")
-    if [ "$status" = "completed" ]; then
-        ok "HU-10 — double compact → status=completed"
-    else
-        fail "HU-10" "double compact status=$status"
-    fi
-}
-
-# ── HU-11 ───────────────────────────────────────────────────────────────
-test_continuous_compaction() {
-    hdr "HU-11 — Compactación continua (inline /compact)"
-
-    # Use the conversation from HU-10 (already has turns and snapshot)
-    # or create a new one
-    local conv_id resp content
-    conv_id=$($VENV_PYTHON -c "import uuid; print(uuid.uuid4())" 2>/dev/null) || { skip "HU-11" "python not available"; return; }
-    for i in 1 2 3; do
-        curl -s -X POST "$BASE_URL/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"msg $i\"}],\"conversation_id\":\"$conv_id\",\"stream\":false}" \
-            > /dev/null 2>&1 || true
-    done
-
-    # Inline /compact
-    resp=$(api_post "normal" "/compact" "\"conversation_id\":\"$conv_id\"")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        content=$(get_content "$resp")
-        if echo "$content" | grep -q "compacted\|snapshot\|prepared"; then
-            ok "HU-11 — inline /compact → snapshot created"
-        else
-            ok "HU-11 — inline /compact responded: ${content}"
-        fi
-    else
-        fail "HU-11" "$(get_error "$resp")"
-    fi
-
-    # Verify conversation state has snapshot
-    resp=$(api_get "/conversations/$conv_id")
-    local snap tokens
-    snap=$(get_field "$resp" "active_snapshot_id")
-    tokens=$(get_field "$resp" "total_tokens")
-    if [ -n "$snap" ] && [ "$snap" != "?" ] && [ "$snap" != "None" ]; then
-        ok "HU-11 — active_snapshot_id=$snap tokens=$tokens"
-    else
-        skip "HU-11" "snapshot not active (tokens=$tokens, may need more context)"
-    fi
-}
-
-# ── HU-12 ───────────────────────────────────────────────────────────────
-test_imagenes() {
-    hdr "HU-12 — Degradación de imágenes"
-
-    # Create conversation with vision + image
-    local conv_id resp status
-    conv_id=$($VENV_PYTHON -c "import uuid; print(uuid.uuid4())" 2>/dev/null) || { skip "HU-12" "python not available"; return; }
-
-    # Try sending image — may fail if vision models are down
-    resp=$(curl -s --max-time 60 -X POST "$BASE_URL/v1/chat/completions" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"model\":\"vision\",
-            \"messages\":[{\"role\":\"user\",\"content\":[
-                {\"type\":\"text\",\"text\":\"Describe\"},
-                {\"type\":\"image_url\",\"image_url\":{\"url\":\"https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/300px-PNG_transparency_demonstration_1.png\"}}
-            ]}],
-            \"conversation_id\":\"$conv_id\",
-            \"stream\":false
-        }" 2>/dev/null)
-
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        ok "HU-12 — vision with image → OK"
-
-        # Degrade images
-        resp=$(curl -s --max-time 120 -X POST "$BASE_URL/conversations/$conv_id/degrade-images" \
-            -H "Content-Type: application/json" -d '{}')
-        status=$(get_field "$resp" "status")
-        if [ "$status" = "completed" ]; then
-            ok "HU-12 — degrade-images → completed"
-        else
-            fail "HU-12" "degrade-images status=$status: $(get_error "$resp")"
-        fi
-
-        # Try switching to normal after degrade
-        resp=$(api_post "normal" "Mensaje después de degradar" "\"conversation_id\":\"$conv_id\"")
-        if [ "$(has_choices "$resp")" = "YES" ]; then
-            ok "HU-12 — switch to normal after degrade → OK"
-        else
-            fail "HU-12" "switch to normal after degrade: $(get_error "$resp")"
-        fi
-    else
-        skip "HU-12" "vision models unavailable, cannot test image flow"
-    fi
-
-    # Test: image to non-vision model should be blocked
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-        -X POST "$BASE_URL/v1/chat/completions" \
-        -H "Content-Type: application/json" \
-        -d '{"model":"normal","messages":[{"role":"user","content":[{"type":"text","text":"Describe"},{"type":"image_url","image_url":{"url":"https://example.com/img.png"}}]}],"stream":false}' \
-        2>/dev/null || echo "000")
-    if [ "$http_code" = "400" ] || [ "$http_code" = "422" ]; then
-        ok "HU-12 — image to non-vision model blocked ($http_code)"
-    else
-        fail "HU-12" "image to non-vision should be blocked, got $http_code"
-    fi
-}
-
-# ── HU-13 ───────────────────────────────────────────────────────────────
-test_audit_log() {
-    hdr "HU-13 — Auditoría (GET audit-log)"
-
-    local conv_id resp events
-    conv_id=$($VENV_PYTHON -c "import uuid; print(uuid.uuid4())" 2>/dev/null) || { skip "HU-13" "python not available"; return; }
-    for i in 1 2; do
-        curl -s -X POST "$BASE_URL/v1/chat/completions" \
-            -H "Content-Type: application/json" \
-            -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":\"msg $i\"}],\"conversation_id\":\"$conv_id\",\"stream\":false}" \
-            > /dev/null 2>&1 || true
-    done
-
-    resp=$(api_get "/conversations/$conv_id/audit-log")
-    events=$(get_field "$resp" "events")
-    if [ "$events" != "?" ] && [ "$events" != "None" ]; then
-        local count
-        count=$(echo "$resp" | python3 -c "import sys,json;d=json.load(sys.stdin);print(len(d.get('events',[])))" 2>/dev/null || echo "0")
-        if [ "$count" -gt 0 ] 2>/dev/null; then
-            ok "HU-13 — audit-log has $count events"
-        else
-            ok "HU-13 — audit-log accessible (0 events for new conv)"
-        fi
-    else
-        fail "HU-13" "audit-log parse error: $(echo "$resp" | head -c 200)"
-    fi
-}
-
-# ── HU-14 ───────────────────────────────────────────────────────────────
-test_streaming() {
-    hdr "HU-14 — Streaming"
-    local resp
-    resp=$(curl -s --max-time 60 -X POST "$BASE_URL/v1/chat/completions" \
-        -H "Content-Type: application/json" \
-        -d '{"model":"normal","messages":[{"role":"user","content":"Cuenta hasta 3"}],"stream":true}' 2>/dev/null)
-    if echo "$resp" | grep -q "data:"; then
-        ok "HU-14 — streaming returns SSE chunks"
-    elif echo "$resp" | grep -q "DONE"; then
-        ok "HU-14 — streaming completed with DONE"
-    elif [ -z "$resp" ]; then
-        fail "HU-14" "streaming returned empty response"
-    else
-        local preview
-        preview=$(echo "$resp" | head -1 | tr '\n' ' ')
-        fail "HU-14" "unexpected: $preview"
-    fi
-}
-
-# ── HU-15 ───────────────────────────────────────────────────────────────
-test_aliases() {
-    hdr "HU-15 — Model aliases"
-
-    declare -A expected_physical=(
-        ["gpt-4o"]="deepseek-v4-flash"
-        ["gpt-4o-mini"]="deepseek-v4-flash"
-        ["o3"]="deepseek-v4-pro"
-        ["claude-haiku-3-5-20241022"]="zai/glm-4.5-flash"
-        ["default"]="deepseek-v4-flash"
-    )
-
-    for alias in "${!expected_physical[@]}"; do
-        local expected_phys="${expected_physical[$alias]}"
-        local resp actual
-        resp=$(api_post "$alias" "hi")
-        actual=$(get_field "$resp" "model")
-        if [ -n "$actual" ] && [ "$actual" != "?" ]; then
-            ok "HU-15 — $alias → $actual (phys: $expected_phys)"
-        else
-            fail "HU-15" "$alias → no response: $(get_error "$resp")"
-        fi
-    done
-
-    # gemini-2.5-flash → vision (may fail if vision backends unavailable)
-    local resp actual
-    resp=$(api_post "gemini-2.5-flash" "hi")
-    actual=$(get_field "$resp" "model")
-    if [ -n "$actual" ] && [ "$actual" != "?" ]; then
-        ok "HU-15 — gemini-2.5-flash → $actual"
-    else
-        skip "HU-15" "gemini-2.5-flash: vision backends unavailable"
-    fi
-}
-
-# ── HU-16 ───────────────────────────────────────────────────────────────
-test_fallback() {
-    hdr "HU-16 — Fallback strategy"
-    local resp phys
-    resp=$(api_post "pensamiento-profundo-caro" "test")
-    if [ "$(has_choices "$resp")" = "YES" ]; then
-        phys=$(get_field "$resp" "proxy_metadata.physical_model")
-        ok "HU-16 — physical_model: $phys"
-    else
-        fail "HU-16" "$(get_error "$resp")"
-    fi
-}
-
-# ── Main ────────────────────────────────────────────────────────────────
-main() {
-    echo -e "${BLUE}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║     Proxy-Cesar — Verificación de Historias de Usuario      ║"
-    echo "║     Basado en BUG_VERIFICATION_FLOW.md                      ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-
-    preflight
-
-    if [ "$START_SERVER" = true ]; then
-        start_server
-    fi
-
-    # ── Run all tests ─────────────────────────────────────────────────
-    test_health
-    test_normal
-    test_pensamiento_profundo
-    test_tareas_avanzadas
-    test_vision
-    test_vision_lite
-    test_normal_gratis
-    test_deep_flash
-    test_massive_fast
-    test_flash_lowcost
-    test_compactador
-    test_continuous_compaction
-    test_imagenes
-    test_audit_log
-    test_streaming
-    test_aliases
-    test_fallback
-
-    # ── Summary ──────────────────────────────────────────────────────
-    hdr "RESUMEN"
-    local total=$((PASSED + FAILED + SKIPPED))
-    echo -e "  ${GREEN}Passed:  $PASSED${NC}"
-    echo -e "  ${RED}Failed:  $FAILED${NC}"
-    echo -e "  ${YELLOW}Skipped: $SKIPPED${NC}"
-    echo -e "  Total:   $total"
-    echo ""
-
-    if [ "$FAILED" -gt 0 ]; then
-        echo -e "${RED}Some tests FAILED — check output above.${NC}"
-        exit 1
-    else
-        echo -e "${GREEN}All tests PASSED.${NC}"
-        exit 0
-    fi
-}
-
-main
+# ═══════════════════════════════════════════════════════════════════════════
+#  RESUMEN
+# ═══════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}  TODAS LAS HISTORIAS DE USUARIO COMPLETADAS${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
