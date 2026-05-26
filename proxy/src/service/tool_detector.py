@@ -85,6 +85,36 @@ _DESCRIBE_PROMPTS: dict[str, str] = {
 }
 
 
+async def _call_model_for_content(
+    raw_data: str, prompt: str, model_name: str, max_tokens: int, content_type: str
+) -> str:
+    """Call a model to describe content and extract the text response."""
+    from src.adapters.litellm import call_litellm
+
+    content_parts: list[dict] = [{"type": "text", "text": prompt}]
+    if content_type == "image":
+        content_parts.append(
+            {"type": "image_url", "image_url": {"url": raw_data}}
+        )
+    elif content_type == "audio":
+        content_parts.append(
+            {"type": "input_audio", "input_audio": {"data": raw_data}}
+        )
+
+    response = await call_litellm(
+        model=model_name, messages=[{"role": "user", "content": content_parts}],
+        max_tokens=max_tokens, temperature=0.1,
+    )
+    resp = (
+        response.model_dump() if hasattr(response, "model_dump") else response
+    )
+    if isinstance(resp, dict):
+        choices = resp.get("choices", [])
+        if choices:
+            return choices[0].get("message", {}).get("content", "")[:500]
+    return ""
+
+
 async def _describe_content(raw_data: str, mime: str, config) -> str:
     """Generate a brief description of any content using the cheapest capable model.
 
@@ -105,71 +135,35 @@ async def _describe_content(raw_data: str, mime: str, config) -> str:
 
     # Image → use any vision model
     if prompt_key == "image":
-        vision_model = _find_model_with_capability(config, "vision")
-        if not vision_model:
+        model_name = _find_model_with_capability(config, "vision")
+        if not model_name:
             return ""
         try:
-            from src.adapters.litellm import call_litellm
-
-            msg = {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": raw_data}},
-                ],
-            }
-            response = await call_litellm(
-                model=vision_model, messages=[msg], max_tokens=200, temperature=0.1
+            return await _call_model_for_content(
+                raw_data, prompt, model_name, max_tokens=200, content_type="image"
             )
-            resp = (
-                response.model_dump() if hasattr(response, "model_dump") else response
-            )
-            if isinstance(resp, dict):
-                choices = resp.get("choices", [])
-                if choices:
-                    return choices[0].get("message", {}).get("content", "")[:500]
-            return ""
         except Exception as exc:
             logger.warning(
-                "blob_describe_failed model=%s error=%s", vision_model, str(exc)
+                "blob_describe_failed model=%s error=%s", model_name, str(exc)
             )
             return ""
 
     # Audio → use any audio model (whisper)
     if prompt_key == "audio":
-        audio_model = _find_model_with_capability(config, "audio")
-        if not audio_model:
+        model_name = _find_model_with_capability(config, "audio")
+        if not model_name:
             return ""
         try:
-            from src.adapters.litellm import call_litellm
-
-            msg = {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "input_audio", "input_audio": {"data": raw_data}},
-                ],
-            }
-            response = await call_litellm(
-                model=audio_model, messages=[msg], max_tokens=300, temperature=0.1
+            return await _call_model_for_content(
+                raw_data, prompt, model_name, max_tokens=300, content_type="audio"
             )
-            resp = (
-                response.model_dump() if hasattr(response, "model_dump") else response
-            )
-            if isinstance(resp, dict):
-                choices = resp.get("choices", [])
-                if choices:
-                    return choices[0].get("message", {}).get("content", "")[:500]
-            return ""
         except Exception as exc:
             logger.warning(
-                "blob_describe_failed model=%s error=%s", audio_model, str(exc)
+                "blob_describe_failed model=%s error=%s", model_name, str(exc)
             )
             return ""
 
     # Files/PDF → try Python text extraction (no model needed)
-    # If extraction fails, metadata is returned so the model can decide
-    # whether to use a tool (vision, convert to images, etc.)
     if "pdf" in mime:
         return _try_extract_pdf_text(raw_data)
 
@@ -210,7 +204,7 @@ def _try_extract_pdf_text(base64_data: str) -> str:
 
 
 async def _store_blob_with_description(
-    valkey, blob_key: str, desc_key: str, raw_data: str, mime: str, ptype: str, config
+    valkey, blob_key: str, desc_key: str, raw_data: str, mime: str, config
 ) -> str:
     """Store base64 blob in Valkey and generate a text description.
 
@@ -251,6 +245,67 @@ async def _store_blob_with_description(
     return description
 
 
+async def _process_content_parts(
+    content: list[dict[str, Any]],
+    prefix: str,
+    valkey,
+    config,
+) -> list[dict[str, Any]]:
+    """Process content parts of a user message, replacing base64 with blob refs."""
+    new_parts: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            new_parts.append(part)
+            continue
+
+        ptype = part.get("type", "")
+        raw, label = _extract_blob_info(part, ptype)
+
+        if not raw or not raw.startswith("data:"):
+            new_parts.append(part)
+            continue
+
+        # Base64 → store as blob reference
+        h = _hash_content(raw)
+        mime = _extract_mime(raw) or f"{ptype}/unknown"
+        blob_key = f"{prefix}:{h}"
+        desc_key = f"{prefix}:{h}:desc"
+        size_kb = len(raw) // 1024
+
+        description = await _store_blob_with_description(
+            valkey, blob_key, desc_key, raw, mime, config
+        )
+
+        ref = f"{BLOB_PREFIX}:{h}:{mime}"
+        text = f"[The user sent an {label}. blob: {ref} | {size_kb} KB"
+        if description:
+            text += f"\n{description}"
+        text += "]"
+        new_parts.append({"type": "text", "text": text})
+
+    return new_parts
+
+
+def _extract_blob_info(part: dict, ptype: str) -> tuple[str, str]:
+    """Extract raw data and a human-readable label from a content part."""
+    raw: str = ""
+    label: str = ""
+
+    if ptype == "image_url":
+        raw = part.get("image_url", {}).get("url", "")
+        label = "image"
+    elif ptype == "input_audio":
+        audio = part.get("input_audio", {})
+        raw = audio.get("data", "") or audio.get("url", "")
+        label = "audio file"
+    elif ptype == "file":
+        file_data = part.get("file", {})
+        raw = file_data.get("data", "") or file_data.get("url", "")
+        label = "file"
+
+    return raw, label
+
+
 async def replace_base64_with_blob_refs(
     messages: list[dict[str, Any]],
     conversation_id: str | None = None,
@@ -288,56 +343,8 @@ async def replace_base64_with_blob_refs(
             new_messages.append(msg)
             continue
 
-        new_content: list[dict[str, Any]] = []
-        for part in content:
-            if not isinstance(part, dict):
-                new_content.append(part)
-                continue
-
-            ptype = part.get("type", "")
-            raw: str = ""
-            label = ""
-
-            if ptype == "image_url":
-                raw = part.get("image_url", {}).get("url", "")
-                label = "image"
-            elif ptype == "input_audio":
-                audio = part.get("input_audio", {})
-                raw = audio.get("data", "") or audio.get("url", "")
-                label = "audio file"
-            elif ptype == "file":
-                file_data = part.get("file", {})
-                raw = file_data.get("data", "") or file_data.get("url", "")
-                label = "file"
-
-            if not raw:
-                new_content.append(part)
-                continue
-
-            # Real URL → pass through, model can download it
-            if not raw.startswith("data:"):
-                new_content.append(part)
-                continue
-
-            # Base64 → store as blob reference
-            h = _hash_content(raw)
-            mime = _extract_mime(raw) or f"{ptype}/unknown"
-            blob_key = f"{prefix}:{h}"
-            desc_key = f"{prefix}:{h}:desc"
-            size_kb = len(raw) // 1024
-
-            description = await _store_blob_with_description(
-                valkey, blob_key, desc_key, raw, mime, ptype, config
-            )
-
-            ref = f"{BLOB_PREFIX}:{h}:{mime}"
-            text = f"[The user sent an {label}. blob: {ref} | {size_kb} KB"
-            if description:
-                text += f"\n{description}"
-            text += "]"
-            new_content.append({"type": "text", "text": text})
-
-        new_messages.append({**msg, "content": new_content})
+        processed = await _process_content_parts(content, prefix, valkey, config)
+        new_messages.append({**msg, "content": processed})
 
     return new_messages
 

@@ -319,108 +319,167 @@ def validate_incoming_content(
       - {"action": "transform_unsupported"} if content should be blobified
     Raises HTTPException on unrecoverable errors (wrong content for model, etc.).
     """
-    physical_models = pseudo_model.physical_models
+    phys = pseudo_model.physical_models
 
-    # ---- CHECK: Wrong content for specialized models ----
-    # Models like imagen (text-to-image) should never receive image input.
-    # Audio models should not receive images, etc.
-    _SPECIALIZED_MODEL_ERRORS: dict[str, dict[str, str | list[str]]] = {
-        "imagen": {
-            "image_url": (
-                "The 'imagen' model generates images from text. "
-                "It cannot process image input."
-            ),
-            "input_audio": (
-                "The 'imagen' model generates images from text. "
-                "It cannot process audio input."
-            ),
-        },
-        "audio": {
-            "image_url": (
-                "The 'audio' model transcribes audio to text. "
-                "It cannot process image input."
-            ),
-        },
+    _check_specialized_model_mismatch(turn_caps, pseudo_model_name)
+
+    # Images → model without vision
+    result = _check_content_support(
+        turn_caps, "has_images", phys, "vision",
+        pseudo_model_name, tools, can_delegate=True,
+    )
+    if result is not None:
+        return result
+
+    # Audio → model without audio
+    result = _check_content_support(
+        turn_caps, "has_audio", phys, "audio", pseudo_model_name,
+    )
+    if result is not None:
+        return result
+
+    # PDF → model without vision
+    result = _check_content_support(
+        turn_caps, "has_pdf", phys, "vision", pseudo_model_name,
+    )
+    if result is not None:
+        return result
+
+    # Video → model without video
+    result = _check_content_support(
+        turn_caps, "has_video", phys, "video", pseudo_model_name,
+    )
+    if result is not None:
+        return result
+
+    # Parallel tools → model without parallel support
+    _check_parallel_tools_support(turn_caps, phys, pseudo_model_name, config)
+
+
+# ── Internal content validators ────────────────────────────────────────────────
+
+_SPECIALIZED_MODEL_ERRORS: dict[str, dict[str, str]] = {
+    "imagen": {
+        "image_url": (
+            "The 'imagen' model generates images from text. "
+            "It cannot process image input."
+        ),
+        "input_audio": (
+            "The 'imagen' model generates images from text. "
+            "It cannot process audio input."
+        ),
+    },
+    "audio": {
+        "image_url": (
+            "The 'audio' model transcribes audio to text. "
+            "It cannot process image input."
+        ),
+    },
+}
+
+
+def _check_specialized_model_mismatch(
+    turn_caps: TurnCapabilities,
+    pseudo_model_name: str,
+) -> None:
+    """Raise HTTPException if content type is incompatible with specialized model."""
+    content_type_map = {
+        "has_images": "image_url",
+        "has_audio": "input_audio",
+        "has_video": "video",
     }
-    content_type_map = {"has_images": "image_url", "has_audio": "input_audio", "has_video": "video"}
-    for check_cap, error_type in content_type_map.items():
-        if getattr(turn_caps, check_cap, False) and pseudo_model_name in _SPECIALIZED_MODEL_ERRORS:
-            error_info = _SPECIALIZED_MODEL_ERRORS[pseudo_model_name]
-            if error_type in error_info:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": f"{error_type.upper()}_NOT_SUPPORTED_BY_SPECIALIZED_MODEL",
-                        "message": error_info[error_type],
-                        "remediation": [
-                            f"Use a different model for {error_type} content",
-                            "Try 'model': 'vision' for images, or 'model': 'audio' for audio",
-                        ],
-                        "current_pseudo_model": pseudo_model_name,
-                    },
-                )
+    for cap_attr, error_type in content_type_map.items():
+        if not getattr(turn_caps, cap_attr, False):
+            continue
+        if pseudo_model_name not in _SPECIALIZED_MODEL_ERRORS:
+            continue
+        error_info = _SPECIALIZED_MODEL_ERRORS[pseudo_model_name]
+        if error_type not in error_info:
+            continue
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"{error_type.upper()}_NOT_SUPPORTED_BY_SPECIALIZED_MODEL",
+                "message": error_info[error_type],
+                "remediation": [
+                    f"Use a different model for {error_type} content",
+                    "Try 'model': 'vision' for images, or 'model': 'audio' for audio",
+                ],
+                "current_pseudo_model": pseudo_model_name,
+            },
+        )
 
-    # ---- CHECK: Images → model without vision ----
-    if turn_caps.has_images:
-        has_vision_model = any(m.vision for m in physical_models)
-        if not has_vision_model:
-            # Try tool delegation first
-            from src.service.tool_detector import find_image_compatible_tool
 
-            match = find_image_compatible_tool(tools)
-            if match:
-                tool_name, param_name = match
-                return {
-                    "action": "delegate_images",
-                    "tool_name": tool_name,
-                    "param_name": param_name,
-                }
+def _check_content_support(
+    turn_caps: TurnCapabilities,
+    cap_attr: str,
+    physical_models: list,
+    capability: str,
+    pseudo_model_name: str,
+    tools: list[dict] | None = None,
+    can_delegate: bool = False,
+) -> dict | None:
+    """Check if any physical model supports a required capability.
 
-            # No tools → transform image_url to text URL explanation
-            return {"action": "transform_unsupported"}
+    Returns None if supported, or {"action": "transform_unsupported"}.
+    For images with can_delegate=True, also checks tool delegation.
+    """
+    if not getattr(turn_caps, cap_attr, False):
+        return None
 
-    # ---- CHECK: Audio → model without audio support ----
-    if turn_caps.has_audio:
-        has_audio_model = any(getattr(m, "audio", False) for m in physical_models)
-        if not has_audio_model:
-            return {"action": "transform_unsupported"}
+    has_capability = any(getattr(m, capability, False) for m in physical_models)
+    if has_capability:
+        return None
 
-    # ---- CHECK: PDF → model without vision ----
-    if turn_caps.has_pdf:
-        has_vision_model = any(m.vision for m in physical_models)
-        if not has_vision_model:
-            return {"action": "transform_unsupported"}
+    # Try tool delegation for images
+    if can_delegate:
+        from src.service.tool_detector import find_image_compatible_tool
 
-    # ---- CHECK: Video → model without video support ----
-    if turn_caps.has_video:
-        has_video_model = any(getattr(m, "video", False) for m in physical_models)
-        if not has_video_model:
-            return {"action": "transform_unsupported"}
+        match = find_image_compatible_tool(tools)
+        if match:
+            return {
+                "action": "delegate_images",
+                "tool_name": match[0],
+                "param_name": match[1],
+            }
 
-    # ---- CHECK: Parallel tools → model without parallel support ----
-    if turn_caps.has_parallel_tools:
-        has_parallel_models = any(m.parallel_tools for m in physical_models)
-        if not has_parallel_models:
-            parallel_pseudos = [
-                name
-                for name, pm in config.pseudo_models.items()
-                if any(m.parallel_tools for m in pm.physical_models)
-            ]
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL",
-                    "message": (
-                        f"Pseudo-model '{pseudo_model_name}' has no physical models "
-                        f"with parallel_tools: true. The incoming request contains "
-                        f"parallel tool calls that cannot be processed."
-                    ),
-                    "remediation": [
-                        f"Switch to a pseudo-model with parallel tool support: {parallel_pseudos}",
-                        "Use POST /conversations/{id}/normalize-tools to serialize parallel calls (Sprint 3)",
-                    ],
-                },
-            )
+    return {"action": "transform_unsupported"}
+
+
+def _check_parallel_tools_support(
+    turn_caps: TurnCapabilities,
+    physical_models: list,
+    pseudo_model_name: str,
+    config,
+) -> None:
+    """Raise HTTPException if parallel tools are not supported."""
+    if not turn_caps.has_parallel_tools:
+        return
+
+    has_parallel = any(m.parallel_tools for m in physical_models)
+    if has_parallel:
+        return
+
+    parallel_pseudos = [
+        name
+        for name, pm in config.pseudo_models.items()
+        if any(m.parallel_tools for m in pm.physical_models)
+    ]
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": "PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL",
+            "message": (
+                f"Pseudo-model '{pseudo_model_name}' has no physical models "
+                f"with parallel_tools: true. The incoming request contains "
+                f"parallel tool calls that cannot be processed."
+            ),
+            "remediation": [
+                f"Switch to a pseudo-model with parallel tool support: {parallel_pseudos}",
+                "Use POST /conversations/{id}/normalize-tools to serialize parallel calls (Sprint 3)",
+            ],
+        },
+    )
 
 
 def _any_vision(models: list[PhysicalModelSchema]) -> bool:

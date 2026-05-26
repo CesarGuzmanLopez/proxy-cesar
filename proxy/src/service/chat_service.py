@@ -13,6 +13,7 @@ Sprint 4: +pre-compaction, continuous compaction, external compaction detection.
 import logging
 import time
 import uuid
+from typing import Any
 
 from fastapi import HTTPException
 from litellm.exceptions import (
@@ -160,54 +161,8 @@ async def process_chat_request(
             conv_id[:12],
             _extract_cmd_name(messages),
         )
-        # Build a minimal ChatResult with the command output
-        return ChatResult(
-            conversation_id=conv_id,
-            pseudo_model=pseudo_model_name,
-            physical_model="(command)",
-            response={
-                "id": f"chatcmpl-{_req_id}",
-                "object": "chat.completion",
-                "model": pseudo_model_name,
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": cmd_result.response_text,
-                        },
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-                "proxy_metadata": cmd_result.response_metadata,
-            },
-            fallback_info=FallbackInfo(),
-            is_new_conversation=False,
-            affinity_maintained=False,
-            total_tokens=0,
-            context_window=pm_schema.context_window
-            if hasattr(pm_schema, "context_window")
-            else None,
-            session_caps=SessionCapabilities(conversation_id=conv_id),
-            compatibility_warning=None,
-            compatibility_details=None,
-            tools_filter_applied=False,
-            tools_filter_reason=None,
-            tools_level_used=0,
-            tools_incomplete=False,
-            thinking_content=None,
-            tool_result_truncated=False,
-            pre_compaction_applied=False,
-            pre_compaction_metadata=None,
-            continuous_compaction_applied=False,
-            continuous_compaction_metadata=None,
-            external_compaction_detected=False,
-            external_compaction_metadata=None,
-            images_described=0,
-            images_described_by=None,
-            router_suggestion=None,
-            context_alert=ContextAlert(alert_level="none", context_usage_pct=None),
-            cache_metadata={},
+        return _build_command_chat_result(
+            cmd_result, pseudo_model_name, pm_schema, conv_id, _req_id
         )
 
     # Step 4-11: Load session, check switch, load/create conversation, resolve model, set affinity
@@ -763,8 +718,7 @@ async def call_with_fallback(
         BadRequestError,  # e.g. invalid model ID, model not found via provider
     )
 
-    # Sprint 7: track cache optimization for metadata extraction
-    cache_optimization_applied = False
+    # Sprint 7: track cache optimization — handled inside _try_physical_model
 
     # Estimate input tokens once (caller may have pre-computed)
     _est_input = (
@@ -788,91 +742,19 @@ async def call_with_fallback(
 
     for idx, phys in enumerate(pseudo_model_schema.physical_models):
         try:
-            # Sprint 9: Check if this model's context window is large enough.
-            # If the input exceeds the model's context_window, skip it and
-            # report clearly. Prevents silent failures when fallback models
-            # have smaller context than the primary.
-            if phys.context_window is not None and _est_input > phys.context_window:
-                logger.warning(
-                    "llm_skip  | trace=%s model=%s context_window=%d "
-                    "input_est=%d reason=context_too_large",
-                    _trace_id,
-                    phys.model,
-                    phys.context_window,
-                    _est_input,
-                )
+            response = await _try_physical_model(
+                phys, ordered_messages, stream, kwargs, _est_input, _trace_id
+            )
+            if response is None:
                 _context_skipped.append(phys.model)
                 fallback_info.attempted_models.append(
                     f"{phys.model} (skipped: context too small)"
                 )
                 continue
 
-            logger.info(
-                "llm_call  | trace=%s attempt=%d/%d model=%s stream=%s",
-                _trace_id,
-                idx + 1,
-                len(pseudo_model_schema.physical_models),
-                phys.model,
-                stream,
-            )
-
-            # Sprint 7: apply provider-specific cache optimizations
-            call_messages = ordered_messages
-            provider = phys.provider.lower()
-            if should_apply_cache_control(provider):
-                call_messages = apply_anthropic_cache_control(ordered_messages)
-                cache_optimization_applied = True
-                logger.debug(
-                    "cache_control applied provider=%s messages=%d",
-                    provider,
-                    len(call_messages),
-                )
-
-            response = await call_litellm(
-                model=phys.model,
-                messages=call_messages,
-                stream=stream,
-                **{k: v for k, v in kwargs.items() if v is not None},
-            )
             fallback_info.attempted_models.append(phys.model)
-
-            # Sprint 7: attach provider for cache metadata extraction (non-streaming only)
-            if not stream:
-                try:
-                    response._proxy_provider = provider
-                    response._proxy_cache_optimization_applied = (
-                        cache_optimization_applied
-                    )
-                except (AttributeError, TypeError):
-                    pass  # some response objects are immutable (e.g., async generators)
-
             elapsed = time.monotonic() - _start
-            # Log response summary for non-streaming
-            if not stream:
-                try:
-                    c = response.choices[0].message.content or ""
-                    logger.info(
-                        "llm_ok    | trace=%s model=%s elapsed=%.1fs "
-                        "content_len=%d finish=%s",
-                        _trace_id,
-                        phys.model,
-                        elapsed,
-                        len(c),
-                        response.choices[0].finish_reason,
-                    )
-                except (AttributeError, IndexError):
-                    logger.warning(
-                        "llm_ok    | trace=%s model=%s (unexpected format)",
-                        _trace_id,
-                        phys.model,
-                    )
-            else:
-                logger.info(
-                    "llm_ok    | trace=%s model=%s elapsed=%.1fs (streaming)",
-                    _trace_id,
-                    phys.model,
-                    elapsed,
-                )
+            _log_model_call_result(response, phys, stream, _trace_id, elapsed)
             return response, fallback_info
         except _RETRYABLE as e:
             last_error = e
@@ -881,70 +763,29 @@ async def call_with_fallback(
             fallback_info.reason = f"{type(e).__name__}: {phys.model}"
             logger.warning(
                 "llm_fallback | trace=%s model=%s error=%s elapsed=%.1fs",
-                _trace_id,
-                phys.model,
-                type(e).__name__,
+                _trace_id, phys.model, type(e).__name__,
                 time.monotonic() - _start,
             )
             continue
 
     elapsed = time.monotonic() - _start
 
-    # Sprint 9: If all models were skipped due to context too large,
-    # return a 413 error suggesting compaction instead of a generic 503.
+    # Sprint 9: If all models were skipped due to context too large
     if len(_context_skipped) == len(pseudo_model_schema.physical_models):
-        logger.error(
-            "llm_fail   | trace=%s elapsed=%.1fs reason=all_context_too_large "
-            "input_est=%d models=%s",
-            _trace_id,
-            elapsed,
-            _est_input,
-            _context_skipped,
-        )
-        raise HTTPException(
-            status_code=413,
-            detail={
-                "error": "CONTEXT_TOO_LARGE_FOR_ALL_MODELS",
-                "message": (
-                    f"The conversation ({_est_input:,} tokens) exceeds the "
-                    f"context window of all remaining models in "
-                    f"'{pseudo_model_schema.display_name}'. "
-                    f"Type 'compact' or '/compact' in your message to compact."
-                ),
-                "estimated_tokens": _est_input,
-                "remediation": {
-                    "action": "compact",
-                    "description": "Compact the conversation into a snapshot.",
-                    "command": "/compact",
-                },
-                "context_skipped": _context_skipped,
-            },
+        raise _build_context_too_large_error(
+            _est_input, pseudo_model_schema, _context_skipped, _trace_id, elapsed
         )
 
-    # Some models were skipped due to context, some failed — report partial
     context_skipped_note = ""
     if _context_skipped:
         context_skipped_note = f" ({len(_context_skipped)} skipped: context too large)"
 
     logger.error(
         "llm_fail   | trace=%s elapsed=%.1fs models=%s last_error=%s",
-        _trace_id,
-        elapsed,
-        fallback_info.attempted_models,
-        last_error,
+        _trace_id, elapsed, fallback_info.attempted_models, last_error,
     )
-    raise HTTPException(
-        status_code=503,
-        detail={
-            "error": "ALL_MODELS_FAILED",
-            "message": (
-                f"All {len(fallback_info.attempted_models)} model(s) for "
-                f"pseudo-model '{pseudo_model_schema.display_name}' failed"
-                f"{context_skipped_note}."
-            ),
-            "attempted": fallback_info.attempted_models,
-            "last_error": str(last_error),
-        },
+    raise _build_all_models_failed_error(
+        fallback_info, pseudo_model_schema, last_error, context_skipped_note
     )
 
 
@@ -1111,6 +952,60 @@ def _extract_cache_metadata(
     return meta
 
 
+def _build_command_chat_result(
+    cmd_result, pseudo_model_name: str, pm_schema, conv_id: str, _req_id: str
+) -> ChatResult:
+    """Build a ChatResult for inline commands that bypass the LLM."""
+    return ChatResult(
+        conversation_id=conv_id,
+        pseudo_model=pseudo_model_name,
+        physical_model="(command)",
+        response={
+            "id": f"chatcmpl-{_req_id}",
+            "object": "chat.completion",
+            "model": pseudo_model_name,
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": cmd_result.response_text,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "proxy_metadata": cmd_result.response_metadata,
+        },
+        fallback_info=FallbackInfo(),
+        is_new_conversation=False,
+        affinity_maintained=False,
+        total_tokens=0,
+        context_window=pm_schema.context_window
+        if hasattr(pm_schema, "context_window")
+        else None,
+        session_caps=SessionCapabilities(conversation_id=conv_id),
+        compatibility_warning=None,
+        compatibility_details=None,
+        tools_filter_applied=False,
+        tools_filter_reason=None,
+        tools_level_used=0,
+        tools_incomplete=False,
+        thinking_content=None,
+        tool_result_truncated=False,
+        pre_compaction_applied=False,
+        pre_compaction_metadata=None,
+        continuous_compaction_applied=False,
+        continuous_compaction_metadata=None,
+        external_compaction_detected=False,
+        external_compaction_metadata=None,
+        images_described=0,
+        images_described_by=None,
+        router_suggestion=None,
+        context_alert=ContextAlert(alert_level="none", context_usage_pct=None),
+        cache_metadata={},
+    )
+
+
 def _extract_cmd_name(messages: list[dict]) -> str:
     """Extract the command name from the last user message for logging."""
     for msg in reversed(messages):
@@ -1119,3 +1014,134 @@ def _extract_cmd_name(messages: list[dict]) -> str:
             if isinstance(content, str) and content.startswith("@"):
                 return content.split()[0][1:]  # "@compact foo" → "compact"
     return "?"
+
+
+async def _try_physical_model(
+    phys,
+    ordered_messages: list[dict],
+    stream: bool,
+    kwargs: dict,
+    _est_input: int,
+    _trace_id: str,
+) -> Any:
+    """Attempt to call a single physical model. Returns response or None if skipped."""
+    if phys.context_window is not None and _est_input > phys.context_window:
+        logger.warning(
+            "llm_skip  | trace=%s model=%s context_window=%d "
+            "input_est=%d reason=context_too_large",
+            _trace_id, phys.model, phys.context_window, _est_input,
+        )
+        return None
+
+    logger.info(
+        "llm_call  | trace=%s attempt=0 model=%s stream=%s",
+        _trace_id, phys.model, stream,
+    )
+
+    call_messages = ordered_messages
+    provider = phys.provider.lower()
+    cache_applied = False
+    if should_apply_cache_control(provider):
+        call_messages = apply_anthropic_cache_control(ordered_messages)
+        cache_applied = True
+        logger.debug(
+            "cache_control applied provider=%s messages=%d",
+            provider, len(call_messages),
+        )
+
+    response = await call_litellm(
+        model=phys.model,
+        messages=call_messages,
+        stream=stream,
+        **{k: v for k, v in kwargs.items() if v is not None},
+    )
+
+    if not stream:
+        try:
+            response._proxy_provider = provider
+            response._proxy_cache_optimization_applied = cache_applied
+        except (AttributeError, TypeError):
+            pass
+
+    return response
+
+
+def _log_model_call_result(
+    response, phys, stream: bool, _trace_id: str, elapsed: float
+) -> None:
+    """Log LLM call result."""
+    if stream:
+        logger.info(
+            "llm_ok    | trace=%s model=%s elapsed=%.1fs (streaming)",
+            _trace_id, phys.model, elapsed,
+        )
+        return
+    try:
+        c = response.choices[0].message.content or ""
+        logger.info(
+            "llm_ok    | trace=%s model=%s elapsed=%.1fs "
+            "content_len=%d finish=%s",
+            _trace_id, phys.model, elapsed,
+            len(c), response.choices[0].finish_reason,
+        )
+    except (AttributeError, IndexError):
+        logger.warning(
+            "llm_ok    | trace=%s model=%s (unexpected format)",
+            _trace_id, phys.model,
+        )
+
+
+def _build_context_too_large_error(
+    _est_input: int,
+    pseudo_model_schema,
+    _context_skipped: list[str],
+    _trace_id: str,
+    elapsed: float,
+) -> HTTPException:
+    """Build 413 error when all models are skipped due to context."""
+    logger.error(
+        "llm_fail   | trace=%s elapsed=%.1fs reason=all_context_too_large "
+        "input_est=%d models=%s",
+        _trace_id, elapsed, _est_input, _context_skipped,
+    )
+    return HTTPException(
+        status_code=413,
+        detail={
+            "error": "CONTEXT_TOO_LARGE_FOR_ALL_MODELS",
+            "message": (
+                f"The conversation ({_est_input:,} tokens) exceeds the "
+                f"context window of all remaining models in "
+                f"'{pseudo_model_schema.display_name}'. "
+                f"Type 'compact' or '/compact' in your message to compact."
+            ),
+            "estimated_tokens": _est_input,
+            "remediation": {
+                "action": "compact",
+                "description": "Compact the conversation into a snapshot.",
+                "command": "/compact",
+            },
+            "context_skipped": _context_skipped,
+        },
+    )
+
+
+def _build_all_models_failed_error(
+    fallback_info: FallbackInfo,
+    pseudo_model_schema,
+    last_error: Exception | None,
+    context_skipped_note: str,
+) -> HTTPException:
+    """Build 503 error when all models failed (not just skipped)."""
+    return HTTPException(
+        status_code=503,
+        detail={
+            "error": "ALL_MODELS_FAILED",
+            "message": (
+                f"All {len(fallback_info.attempted_models)} model(s) for "
+                f"pseudo-model '{pseudo_model_schema.display_name}' failed"
+                f"{context_skipped_note}."
+            ),
+            "attempted": fallback_info.attempted_models,
+            "last_error": str(last_error),
+        },
+    )
