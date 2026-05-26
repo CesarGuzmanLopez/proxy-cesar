@@ -326,28 +326,28 @@ def validate_incoming_content(
     # Images → model without vision
     result = _check_content_support(
         turn_caps, "has_images", phys, "vision",
-        pseudo_model_name, tools, can_delegate=True,
+        tools, can_delegate=True,
     )
     if result is not None:
         return result
 
     # Audio → model without audio
     result = _check_content_support(
-        turn_caps, "has_audio", phys, "audio", pseudo_model_name,
+        turn_caps, "has_audio", phys, "audio",
     )
     if result is not None:
         return result
 
     # PDF → model without vision
     result = _check_content_support(
-        turn_caps, "has_pdf", phys, "vision", pseudo_model_name,
+        turn_caps, "has_pdf", phys, "vision",
     )
     if result is not None:
         return result
 
     # Video → model without video
     result = _check_content_support(
-        turn_caps, "has_video", phys, "video", pseudo_model_name,
+        turn_caps, "has_video", phys, "video",
     )
     if result is not None:
         return result
@@ -415,7 +415,6 @@ def _check_content_support(
     cap_attr: str,
     physical_models: list,
     capability: str,
-    pseudo_model_name: str,
     tools: list[dict] | None = None,
     can_delegate: bool = False,
 ) -> dict | None:

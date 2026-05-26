@@ -215,24 +215,7 @@ async def process_chat_request(
         context_window=pm_schema.context_window,
         conversation_id=conv_id,
     )
-    if context_alert.alert_level == "unusable":
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "CONTEXT_UNUSABLE",
-                "message": context_alert.warning,
-                "context_tokens": conv.total_tokens if conv else 0,
-                "context_window": pm_schema.context_window,
-                "remediation": {
-                    "action": "compact",
-                    "endpoint": f"POST /conversations/{conv_id}/compact",
-                    "description": (
-                        "Compact the conversation history into a snapshot. "
-                        "Original history is preserved."
-                    ),
-                },
-            },
-        )
+    _raise_if_context_unusable(context_alert, conv, pm_schema, conv_id)
 
     # Sprint 5: Router LLM — evaluate complexity (non-blocking, never changes model)
     # SAFETY: evaluate_complexity() internally extracts ONLY the last user message.
@@ -1003,6 +986,31 @@ def _build_command_chat_result(
         router_suggestion=None,
         context_alert=ContextAlert(alert_level="none", context_usage_pct=None),
         cache_metadata={},
+    )
+
+
+def _raise_if_context_unusable(
+    context_alert, conv, pm_schema, conv_id: str
+) -> None:
+    """Raise HTTPException if context is unusable."""
+    if context_alert.alert_level != "unusable":
+        return
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": "CONTEXT_UNUSABLE",
+            "message": context_alert.warning,
+            "context_tokens": conv.total_tokens if conv else 0,
+            "context_window": pm_schema.context_window,
+            "remediation": {
+                "action": "compact",
+                "endpoint": f"POST /conversations/{conv_id}/compact",
+                "description": (
+                    "Compact the conversation history into a snapshot. "
+                    "Original history is preserved."
+                ),
+            },
+        },
     )
 
 
