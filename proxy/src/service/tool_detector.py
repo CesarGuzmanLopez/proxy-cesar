@@ -151,29 +151,19 @@ async def _try_extract_pdf_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
-async def _process_msg_blobs(
-    msg: dict[str, Any],
-    prefix: str,
-    valkey,
-    config,
-) -> list[dict[str, Any]]:
-    """Process one user message: classify parts, store blobs, describe, build output."""
-    content = msg.get("content", "")
-    if not isinstance(content, list):
-        return [msg]
-
+def _classify_content_parts(
+    content: list,
+) -> tuple[list[str], list[tuple[str, str, str, str]], list[tuple[str, str, str, str]], list[tuple[str, str, str, str]], list[dict]]:
+    """Classify content parts into images, audio, files, and others."""
     user_text = _extract_user_text(content)
-
-    # Pass 1: classify
-    image_blobs: list[tuple[str, str, str, str]] = []
-    audio_blobs: list[tuple[str, str, str, str]] = []
-    file_blobs: list[tuple[str, str, str, str]] = []
-    other_parts: list[dict] = []
-    store_tasks = []
+    images: list[tuple[str, str, str, str]] = []
+    audios: list[tuple[str, str, str, str]] = []
+    files: list[tuple[str, str, str, str]] = []
+    others: list[dict] = []
 
     for part in content:
         if not isinstance(part, dict):
-            other_parts.append(part)
+            others.append(part)
             continue
         ptype = part.get("type", "")
         raw = ""
@@ -184,22 +174,58 @@ async def _process_msg_blobs(
         elif ptype == "file":
             raw = (part.get("file", {}) or {}).get("data", "")
         else:
-            other_parts.append(part)
+            others.append(part)
             continue
         if not raw or not raw.startswith("data:"):
-            other_parts.append(part)
+            others.append(part)
             continue
         h = _hash_content(raw)
         mime = _extract_mime(raw) or f"{ptype}/unknown"
         sz = str(len(raw) // 1024)
-        store_tasks.append(_store_blob_if_missing(valkey, f"{prefix}:{h}", raw))
+        info = (h, raw, mime, sz)
         if ptype == "image_url":
-            image_blobs.append((h, raw, mime, sz))
+            images.append(info)
         elif ptype == "input_audio":
-            audio_blobs.append((h, raw, mime, sz))
+            audios.append(info)
         elif ptype == "file":
-            file_blobs.append((h, raw, mime, sz))
+            files.append(info)
+    return user_text, images, audios, files, others
 
+
+def _build_blob_output(others, images, descs, audios, aresults, files, fresults):
+    """Build output content list from classified parts and descriptions."""
+    out: list[dict[str, Any]] = list(others)
+
+    def _bt(h, mime, sz, label, desc=""):
+        t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {sz} KB"
+        if desc:
+            t += f"\n{desc}"
+        t += "]"
+        return {"type": "text", "text": t}
+
+    for (h, _, mime, sz), d in zip(images, descs):
+        out.append(_bt(h, mime, sz, "image", d))
+    for (h, _, mime, sz), d in zip(audios, aresults):
+        out.append(_bt(h, mime, sz, "audio file", d))
+    for (h, _, mime, sz), d in zip(files, fresults):
+        out.append(_bt(h, mime, sz, "file", d))
+    return out
+
+
+async def _process_msg_blobs(
+    msg: dict[str, Any],
+    prefix: str,
+    valkey,
+    config,
+) -> list[dict[str, Any]]:
+    """Process one user message: classify, store, describe, build output."""
+    content = msg.get("content", "")
+    if not isinstance(content, list):
+        return [msg]
+
+    # Pass 1: classify and store
+    user_text, image_blobs, audio_blobs, file_blobs, other_parts = _classify_content_parts(content)
+    store_tasks = [_store_blob_if_missing(valkey, f"{prefix}:{h}", r) for h, r, _, _ in image_blobs + audio_blobs + file_blobs]
     if store_tasks:
         await asyncio.gather(*store_tasks)
 
@@ -213,22 +239,7 @@ async def _process_msg_blobs(
     ]) if file_blobs else []
 
     # Pass 3: build output
-    out: list[dict[str, Any]] = list(other_parts)
-
-    def _blob_text(h, mime, sz, label, desc=""):
-        t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {sz} KB"
-        if desc:
-            t += f"\n{desc}"
-        t += "]"
-        return {"type": "text", "text": t}
-
-    for (h, _, mime, sz), d in zip(image_blobs, descriptions):
-        out.append(_blob_text(h, mime, sz, "image", d))
-    for (h, _, mime, sz), d in zip(audio_blobs, audio_results):
-        out.append(_blob_text(h, mime, sz, "audio file", d))
-    for (h, _, mime, sz), d in zip(file_blobs, pdf_results):
-        out.append(_blob_text(h, mime, sz, "file", d))
-
+    out = _build_blob_output(other_parts, image_blobs, descriptions, audio_blobs, audio_results, file_blobs, pdf_results)
     return [{**msg, "content": out}]
 
 
