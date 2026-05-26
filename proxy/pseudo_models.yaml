@@ -13,7 +13,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: qwen3.7-max
+        model: openai/qwen3.7-max
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -44,7 +44,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: qwen3.6-plus
+        model: openai/qwen3.6-plus
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -75,7 +75,7 @@ pseudo_models:
       on_downgrade: block
     physical_models:
       - provider: opencode-go
-        model: kimi-k2.6
+        model: openai/kimi-k2.6
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -114,7 +114,7 @@ pseudo_models:
       on_downgrade: block
     physical_models:
       - provider: opencode-go
-        model: mimo-v2-pro
+        model: openai/mimo-v2-pro
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -124,7 +124,7 @@ pseudo_models:
         context_window: 128000
         note: "Go primary: MiMo V2 Pro. Especializado en código."
       - provider: opencode-go
-        model: mimo-v2.5-pro
+        model: openai/mimo-v2.5-pro
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -155,7 +155,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: mimo-v2-omni
+        model: openai/mimo-v2-omni
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -186,7 +186,7 @@ pseudo_models:
       on_downgrade: block
     physical_models:
       - provider: opencode-go
-        model: kimi-k2.5
+        model: openai/kimi-k2.5
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -246,7 +246,7 @@ pseudo_models:
       on_downgrade: block
     physical_models:
       - provider: opencode-go
-        model: minimax-m2.7
+        model: openai/minimax-m2.7
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -277,7 +277,7 @@ pseudo_models:
       on_downgrade: block
     physical_models:
       - provider: opencode-go
-        model: qwen3.5-plus
+        model: openai/qwen3.5-plus
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -308,7 +308,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: glm-5.1
+        model: openai/glm-5.1
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
