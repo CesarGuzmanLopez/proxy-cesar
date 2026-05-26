@@ -72,7 +72,7 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: block
+      on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
         model: openai/kimi-k2.6
@@ -111,7 +111,7 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: block
+      on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
         model: openai/mimo-v2-pro
@@ -183,7 +183,7 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: block
+      on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
         model: openai/kimi-k2.5
@@ -243,7 +243,7 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: block
+      on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
         model: openai/minimax-m2.7
@@ -274,7 +274,7 @@ pseudo_models:
     router_llm:
       enabled: false
     image_handling:
-      on_downgrade: block
+      on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
         model: openai/qwen3.5-plus
@@ -300,8 +300,8 @@ pseudo_models:
   compactador:
     display_name: Compactador
     description: "Compactación de contexto con delegación de modelos. GLM-5.1 Go, fallback a GPT-OSS Groq (131K), DeepSeek Flash (1M) para historias masivas."
-    input_token_threshold: 20000000
-    context_window: 20000000
+    input_token_threshold: 3000000
+    context_window: 3000000
     router_llm:
       enabled: false
     image_handling:
