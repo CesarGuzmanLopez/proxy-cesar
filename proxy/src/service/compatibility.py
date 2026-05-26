@@ -315,13 +315,50 @@ def validate_incoming_content(
 
     Returns:
       - None if everything is OK
-      - {"action": "delegate_images", "tool_name": "...", "param_name": "..."}
-        if images can be delegated to a compatible tool
-      - {"action": "transform_unsupported"}
-        if content type is not supported and should be transformed to text URL
-    Raises HTTPException on unrecoverable errors (parallel tools, etc.).
+      - {"action": "delegate_images", ...} if images can be delegated to tool
+      - {"action": "transform_unsupported"} if content should be blobified
+    Raises HTTPException on unrecoverable errors (wrong content for model, etc.).
     """
     physical_models = pseudo_model.physical_models
+
+    # ---- CHECK: Wrong content for specialized models ----
+    # Models like imagen (text-to-image) should never receive image input.
+    # Audio models should not receive images, etc.
+    _SPECIALIZED_MODEL_ERRORS: dict[str, dict[str, str | list[str]]] = {
+        "imagen": {
+            "image_url": (
+                "The 'imagen' model generates images from text. "
+                "It cannot process image input."
+            ),
+            "input_audio": (
+                "The 'imagen' model generates images from text. "
+                "It cannot process audio input."
+            ),
+        },
+        "audio": {
+            "image_url": (
+                "The 'audio' model transcribes audio to text. "
+                "It cannot process image input."
+            ),
+        },
+    }
+    content_type_map = {"has_images": "image_url", "has_audio": "input_audio", "has_video": "video"}
+    for check_cap, error_type in content_type_map.items():
+        if getattr(turn_caps, check_cap, False) and pseudo_model_name in _SPECIALIZED_MODEL_ERRORS:
+            error_info = _SPECIALIZED_MODEL_ERRORS[pseudo_model_name]
+            if error_type in error_info:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": f"{error_type.upper()}_NOT_SUPPORTED_BY_SPECIALIZED_MODEL",
+                        "message": error_info[error_type],
+                        "remediation": [
+                            f"Use a different model for {error_type} content",
+                            "Try 'model': 'vision' for images, or 'model': 'audio' for audio",
+                        ],
+                        "current_pseudo_model": pseudo_model_name,
+                    },
+                )
 
     # ---- CHECK: Images → model without vision ----
     if turn_caps.has_images:

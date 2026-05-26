@@ -126,3 +126,49 @@ def test_transform_signal_returned_for_all_unsupported_types():
         assert result == {"action": "transform_unsupported"}, (
             f"{content_type} should return transform signal, got {result}"
         )
+
+
+def test_imagen_rejects_images_with_error():
+    """'imagen' is text-to-image — sending an image should error, not blobify."""
+    from fastapi import HTTPException
+    caps = TurnCapabilities(has_images=True)
+    with pytest.raises(HTTPException) as exc:
+        validate_incoming_content(caps, _get_pm("imagen"), "imagen", CONFIG)
+    assert exc.value.status_code == 400
+    assert "SPECIALIZED_MODEL" in str(exc.value.detail["error"])
+
+
+def test_audio_rejects_images_with_error():
+    """'audio' transcribes — sending an image should error."""
+    from fastapi import HTTPException
+    caps = TurnCapabilities(has_images=True)
+    with pytest.raises(HTTPException) as exc:
+        validate_incoming_content(caps, _get_pm("audio"), "audio", CONFIG)
+    assert exc.value.status_code == 400
+    assert "SPECIALIZED_MODEL" in str(exc.value.detail["error"])
+
+
+def test_imagen_rejects_audio_with_error():
+    """'imagen' generates images — sending audio should error."""
+    from fastapi import HTTPException
+    caps = TurnCapabilities(has_audio=True)
+    with pytest.raises(HTTPException) as exc:
+        validate_incoming_content(caps, _get_pm("imagen"), "imagen", CONFIG)
+    assert exc.value.status_code == 400
+    assert "SPECIALIZED_MODEL" in str(exc.value.detail["error"])
+
+
+def test_audio_accepts_audio():
+    """'audio' (whisper) should accept audio content."""
+    result = validate_incoming_content(
+        TurnCapabilities(has_audio=True), _get_pm("audio"), "audio", CONFIG
+    )
+    assert result is None
+
+
+def test_vision_accepts_images():
+    """'vision' should accept image content."""
+    result = validate_incoming_content(
+        TurnCapabilities(has_images=True), _get_pm("vision"), "vision", CONFIG
+    )
+    assert result is None
