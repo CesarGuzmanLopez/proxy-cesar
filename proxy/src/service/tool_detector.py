@@ -5,10 +5,13 @@
 - Replaces unsupported content with [BLOB:hash:mime:description] references
 """
 
+import base64
 import hashlib
 import logging
 import re
 from typing import Any
+
+import fitz  # PyMuPDF — mandatory dependency for PDF text extraction
 
 logger = logging.getLogger(__name__)
 
@@ -171,16 +174,16 @@ async def _describe_content(raw_data: str, mime: str, config, ptype: str) -> str
 
 
 def _try_extract_pdf_text(base64_data: str) -> str:
-    """Try to extract text from a base64-encoded PDF using Python libraries.
+    """Extract text from a base64-encoded PDF using PyMuPDF.
+
+    PyMuPDF is a mandatory dependency — checked at startup.
 
     Returns extracted text (truncated with ...{N} more if large),
-    or metadata about the PDF (page count, size) if extraction fails,
-    so the model can decide whether to use a tool to process it further.
+    or a message explaining that PyMuPDF could not extract text
+    (e.g., scanned/image-based PDF), so the model can decide
+    whether to use a vision tool to process it further.
     """
     try:
-        import fitz  # PyMuPDF
-        import base64
-
         pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         page_count = len(doc)
@@ -194,16 +197,11 @@ def _try_extract_pdf_text(base64_data: str) -> str:
         if text:
             if len(text) > _CONTENT_PREVIEW_MAX:
                 remainder = len(text) - _CONTENT_PREVIEW_MAX
-                text = text[:_CONTENT_PREVIEW_MAX]
-                return f"{meta}\n\n{text}\n...{{{remainder} more chars}}]"
+                preview = text[:_CONTENT_PREVIEW_MAX]
+                return f"{meta}\n\n{preview}\n...{{{remainder} more chars}}]"
             return f"{meta}\n\n{text}]"
 
-        return f"{meta} No extractable text found. Try a vision model or OCR tool.]"
-    except ImportError:
-        import base64
-        pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
-        size_kb = len(pdf_bytes) // 1024
-        return f"[PDF: {size_kb} KB. PyMuPDF not available for text extraction. Use a tool to process this PDF.]"
+        return f"{meta} PyMuPDF could not extract text — the PDF may be scanned or image-based. Try a vision model or OCR tool.]"
     except Exception as exc:
         return f"[PDF — could not parse: {str(exc)[:100]}]"
 
@@ -296,7 +294,6 @@ async def replace_base64_with_blob_refs(
             ptype = part.get("type", "")
             raw: str = ""
             label = ""
-            url_path: str | None = None
 
             if ptype == "image_url":
                 raw = part.get("image_url", {}).get("url", "")
@@ -308,7 +305,6 @@ async def replace_base64_with_blob_refs(
             elif ptype == "file":
                 file_data = part.get("file", {})
                 raw = file_data.get("data", "") or file_data.get("url", "")
-                url_path = file_data.get("url", None)
                 label = "file"
 
             if not raw:

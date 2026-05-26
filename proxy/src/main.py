@@ -45,6 +45,13 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "pseudo_models.yaml"
 async def lifespan(app: FastAPI):
     """FastAPI lifespan — startup and shutdown."""
     # ── STARTUP ──────────────────────────────────────────────────────────
+    # Verify mandatory dependencies
+    try:
+        import fitz  # noqa: F401 — PyMuPDF for PDF text extraction
+    except ImportError:
+        print("FATAL: PyMuPDF (fitz) is required. Install with: pip install PyMuPDF")
+        raise SystemExit(1) from None
+
     print(f"Loading pseudo_models.yaml from {CONFIG_PATH}...")
     config = load_config(CONFIG_PATH)
     app.state.config = config
