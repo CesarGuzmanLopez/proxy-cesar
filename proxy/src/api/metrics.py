@@ -4,7 +4,7 @@ GET /metrics returns aggregated stats:
   - Request counts per pseudo-model
   - Token usage (input, output, cached, saved by compaction)
   - Cache hit rate
-  - Compaction counts
+  - Compaction counts (explicit only)
   - Fallback counts
   - Rate limit hits
   - Conversation counts
@@ -41,8 +41,6 @@ class MetricsStore:
         self.total_cached_tokens: int = 0
         self.total_saved_by_compaction: int = 0
         self.cache_hits: int = 0
-        self.pre_compactions: int = 0
-        self.continuous_compactions: int = 0
         self.fallbacks: dict[str, int] = {}
         self.errors_4xx: int = 0
         self.errors_5xx: int = 0
@@ -63,11 +61,7 @@ class MetricsStore:
         if cached_tokens > 0:
             self.cache_hits += 1
 
-    def record_compaction(self, comp_type: str, tokens_saved: int) -> None:
-        if comp_type == "pre":
-            self.pre_compactions += 1
-        elif comp_type == "continuous":
-            self.continuous_compactions += 1
+    def record_compaction(self, tokens_saved: int) -> None:
         self.total_saved_by_compaction += tokens_saved
 
     def record_fallback(self, reason: str) -> None:
@@ -144,8 +138,6 @@ async def get_metrics(request: Request):
             "total_cache_hits": metrics.cache_hits,
         },
         "compactions": {
-            "pre_compactions": metrics.pre_compactions,
-            "continuous_compactions": metrics.continuous_compactions,
             "explicit_compactions": total_explicit_compactions,
             "total_tokens_saved": metrics.total_saved_by_compaction,
         },

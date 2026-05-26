@@ -28,12 +28,6 @@ def test_stream_context_defaults():
     assert ctx.compatibility_details is None
     assert ctx.tools_filter_applied is False
     assert ctx.tools_filter_reason is None
-    assert ctx.pre_compaction_applied is False
-    assert ctx.pre_compaction_metadata is None
-    assert ctx.continuous_compaction_applied is False
-    assert ctx.continuous_compaction_metadata is None
-    assert ctx.external_compaction_detected is False
-    assert ctx.external_compaction_metadata is None
     assert ctx.images_described == 0
     assert ctx.images_described_by is None
     assert ctx.router_suggestion is None
@@ -70,7 +64,6 @@ def test_save_context_defaults():
         session_caps=caps,
         tools=None,
         tool_choice=None,
-        prep={},
         compatibility={},
         tools_filter={},
     )
@@ -95,12 +88,6 @@ def test_metadata_context_defaults():
     assert ctx.compatibility_details is None
     assert ctx.tools_filter_applied is False
     assert ctx.tools_filter_reason is None
-    assert ctx.pre_compaction_applied is False
-    assert ctx.pre_compaction_metadata is None
-    assert ctx.continuous_compaction_applied is False
-    assert ctx.continuous_compaction_metadata is None
-    assert ctx.external_compaction_detected is False
-    assert ctx.external_compaction_metadata is None
     assert ctx.images_described == 0
     assert ctx.images_described_by is None
     assert ctx.images_degraded_manually is False

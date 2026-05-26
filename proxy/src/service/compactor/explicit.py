@@ -20,6 +20,13 @@ from src.adapters.litellm import call_litellm
 from src.service.capability_detector import estimate_tokens
 from src.service.compactor.prompts import build_explicit_compaction_prompt
 
+_MIN_RETENTION = 0.05
+
+
+def _compaction_max_tokens(estimated_input: int, default: int = 12000) -> int:
+    """Ensure compaction output is at least 5% of input."""
+    return max(default, int(estimated_input * _MIN_RETENTION))
+
 
 # ── Compactor model selection ─────────────────────────────────────────────
 
@@ -84,6 +91,7 @@ async def _run_compaction_sync(
     all_messages: list[dict],
     total_tokens: int,
     db: AsyncSession,
+    config,
     conv: Conversation | None = None,
 ) -> dict:
     """Run compaction synchronously and store the snapshot.
@@ -129,6 +137,9 @@ async def _run_compaction_sync(
     if conv:
         conv.active_snapshot_id = new_snapshot.id
 
+    # ── Describe images using any available vision model ──────────────
+    all_messages = await _prepare_multimedia_for_compaction(all_messages, config)
+
     # ── Call compactor model API ───────────────────────────────────────
     compaction_messages = [
         {"role": "system", "content": compaction_prompt},
@@ -139,7 +150,7 @@ async def _run_compaction_sync(
         response = await call_litellm(
             model=compactor_model,
             messages=compaction_messages,
-            max_tokens=12000,
+            max_tokens=_compaction_max_tokens(total_tokens),
             temperature=0.1,
         )
         response_dict = (
@@ -305,6 +316,7 @@ async def compact_conversation(
         all_messages=all_messages,
         total_tokens=total_tokens,
         db=db,
+        config=config,
         conv=conv,
     )
 
@@ -363,7 +375,38 @@ async def _compact_async(
             all_messages=all_messages,
             total_tokens=total_tokens,
             db=db,
+            config=config,
             conv=conv,
         )
     finally:
         await db.close()
+
+
+async def _prepare_multimedia_for_compaction(history: list[dict], config) -> list[dict]:
+    """Describe images using any available vision model before compaction."""
+    from src.service.multimedia.image_describer import auto_describe_images
+
+    has_images = False
+    for msg in history:
+        content = msg.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    has_images = True
+                    break
+        if has_images:
+            break
+
+    if not has_images:
+        return history
+
+    for pm in config.pseudo_models.values():
+        for phys in pm.physical_models:
+            if getattr(phys, "vision", False):
+                try:
+                    described, _meta = await auto_describe_images(history, phys.model)
+                    return described
+                except Exception:
+                    continue
+
+    return history

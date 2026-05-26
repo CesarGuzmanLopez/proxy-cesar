@@ -27,6 +27,7 @@ DEFAULT_CONTEXT_WINDOW = 32768
 @dataclass
 class LocalModelInfo:
     """Discovered local model with resolved capabilities."""
+
     id: str
     provider: str  # "ollama" or "lmstudio"
     display_name: str
@@ -90,16 +91,18 @@ async def _discover_ollama() -> list[LocalModelInfo]:
 
         effective_ctx = max(int(ctx_window * CONTEXT_SAFETY_FACTOR), 4096)
 
-        models.append(LocalModelInfo(
-            id=f"ollama/{name}",
-            provider="ollama",
-            display_name=name,
-            context_window=effective_ctx,
-            vision=has_vision,
-            tools=has_tools,
-            parameter_size=param_size,
-            architecture=arch,
-        ))
+        models.append(
+            LocalModelInfo(
+                id=f"ollama/{name}",
+                provider="ollama",
+                display_name=name,
+                context_window=effective_ctx,
+                vision=has_vision,
+                tools=has_tools,
+                parameter_size=param_size,
+                architecture=arch,
+            )
+        )
 
     return models
 
@@ -151,7 +154,9 @@ async def _discover_lmstudio() -> list[LocalModelInfo]:
         # Context window: prefer max_context_length, fall back to loaded context
         ctx_max = entry.get("max_context_length")
         loaded = entry.get("loaded_instances", [])
-        ctx_loaded = loaded[0].get("config", {}).get("context_length") if loaded else None
+        ctx_loaded = (
+            loaded[0].get("config", {}).get("context_length") if loaded else None
+        )
         ctx_raw = ctx_max or ctx_loaded or DEFAULT_CONTEXT_WINDOW
 
         capabilities = entry.get("capabilities", {})
@@ -160,15 +165,17 @@ async def _discover_lmstudio() -> list[LocalModelInfo]:
 
         effective_ctx = max(int(ctx_raw * CONTEXT_SAFETY_FACTOR), 4096)
 
-        models.append(LocalModelInfo(
-            id=f"lmstudio/{model_id}",
-            provider="lmstudio",
-            display_name=entry.get("display_name", model_id),
-            context_window=effective_ctx,
-            vision=has_vision,
-            tools=has_tools,
-            parameter_size=entry.get("params_string", ""),
-            architecture=entry.get("architecture", ""),
-        ))
+        models.append(
+            LocalModelInfo(
+                id=f"lmstudio/{model_id}",
+                provider="lmstudio",
+                display_name=entry.get("display_name", model_id),
+                context_window=effective_ctx,
+                vision=has_vision,
+                tools=has_tools,
+                parameter_size=entry.get("params_string", ""),
+                architecture=entry.get("architecture", ""),
+            )
+        )
 
     return models

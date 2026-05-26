@@ -30,19 +30,6 @@ class PhysicalModelSchema(BaseModel, extra="forbid"):
 # ── Sub-configs ─────────────────────────────────────────────────────────────
 
 
-class PreCompactionConfig(BaseModel, extra="forbid"):
-    enabled: bool = False
-    threshold: int | None = None
-    target_tokens: int | None = None
-    compactor: str | None = None
-
-
-class ContinuousCompactionConfig(BaseModel, extra="forbid"):
-    enabled: bool = False
-    trigger_pct: int | None = None
-    compact_preserve_recent: int | None = None
-
-
 class RouterLLMConfig(BaseModel, extra="forbid"):
     enabled: bool = False
     suggester: str | None = None
@@ -70,10 +57,6 @@ class PseudoModelSchema(BaseModel, extra="forbid"):
     description: str
     input_token_threshold: int | None = None
     context_window: int | None = None
-    continuous_compaction: ContinuousCompactionConfig = Field(
-        default_factory=ContinuousCompactionConfig
-    )
-    pre_compaction: PreCompactionConfig = Field(default_factory=PreCompactionConfig)
     router_llm: RouterLLMConfig = Field(default_factory=RouterLLMConfig)
     image_handling: ImageHandlingConfig = Field(default_factory=ImageHandlingConfig)
     physical_models: list[PhysicalModelSchema]
@@ -104,20 +87,6 @@ class PseudoModelSchema(BaseModel, extra="forbid"):
 
     @model_validator(mode="after")
     def _validate_cross_dependencies(self):
-        if self.pre_compaction.enabled:
-            if self.pre_compaction.threshold is None:
-                raise ValueError("pre_compaction.threshold is required when enabled")
-            if self.pre_compaction.compactor is None:
-                raise ValueError("pre_compaction.compactor is required when enabled")
-        if self.continuous_compaction.enabled:
-            if self.continuous_compaction.trigger_pct is None:
-                raise ValueError(
-                    "continuous_compaction.trigger_pct is required when enabled"
-                )
-            if not (1 <= self.continuous_compaction.trigger_pct <= 100):
-                raise ValueError(
-                    "continuous_compaction.trigger_pct must be between 1 and 100"
-                )
         return self
 
 
@@ -140,14 +109,8 @@ class ProxyConfigSchema(BaseModel, extra="forbid"):
         return self
 
     @model_validator(mode="after")
-    def _compactor_references(self):
+    def _router_references(self):
         for name, pm in self.pseudo_models.items():
-            if pm.pre_compaction.enabled and pm.pre_compaction.compactor:
-                if pm.pre_compaction.compactor not in self.pseudo_models:
-                    raise ValueError(
-                        f"pseudo_model '{name}' pre_compaction.compactor "
-                        f"'{pm.pre_compaction.compactor}' references unknown pseudo-model"
-                    )
             if pm.router_llm.enabled and pm.router_llm.suggester:
                 if pm.router_llm.suggester not in self.pseudo_models:
                     raise ValueError(

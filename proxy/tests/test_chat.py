@@ -115,8 +115,6 @@ async def test_5_proxy_metadata_fields(async_client: AsyncClient, mock_litellm):
     assert "affinity_maintained" in meta
     assert "fallback_applied" in meta
     assert "fallback_reason" in meta
-    assert "pre_compaction_applied" in meta
-    assert "continuous_compaction_applied" in meta
     assert "router_suggestion" in meta
     assert "tools_filter_applied" in meta
     assert "images_described" in meta

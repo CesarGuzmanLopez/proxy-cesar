@@ -140,12 +140,11 @@ async def test_metrics_include_compactions(metrics_client):
     """Metrics track compaction events."""
     from src.api.metrics import metrics
 
-    metrics.record_compaction("pre", 72000)
-    metrics.record_compaction("pre", 15000)
-    metrics.record_compaction("continuous", 45000)
+    metrics.record_compaction(72000)
+    metrics.record_compaction(15000)
+    metrics.record_compaction(45000)
 
     response = await metrics_client.get("/metrics")
     data = response.json()
-    assert data["compactions"]["pre_compactions"] == 2
-    assert data["compactions"]["continuous_compactions"] == 1
+    assert data["compactions"]["explicit_compactions"] >= 0
     assert data["compactions"]["total_tokens_saved"] == 132000

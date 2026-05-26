@@ -1,6 +1,5 @@
 """Chat result models and proxy_metadata builder.
 
-Sprint 1–4: DTOs for chat orchestration output.
 python.md §3: dataclasses for error/data types.
 python.md §4: pure functions, no side effects.
 """
@@ -35,12 +34,6 @@ class StreamContext:
     compatibility_details: dict | None = None
     tools_filter_applied: bool = False
     tools_filter_reason: str | None = None
-    pre_compaction_applied: bool = False
-    pre_compaction_metadata: dict | None = None
-    continuous_compaction_applied: bool = False
-    continuous_compaction_metadata: dict | None = None
-    external_compaction_detected: bool = False
-    external_compaction_metadata: dict | None = None
     images_described: int = 0
     images_described_by: str | None = None
     router_suggestion: dict | None = None
@@ -80,7 +73,6 @@ class SaveContext:
     session_caps: SessionCapabilities
     tools: list[dict] | None
     tool_choice: str | dict | None
-    prep: dict
     compatibility: dict
     tools_filter: dict
     images_described: int = 0
@@ -106,12 +98,6 @@ class MetadataContext:
     compatibility_details: dict | None = None
     tools_filter_applied: bool = False
     tools_filter_reason: str | None = None
-    pre_compaction_applied: bool = False
-    pre_compaction_metadata: dict | None = None
-    continuous_compaction_applied: bool = False
-    continuous_compaction_metadata: dict | None = None
-    external_compaction_detected: bool = False
-    external_compaction_metadata: dict | None = None
     images_described: int = 0
     images_described_by: str | None = None
     images_degraded_manually: bool = False
@@ -145,14 +131,6 @@ class ChatResult:
     thinking_content: str | None = None
     tool_result_truncated: bool = False
 
-    # Sprint 4 fields
-    pre_compaction_applied: bool = False
-    pre_compaction_metadata: dict | None = None
-    continuous_compaction_applied: bool = False
-    continuous_compaction_metadata: dict | None = None
-    external_compaction_detected: bool = False
-    external_compaction_metadata: dict | None = None
-
     # Sprint 5 fields
     images_described: int = 0
     images_described_by: str | None = None
@@ -169,7 +147,6 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
 
     Sprint 1: basic fields (physical_model, pseudo_model, affinity, fallback).
     Sprint 2: +capabilities_detected, warning, tools_filter.
-    Sprint 4: +pre_compaction, +continuous_compaction, +external_compaction.
     Sprint 5: +images_described, +images_described_by, +router_suggestion.
     """
     metadata: dict = {
@@ -206,52 +183,6 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
     # Sprint 2: tool filter
     metadata["tools_filter_applied"] = ctx.tools_filter_applied
     metadata["tools_filter_reason"] = ctx.tools_filter_reason
-
-    metadata["pre_compaction_applied"] = ctx.pre_compaction_applied
-    if ctx.pre_compaction_applied and ctx.pre_compaction_metadata:
-        metadata["pre_compaction"] = {
-            "original_input_tokens": ctx.pre_compaction_metadata.get(
-                "original_input_tokens", 0
-            ),
-            "compacted_input_tokens": ctx.pre_compaction_metadata.get(
-                "compacted_input_tokens", 0
-            ),
-            "compactor_model": ctx.pre_compaction_metadata.get("compactor_model", ""),
-            "compactor_pseudo_model": ctx.pre_compaction_metadata.get(
-                "compactor_pseudo_model", ""
-            ),
-            "savings_tokens": ctx.pre_compaction_metadata.get("savings_tokens", 0),
-        }
-    else:
-        metadata["pre_compaction"] = None
-
-    metadata["continuous_compaction_applied"] = ctx.continuous_compaction_applied
-    if ctx.continuous_compaction_applied and ctx.continuous_compaction_metadata:
-        metadata["continuous_compaction"] = {
-            "tokens_before": ctx.continuous_compaction_metadata.get("tokens_before", 0),
-            "tokens_after_snapshot": ctx.continuous_compaction_metadata.get(
-                "tokens_after", 0
-            ),
-            "compactor_model": ctx.continuous_compaction_metadata.get(
-                "compactor_model", ""
-            ),
-            "turns_compacted": ctx.continuous_compaction_metadata.get(
-                "turns_compacted", 0
-            ),
-            "turns_preserved": ctx.continuous_compaction_metadata.get(
-                "turns_preserved", 0
-            ),
-            "snapshot_id": ctx.continuous_compaction_metadata.get("snapshot_id", ""),
-            "snapshot_type": ctx.continuous_compaction_metadata.get(
-                "snapshot_type", "continuous"
-            ),
-        }
-    else:
-        metadata["continuous_compaction"] = None
-
-    metadata["external_compaction_detected"] = ctx.external_compaction_detected
-    if ctx.external_compaction_detected and ctx.external_compaction_metadata:
-        metadata["external_compaction"] = ctx.external_compaction_metadata
 
     metadata["images_described"] = ctx.images_described
     metadata["images_described_by"] = ctx.images_described_by

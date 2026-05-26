@@ -28,7 +28,6 @@ from src.service.context_alert import get_context_alert
 from src.service.chat_service import (
     call_with_fallback,
     evaluate_router_suggestion,
-    handle_auto_describe,
     process_chat_request,
 )
 from src.service.inline_commands import handle_inline_command
@@ -54,13 +53,6 @@ from src.service.tools_edge_cases import (
     enforce_tool_choice,
     extract_thinking_content,
     truncate_tool_result,
-)
-from src.service.compactor.pre_compactor import pre_compact_input
-from src.service.compactor.continuous import (
-    assemble_context,
-    continuous_compact,
-    detect_external_compaction,
-    handle_external_compaction,
 )
 
 
@@ -249,12 +241,6 @@ async def _handle_non_streaming(
             compatibility_details=result.compatibility_details,
             tools_filter_applied=result.tools_filter_applied,
             tools_filter_reason=result.tools_filter_reason,
-            pre_compaction_applied=result.pre_compaction_applied,
-            pre_compaction_metadata=result.pre_compaction_metadata,
-            continuous_compaction_applied=result.continuous_compaction_applied,
-            continuous_compaction_metadata=result.continuous_compaction_metadata,
-            external_compaction_detected=result.external_compaction_detected,
-            external_compaction_metadata=result.external_compaction_metadata,
             images_described=result.images_described,
             images_described_by=result.images_described_by,
             images_degraded_manually=result.images_degraded_manually,
@@ -398,92 +384,6 @@ def _validate_switch_and_filter_pool(
     )
 
 
-async def _run_compaction_pipeline(
-    conv,
-    is_new: bool,
-    messages: list[dict],
-    pm_schema,
-    config,
-    db,
-    estimated_input: int,
-) -> dict:
-    """Run pre-compaction, external detection, continuous compaction, and snapshot assembly.
-
-    Returns a dict with compaction state and active_messages.
-    """
-    state: dict = {
-        "pre_compaction_applied": False,
-        "pre_compaction_metadata": None,
-        "active_messages": messages,
-        "external_compaction_detected": False,
-        "external_compaction_metadata": None,
-        "continuous_compaction_applied": False,
-        "continuous_compaction_metadata": None,
-    }
-
-    # Pre-compaction (caller must provide estimated_input — no recalculation)
-    if pm_schema.pre_compaction.enabled and estimated_input > (
-        pm_schema.pre_compaction.threshold or 0
-    ):
-        compacted, meta = await pre_compact_input(
-            messages=messages,
-            pseudo_model=pm_schema,
-            config=config,
-            input_tokens=estimated_input,
-        )
-        state["pre_compaction_applied"] = meta.get("applied", False)
-        state["pre_compaction_metadata"] = meta
-        if meta.get("applied", False):
-            state["active_messages"] = compacted
-
-    active = state["active_messages"]
-
-    # External compaction detection
-    skip_continuous = False
-    if conv is not None and not is_new:
-        ext_info = await detect_external_compaction(active, conv, db)
-        if ext_info is not None:
-            ext_meta = await handle_external_compaction(active, conv, ext_info, db)
-            state["external_compaction_detected"] = True
-            state["external_compaction_metadata"] = ext_meta
-            skip_continuous = True
-
-    # Continuous compaction
-    if (
-        not skip_continuous
-        and conv is not None
-        and pm_schema.continuous_compaction.enabled
-    ):
-        cc_meta = await continuous_compact(
-            conversation=conv,
-            pseudo_model=pm_schema,
-            config=config,
-            db=db,
-        )
-        state["continuous_compaction_applied"] = cc_meta.get("applied", False)
-        state["continuous_compaction_metadata"] = cc_meta
-
-    # Assemble context if snapshot exists
-    if conv is not None and conv.active_snapshot_id:
-        state["active_messages"] = await _assemble_snapshot_context_sync(
-            conv, db, active
-        )
-
-    return state
-
-
-async def _assemble_snapshot_context_sync(
-    conv, db, active_messages: list[dict]
-) -> list[dict]:
-    """Assemble snapshot context with last user message appended."""
-    context = await assemble_context(conv, db)
-    for m in reversed(active_messages):
-        if m.get("role") == "user":
-            context.append(m)
-            break
-    return context
-
-
 async def _handle_streaming_with_db(
     db,
     config,
@@ -508,8 +408,20 @@ async def _handle_streaming_with_db(
     # Detect capabilities in incoming messages
     turn_caps = detect_turn_capabilities(messages, tools)
 
-    # Validate incoming content
-    validate_incoming_content(turn_caps, pm_schema, resolved_model, config)
+    # Validate incoming content (may return delegation signal)
+    delegation = validate_incoming_content(
+        turn_caps, pm_schema, resolved_model, config, tools
+    )
+
+    # Apply image→tool delegation if needed
+    if delegation and delegation.get("action") == "delegate_images":
+        from src.service.tool_detector import delegate_images_to_tool
+
+        messages = delegate_images_to_tool(
+            messages,
+            delegation["tool_name"],
+            delegation["param_name"],
+        )
 
     # Resolve conversation ID
     try:
@@ -548,7 +460,7 @@ async def _handle_streaming_with_db(
         pseudo_model_name=resolved_model,
         input_token_threshold=pm_schema.input_token_threshold,
         estimated_tokens=estimated_input,
-        pre_compaction_enabled=pm_schema.pre_compaction.enabled,
+        pre_compaction_enabled=False,
     )
     if not threshold_check.success:
         error = threshold_check.error
@@ -587,38 +499,12 @@ async def _handle_streaming_with_db(
 
     await affinity.set(conversation_id, physical_model)
 
-    # ── Sprint 5: Auto-describe images on pseudo-model switch ─────────────
-    auto_describe_meta: dict | None = None
-    messages_for_llm: list[dict] = messages  # May be replaced by described version
-    if conv is not None and not is_new and resolved_model != conv.pseudo_model:
-        desc_in_flight, auto_describe_meta = await handle_auto_describe(
-            conv=conv,
-            current_pseudo_name=conv.pseudo_model,
-            new_pm_schema=pm_schema,
-            config=config,
-            db=db,
-            pinned_physical_model=physical_model,
-            in_flight_messages=messages,
-        )
-        if desc_in_flight is not None:
-            messages_for_llm = desc_in_flight
+    # Messages pass through directly — no auto-describe.
+    # validate_incoming_content returns explicit errors for unsupported content.
+    messages_for_llm: list[dict] = messages
 
-    # ── Sprint 4: Compaction pipeline ─────────────────────────────────────
-    comp_state = await _run_compaction_pipeline(
-        conv=conv,
-        is_new=is_new,
-        messages=messages_for_llm,
-        pm_schema=pm_schema,
-        config=config,
-        db=db,
-        estimated_input=estimated_input,
-    )
-    active_messages = comp_state["active_messages"]
-
-    # Recalculate after compaction — pre-compaction may have reduced the
-    # input or skipped.  The stale estimate would cause call_with_fallback
-    # to incorrectly skip models with adequate context windows.
-    estimated_input = estimate_tokens(active_messages)
+    # No automatic compaction — if threshold is exceeded, error is returned.
+    active_messages = messages_for_llm
 
     # ── Sprint 6: Context alerts ──────────────────────────────────────────
     context_alert = get_context_alert(
@@ -667,13 +553,9 @@ async def _handle_streaming_with_db(
         stream_options=stream_options,
     )
 
-    # Sprint 5 metadata
-    images_described: int = (
-        auto_describe_meta.get("images_described", 0) if auto_describe_meta else 0
-    )
-    images_described_by: str | None = (
-        auto_describe_meta.get("described_by") if auto_describe_meta else None
-    )
+    # No auto-describe — images pass through or error explicitly
+    images_described: int = 0
+    images_described_by: str | None = None
 
     _streaming_response = StreamingResponse(
         _stream_response_generator(
@@ -690,16 +572,6 @@ async def _handle_streaming_with_db(
                 compatibility_details=compatibility_details,
                 tools_filter_applied=tools_filter_applied,
                 tools_filter_reason=tools_filter_reason,
-                pre_compaction_applied=comp_state["pre_compaction_applied"],
-                pre_compaction_metadata=comp_state["pre_compaction_metadata"],
-                continuous_compaction_applied=comp_state[
-                    "continuous_compaction_applied"
-                ],
-                continuous_compaction_metadata=comp_state[
-                    "continuous_compaction_metadata"
-                ],
-                external_compaction_detected=comp_state["external_compaction_detected"],
-                external_compaction_metadata=comp_state["external_compaction_metadata"],
                 images_described=images_described,
                 images_described_by=images_described_by,
                 router_suggestion=router_suggestion,
@@ -887,12 +759,6 @@ def _build_final_metadata_chunk(
             compatibility_details=ctx.compatibility_details,
             tools_filter_applied=ctx.tools_filter_applied,
             tools_filter_reason=ctx.tools_filter_reason,
-            pre_compaction_applied=ctx.pre_compaction_applied,
-            pre_compaction_metadata=ctx.pre_compaction_metadata,
-            continuous_compaction_applied=ctx.continuous_compaction_applied,
-            continuous_compaction_metadata=ctx.continuous_compaction_metadata,
-            external_compaction_detected=ctx.external_compaction_detected,
-            external_compaction_metadata=ctx.external_compaction_metadata,
             images_described=ctx.images_described,
             images_described_by=ctx.images_described_by,
             images_degraded_manually=ctx.images_degraded_manually,

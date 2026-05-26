@@ -31,6 +31,7 @@ from src.config.pseudo_models import load_config
 from src.config.settings import settings
 from src.logging_config import setup_logging
 from src.middleware.rate_limiter import RateLimitMiddleware
+from src.middleware.keyvault import KeyVaultMiddleware
 from src.utils.sanitize import sanitize, sanitize_dict
 
 # Configure structured JSON logging (Sprint 8)
@@ -114,11 +115,15 @@ app = FastAPI(
 # ── Sprint 8: Middleware registration (order matters!) ──────────────────────
 
 # FastAPI wraps middleware in LIFO order: last registered = outermost (runs first).
-# Current order: 1st=RateLimit(inner) → 2nd=Auth(middle) → 3rd=CORS(outer/first)
-# Execution: CORS → Auth → RateLimit → handler → RateLimit → Auth → CORS
+# Current order: 1st=KeyVault(inner) → 2nd=RateLimit → 3rd=Auth(middle) → 4th=CORS(outer)
+# Execution: CORS → Auth → RateLimit → KeyVault → handler → KeyVault → RateLimit → Auth → CORS
 # Auth rejects unauthenticated requests BEFORE RateLimit counts them.
+# KeyVault sanitizes secrets closest to the handler.
 
-# 1. Rate limiting — innermost (runs last, after auth)
+# 1. KeyVault — innermost (closest to handler, sanitizes request/response bodies)
+app.add_middleware(KeyVaultMiddleware)
+
+# 2. Rate limiting — after keyvault, before auth
 app.add_middleware(RateLimitMiddleware)
 
 # 2. Auth — middle (runs before rate limiting)
@@ -138,6 +143,7 @@ app.add_middleware(
 
 # ── Global exception handlers: sanitize API keys from all error responses ──
 
+
 @app.exception_handler(HTTPException)
 async def sanitize_http_exception(request, exc: HTTPException):
     detail = exc.detail
@@ -153,12 +159,16 @@ async def sanitize_http_exception(request, exc: HTTPException):
         headers=headers,
     )
 
+
 @app.exception_handler(Exception)
 async def sanitize_generic_exception(request, exc: Exception):
     return JSONResponse(
         status_code=500,
-        content={"detail": {"error": "INTERNAL_ERROR", "message": "Internal server error"}},
+        content={
+            "detail": {"error": "INTERNAL_ERROR", "message": "Internal server error"}
+        },
     )
+
 
 # ── Routers ─────────────────────────────────────────────────────────────────
 

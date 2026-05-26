@@ -92,9 +92,7 @@ def _setup_keyclaw_proxy() -> None:
     system_bundle = Path("/etc/ssl/cert.pem")
 
     if not combined.exists() and keyclaw_ca.exists() and system_bundle.exists():
-        combined.write_text(
-            system_bundle.read_text() + "\n" + keyclaw_ca.read_text()
-        )
+        combined.write_text(system_bundle.read_text() + "\n" + keyclaw_ca.read_text())
 
     os.environ.setdefault("HTTP_PROXY", "http://127.0.0.1:8877")
     os.environ.setdefault("HTTPS_PROXY", "http://127.0.0.1:8877")
@@ -160,6 +158,7 @@ def setup_litellm(settings: Settings) -> None:
 
     if _KEYCLAW_HOME.exists():
         import logging
+
         _log = logging.getLogger("src.adapters.litellm")
         _log.warning(
             "KeyClaw is installed but the proxy daemon is not running. "

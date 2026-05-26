@@ -11,7 +11,6 @@ from src.service.chat_service import (
     _suggest_higher_threshold_models,
     call_with_fallback,
     evaluate_router_suggestion,
-    handle_auto_describe,
 )
 from src.config.pseudo_models import load_config
 
@@ -105,37 +104,3 @@ def test_suggest_higher_threshold_models_no_match():
     """No suggestions when threshold exceeds all models."""
     suggestions = _suggest_higher_threshold_models(_CONFIG, 99999999)
     assert len(suggestions) == 0
-
-
-@pytest.mark.asyncio
-async def test_handle_auto_describe_not_auto_describe():
-    """Returns metadata with skip reason when on_downgrade != 'auto_describe'."""
-    pm = _CONFIG.pseudo_models["normal"]  # block mode
-    result = await handle_auto_describe(
-        conv=MagicMock(),
-        current_pseudo_name="vision",
-        new_pm_schema=pm,
-        config=_CONFIG,
-        db=MagicMock(),
-        pinned_physical_model="test",
-    )
-    assert result[0] is None
-    assert result[1] is not None
-    assert result[1]["auto_describe_skipped"] is True
-
-
-@pytest.mark.asyncio
-async def test_handle_auto_describe_dest_has_vision():
-    """Returns metadata with skip reason when destination has vision models."""
-    pm = _CONFIG.pseudo_models["vision"]  # has vision
-    result = await handle_auto_describe(
-        conv=MagicMock(),
-        current_pseudo_name="vision",
-        new_pm_schema=pm,
-        config=_CONFIG,
-        db=MagicMock(),
-        pinned_physical_model="test",
-    )
-    assert result[0] is None
-    assert result[1] is not None
-    assert result[1]["auto_describe_skipped"] is True

@@ -1,65 +1,32 @@
 """Inline command handler — Sprint 9.
 
-Commands the user types directly in the chat message to perform operations
-without leaving the conversation or using curl.
+Commands the user types directly in the chat message.
 
 Commands:
-  /degrade      — Describe all multimedia (images, PDFs, video frames) as text.
   /status       — Show conversation state (tokens, model, capabilities).
   /help         — List all commands.
 
-Compaction is handled natively by OpenCode. Use POST /conversations/{id}/compact
-for programmatic compaction (up to 2M tokens via compactador model).
-
 Design:
-  - Commands start with "/" (or "@" for backward compat).
   - The proxy checks for commands BEFORE any LLM processing.
-  - If a command is detected, it's handled inline and a text response
-    is returned instead of forwarding to the LLM.
-  - Commands are idempotent where possible.
+  - If a command is detected, it's handled inline.
+  - No degradation, no compaction — those are handled by tools/OpenCode.
 """
 
 import re
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
+from src.adapters.db.models import Conversation, ConversationTurn
 from src.service.capability_detector import load_session_capabilities
-from src.service.multimedia.image_describer import auto_describe_images
-from src.service.tools_normalizer import generate_preview, normalize_history
 
-# ── Command regex ───────────────────────────────────────────────────────────
+_COMMAND_RE = re.compile(r"^[/@]?(\b(?:status|help)\b)\s*(.*)", re.IGNORECASE)
 
-_COMMAND_RE = re.compile(r"^[/@]?(\b(?:degrade|status|help)\b)\s*(.*)", re.IGNORECASE)
-"""Detect commands ONLY as the first word of the message.
-
-The command must be the very first word (optional / or @ prefix).
-Compaction is handled by OpenCode natively and the POST /compact endpoint.
-
-Matches:
-  "degrade images"  → triggers
-  "degradar fotos"  → triggers (alias)
-  "/status"         → triggers
-  "help"            → triggers
-
-Does NOT match:
-  "please degrade"  → first word is "please"
-  "degraded"        → word boundary prevents partial match
-"""
-
-_VALID_COMMANDS = frozenset({"degrade", "status", "help"})
-
-
-# ── Result type ─────────────────────────────────────────────────────────────
+_VALID_COMMANDS = frozenset({"status", "help"})
 
 
 class InlineCommandResult:
-    """Result of handling an inline command."""
-
     def __init__(
         self,
         handled: bool = False,
@@ -73,20 +40,12 @@ class InlineCommandResult:
         self.skip_llm = skip_llm
 
 
-# ── Public entry point ─────────────────────────────────────────────────────
-
-
 async def handle_inline_command(
     messages: list[dict],
     conversation_id: str | None,
     config,
     db: AsyncSession,
 ) -> InlineCommandResult:
-    """Check if the last user message contains an inline command.
-
-    Must be called BEFORE any LLM processing. If a command is detected,
-    the caller should return the result instead of calling the LLM.
-    """
     last_msg = _find_last_user_message(messages)
     if last_msg is None:
         return InlineCommandResult()
@@ -105,21 +64,7 @@ async def handle_inline_command(
     if command not in _VALID_COMMANDS:
         return InlineCommandResult()
 
-    if not conversation_id and command == "degrade":
-        return InlineCommandResult(
-            handled=True,
-            response_text=(
-                "⚠️ **No active conversation.**\n\n"
-                "Start a conversation first, then use:\n"
-                "- `/degrade` — describe multimedia as text\n"
-                "- `/status` — show conversation state"
-            ),
-            skip_llm=True,
-        )
-
     match command:
-        case "degrade":
-            return await _handle_degrade(conversation_id, config, db)
         case "status":
             return await _handle_status(conversation_id, db, config)
         case "help":
@@ -127,139 +72,15 @@ async def handle_inline_command(
     return InlineCommandResult()
 
 
-# ── @degrade — describe multimedia as text ────────────────────────────────
-
-
-async def _handle_degrade(
-    conversation_id: str | None,
-    config,
-    db: AsyncSession,
-) -> InlineCommandResult:
-    """@degrade: describe all multimedia (images, PDFs, etc.) as text."""
-    if not conversation_id:
-        return _no_conv_result()
-
-    conv_uuid = _parse_uuid(conversation_id)
-    conv = await db.get(Conversation, conv_uuid, options=[selectinload(Conversation.turns)])
-    if not conv:
-        return InlineCommandResult(
-            handled=True,
-            response_text="⚠️ Conversation not found.",
-            skip_llm=True,
-        )
-
-    caps = await load_session_capabilities(db, conv_uuid, conv.total_tokens)
-
-    if not caps.has_images:
-        return InlineCommandResult(
-            handled=True,
-            response_text="✅ No multimedia found. Nothing to degrade.",
-            skip_llm=True,
-        )
-
-    # Find a vision model
-    current_pm = config.pseudo_models.get(conv.pseudo_model)
-    if not current_pm:
-        return InlineCommandResult(
-            handled=True,
-            response_text=f"⚠️ Unknown pseudo-model: '{conv.pseudo_model}'.",
-            skip_llm=True,
-        )
-
-    vision_models = [m for m in current_pm.physical_models if m.vision]
-    if not vision_models:
-        # Try to find ANY vision pseudo-model as fallback
-        for name, pm in config.pseudo_models.items():
-            vm = [m for m in pm.physical_models if m.vision]
-            if vm:
-                vision_models = vm
-                break
-
-    if not vision_models:
-        return InlineCommandResult(
-            handled=True,
-            response_text=(
-                "⚠️ No vision-capable model available. "
-                "Make sure at least one pseudo-model has `vision: true` models."
-            ),
-            skip_llm=True,
-        )
-
-    vision_model = (
-        conv.physical_model
-        if any(m.model == conv.physical_model and m.vision for m in current_pm.physical_models)
-        else vision_models[0].model
-    )
-
-    # Load all messages from turns
-    all_messages: list[dict] = []
-    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
-        turn_msgs = turn.messages
-        if isinstance(turn_msgs, list):
-            all_messages.extend(turn_msgs)
-
-    result = await auto_describe_images(all_messages, vision_model)
-    described_messages, desc_meta = result
-
-    described_count = desc_meta.get("images_described", 0)
-    if described_count == 0:
-        return InlineCommandResult(
-            handled=True,
-            response_text="ℹ️ No multimedia items found to degrade.",
-            skip_llm=True,
-        )
-
-    # Store as degradation_event turn
-    turn_number = (max(t.turn_number for t in conv.turns) + 1) if conv.turns else 1
-    deg_turn = ConversationTurn(
-        conversation_id=conv_uuid,
-        turn_number=turn_number,
-        pseudo_model=conv.pseudo_model,
-        physical_model=vision_model,
-        messages=described_messages,
-        response={"metadata": desc_meta},
-        input_tokens=0,
-        output_tokens=desc_meta.get("total_description_tokens", 0),
-        turn_type="degradation_event",
-        had_images=False,
-        had_tools=False,
-        had_parallel_tools=False,
-    )
-    db.add(deg_turn)
-    conv.images_described = (conv.images_described or 0) + described_count
-    conv.images_degraded_manually = True
-    conv.capability_has_images = False  # Reset after successful degradation
-    await db.commit()
-
-    return InlineCommandResult(
-        handled=True,
-        response_text=(
-            f"🖼️ **Multimedia degraded to text!**\n\n"
-            f"- Items described: {described_count}\n"
-            f"- Unique items: {desc_meta.get('unique_images_described', 0)}\n"
-            f"- Described by: `{vision_model}`\n"
-            f"- Description tokens: {desc_meta.get('total_description_tokens', 0)}\n\n"
-            f"Now you can switch to a pseudo-model without vision support.\n"
-            f"The descriptions are preserved in the conversation history."
-        ),
-        response_metadata=desc_meta,
-        skip_llm=True,
-    )
-
-
-# ── @status — conversation state ───────────────────────────────────────────
-
-
 async def _handle_status(
     conversation_id: str | None,
     db: AsyncSession,
     config,
 ) -> InlineCommandResult:
-    """@status: show current conversation state."""
     if not conversation_id:
         return InlineCommandResult(
             handled=True,
-            response_text="📊 **No active conversation.**\n\nStart a chat first, then use `/status`.",
+            response_text="📊 **No active conversation.**\n\nStart a chat first.",
             skip_llm=True,
         )
 
@@ -277,11 +98,10 @@ async def _handle_status(
     result = await db.execute(
         select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)
     )
-    turns = result.scalars().all()
-    turn_count = len(turns)
+    turn_count = len(result.scalars().all())
 
     status_lines = [
-        f"📊 **Conversation Status**\n",
+        "📊 **Conversation Status**\n",
         f"- **ID:** `{conversation_id[:16]}...`",
         f"- **Pseudo-modelo:** `{conv.pseudo_model}`",
         f"- **Modelo físico:** `{conv.physical_model}`",
@@ -289,7 +109,7 @@ async def _handle_status(
         f"- **Tokens totales:** {conv.total_tokens:,}",
     ]
 
-    if hasattr(conv, 'context_window') and conv.context_window:
+    if hasattr(conv, "context_window") and conv.context_window:
         pct = round((conv.total_tokens / conv.context_window) * 100, 1)
         status_lines.append(f"- **Contexto usado:** {pct}% de {conv.context_window:,}")
 
@@ -300,24 +120,15 @@ async def _handle_status(
         cap_flags.append("🔧 tools")
     if caps.has_parallel_tools:
         cap_flags.append("⚡ parallel")
-    if caps.has_pdf:
-        cap_flags.append("📄 PDF")
-    if caps.images_described:
-        cap_flags.append(f"📝 {caps.images_described} descritos")
     if cap_flags:
         status_lines.append(f"- **Capacidades:** {' | '.join(cap_flags)}")
 
     if conv.active_snapshot_id:
-        status_lines.append(f"- **Snapshot:** ✅ (`{str(conv.active_snapshot_id)[:8]}...`)")
+        status_lines.append(
+            f"- **Snapshot:** ✅ (`{str(conv.active_snapshot_id)[:8]}...`)"
+        )
     else:
         status_lines.append("- **Snapshot:** ❌")
-
-    status_lines.extend([
-        "",
-        "**Commands:**",
-        "- `/degrade` — describe multimedia as text",
-        "- `/status` — this screen",
-    ])
 
     return InlineCommandResult(
         handled=True,
@@ -332,61 +143,19 @@ async def _handle_status(
     )
 
 
-# ── @help ──────────────────────────────────────────────────────────────────
-
-
 def _handle_help() -> InlineCommandResult:
     return InlineCommandResult(
         handled=True,
         response_text=(
-            "📚 **Inline Commands — Help**\n\n"
-            "Type any of these as your chat message:\n\n"
-            "### `/degrade`\n"
-            "Describe all multimedia items as text.\n"
-            "Use before switching to a non-vision pseudo-model.\n\n"
+            "📚 **Inline Commands**\n\n"
             "### `/status`\n"
             "Show current conversation state: model, tokens, capabilities.\n\n"
             "---\n"
-            "Compaction is handled natively by OpenCode.\n"
-            "For programmatic compaction: `POST /conversations/{id}/compact`"
+            "Compaction: handled natively by OpenCode.\n"
+            "Image degradation: use a vision model as a tool."
         ),
         skip_llm=True,
     )
-
-
-# ── Internal helpers ───────────────────────────────────────────────────────
-
-
-async def _do_degrade(
-    conv: Conversation,
-    conv_uuid: uuid.UUID,
-    config,
-    db: AsyncSession,
-) -> dict | None:
-    """Run multimedia degradation and return result metadata."""
-    current_pm = config.pseudo_models.get(conv.pseudo_model)
-    if not current_pm:
-        return None
-
-    vision_models = [m for m in current_pm.physical_models if m.vision]
-    if not vision_models:
-        return None
-
-    vision_model = (
-        conv.physical_model
-        if any(m.model == conv.physical_model and m.vision for m in current_pm.physical_models)
-        else vision_models[0].model
-    )
-
-    conv = await db.get(Conversation, conv_uuid, options=[selectinload(Conversation.turns)])
-    all_messages: list[dict] = []
-    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
-        tm = turn.messages
-        if isinstance(tm, list):
-            all_messages.extend(tm)
-
-    _, desc_meta = await auto_describe_images(all_messages, vision_model)
-    return desc_meta
 
 
 def _find_last_user_message(messages: list[dict]) -> dict | None:
@@ -403,18 +172,7 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, value)
 
 
-def _no_conv_result() -> InlineCommandResult:
-    return InlineCommandResult(
-        handled=True,
-        response_text="⚠️ **No active conversation.**\n\nStart a conversation first.",
-        skip_llm=True,
-    )
-
-
 _ALIASES: dict[str, str] = {
-    "degradar": "degrade",
-    "describir": "degrade",
-    "describe": "degrade",
     "estado": "status",
     "info": "status",
     "ayuda": "help",

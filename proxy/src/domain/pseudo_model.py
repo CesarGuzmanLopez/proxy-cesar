@@ -2,9 +2,6 @@
 
 These are plain dataclasses — no FastAPI, no SQLAlchemy, no Pydantic.
 python.md §1.1: domain must not import infrastructure.
-
-Sprint 4: added PreCompactionConfig, ContinuousCompactionConfig,
-ImageHandlingConfig, RouterLLMConfig sub-configs to PseudoModel.
 """
 
 from dataclasses import dataclass, field
@@ -20,33 +17,6 @@ class PhysicalModel:
     vision: bool = False
     context_window: int | None = None
     note: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PreCompactionConfig:
-    """Pre-compaction configuration for a pseudo-model.
-
-    plan-proxy.md §9.2: If enabled, inputs exceeding threshold are
-    summarized by a cheap compactor model before the expensive model sees them.
-    """
-
-    enabled: bool = False
-    threshold: int | None = None
-    target_tokens: int | None = None
-    compactor: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ContinuousCompactionConfig:
-    """Continuous compaction configuration for a pseudo-model.
-
-    plan-proxy.md §10.2: If enabled, when accumulated context exceeds
-    trigger_pct of context_window, old turns are compacted into a snapshot.
-    """
-
-    enabled: bool = False
-    trigger_pct: int | None = None
-    compact_preserve_recent: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +47,7 @@ class PseudoModel:
     """A pseudo-model — a user-facing intent that resolves to physical models.
 
     Sprint 1: name, display_name, description, thresholds, physical_models.
-    Sprint 4: +pre_compaction, +continuous_compaction, +image_handling.
+    Sprint 4: +pre_compaction, +continuous_compaction, +image_handling (removed).
     Sprint 5 (planned): +router_llm.
     """
 
@@ -89,10 +59,6 @@ class PseudoModel:
     physical_models: tuple[PhysicalModel, ...]
     fallback_strategy: str = "sequential"
 
-    # Sprint 4: sub-configurations
-    pre_compaction: PreCompactionConfig = field(default_factory=PreCompactionConfig)
-    continuous_compaction: ContinuousCompactionConfig = field(
-        default_factory=ContinuousCompactionConfig
-    )
+    # Sub-configurations
     image_handling: ImageHandlingConfig = field(default_factory=ImageHandlingConfig)
     router_llm: RouterLLMConfig = field(default_factory=RouterLLMConfig)

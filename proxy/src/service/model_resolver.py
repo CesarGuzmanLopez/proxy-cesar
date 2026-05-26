@@ -4,10 +4,8 @@ Exact logic from sprint §7. No prefix manipulation, no string concatenation.
 """
 
 from src.config.pseudo_models import (
-    ContinuousCompactionConfig,
     ImageHandlingConfig,
     PhysicalModelSchema,
-    PreCompactionConfig,
     PseudoModelSchema,
     ProxyConfigSchema,
     RouterLLMConfig,
@@ -64,8 +62,6 @@ def build_passthrough_pseudo_model(model_name: str) -> PseudoModelSchema:
         description=f"Direct passthrough: {model_name}",
         input_token_threshold=None,
         context_window=None,
-        continuous_compaction=ContinuousCompactionConfig(enabled=False),
-        pre_compaction=PreCompactionConfig(enabled=False),
         router_llm=RouterLLMConfig(enabled=False),
         image_handling=ImageHandlingConfig(on_downgrade="auto_describe"),
         physical_models=[

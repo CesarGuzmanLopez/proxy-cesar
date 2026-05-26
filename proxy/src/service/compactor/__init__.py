@@ -1,6 +1,5 @@
-"""Compaction services for Sprint 4.
+"""Compaction services.
 
-Pre-compaction: summarizes long inputs with a cheap model.
-Continuous compaction: snapshots old turns when context exceeds trigger_pct.
-External compaction detection: detects when the client (OpenCode) compacted.
+Explicit compaction: POST /conversations/{id}/compact.
+Delegates multimedia to available vision/audio models.
 """

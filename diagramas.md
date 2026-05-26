@@ -12,13 +12,12 @@ graph TB
         A5[curl / HTTP]
     end
 
-    subgraph Proxy["Proxy César"]
+    subgraph Proxy["Proxy César :9110"]
         direction TB
         
-        subgraph Middleware["Middleware Layer"]
-            M1[CORS]
-            M2[Auth - Bearer Token]
-            M3[Rate Limiter - Valkey]
+        subgraph Middleware["Middleware (CORS→Auth→RateLimit→KeyVault)"]
+            direction LR
+            M1["CORS"] --> M2["Auth<br/>Bearer Token"] --> M3["RateLimit<br/>Valkey fixed-window"] --> M4["KeyVault<br/>Detecta secrets<br/>Reinyecta en respuesta"]
         end
 
         subgraph API["API Layer"]
@@ -31,7 +30,6 @@ graph TB
             R7["POST /conversations/{id}/normalize-tools"]
             R8["POST /conversations/{id}/compact"]
             R9["GET /conversations/{id}/audit-log"]
-            R10["POST /conversations/{id}/degrade-images"]
         end
 
         subgraph Service["Service Layer"]
@@ -39,8 +37,8 @@ graph TB
             S2[Capability Detector]
             S3[Compatibility Validator]
             S4[Tool Filter]
-            S5[Image Describer]
-            S6[Compactor]
+            S5[Tool Detector<br/>Delegación imagen→tool]
+            S6[Compactor<br/>POST /compact]
             S7[Router LLM Suggester]
         end
 
@@ -57,13 +55,17 @@ graph TB
         end
     end
 
+    subgraph KeyClaw["KeyClaw :8877"]
+        KC["MITM Proxy<br/>Filtra API keys<br/>del tráfico saliente"]
+    end
+
     subgraph Proveedores["LLM Providers"]
         P1[DeepSeek]
         P2[Groq]
         P3[OpenRouter]
-        P4[Pruna - Imagen]
-        P5[Ollama - Local]
-        P6[LM Studio - Local]
+        P4[Pruna]
+        P5[Ollama]
+        P6[LM Studio]
     end
 
     subgraph Almacenamiento["Storage"]
@@ -72,15 +74,80 @@ graph TB
     end
 
     Clientes --> M1
-    M1 --> M2
-    M2 --> M3
     M3 --> API
     
     API --> Service
     Service --> Adapters
     Service --> Config
-    Adapters --> Proveedores
+    Adapters --> KeyClaw
+    KeyClaw --> Proveedores
     Adapters --> Almacenamiento
+```
+
+## 1b. Pipeline de Middleware
+
+```mermaid
+sequenceDiagram
+    participant C as Cliente
+    participant CO as CORS
+    participant AU as Auth
+    participant RL as Rate Limit
+    participant KV as KeyVault
+    participant API as Handler
+    participant VK as Valkey
+    
+    C->>CO: Request
+    CO->>AU: CORS ok
+    AU->>RL: Auth ok
+    RL->>KV: Rate ok
+    
+    rect rgb(240,255,240)
+        Note over KV,VK: KeyVault — secret vault
+        KV->>KV: detecta API keys en mensajes
+        KV->>VK: guarda keyvault:conv:hash = valor
+        KV->>KV: reemplaza por [KEYVAULT:hash]
+        KV->>KV: inyecta system prompt
+    end
+    
+    KV->>API: body sanitizado
+    API-->>KV: response
+    
+    rect rgb(255,255,240)
+        Note over KV,VK: Reinyección (streaming + no-streaming)
+        KV->>VK: lookup keyvault:conv:hash
+        KV->>KV: reemplaza [KEYVAULT:hash] → valor real
+    end
+    
+    KV-->>RL: response
+    RL-->>AU: response + headers
+    AU-->>CO: response
+    CO-->>C: response
+```
+
+## 1c. KeyVault — Flujo de Secrets
+
+```mermaid
+flowchart LR
+    subgraph S1["1. Request"]
+        R1["Usuario envía keys"] --> R2["Detecta patrones:<br/>sk-..., ghp_..., AKIA..."]
+        R2 --> R3["Hash SHA256 → 8 chars"]
+        R3 --> R4["Valkey: keyvault:conv:hash = valor"]
+        R3 --> R5["Mensaje: reemplaza key → [KEYVAULT:hash]"]
+        R5 --> R6["System prompt inyectado:<br/>explica uso de placeholders"]
+    end
+
+    subgraph S2["2. LLM"]
+        L1["Recibe texto sanitizado<br/>(nunca ve keys reales)"]
+        L2["Responde con placeholders:<br/>'usa [KEYVAULT:a1b2c3d4]'"]
+    end
+
+    subgraph S3["3. Response"]
+        P1["Escanea respuesta"] --> P2["Encuentra [KEYVAULT:hash]"]
+        P2 --> P3["Valkey lookup → valor real"]
+        P3 --> P4["Reinyecta: el cliente ve la key real<br/>(soporta streaming y no-streaming)"]
+    end
+
+    S1 --> S2 --> S3
 ```
 
 ---
@@ -98,16 +165,19 @@ flowchart TB
     ModelResolve --> Normalize[nomalize_model_name]
     Normalize --> IsPseudo{¿Es pseudo-modelo<br/>conocido?}
     IsPseudo -->|Sí| Steps[Continuar flujo normal]
-    IsPseudo -->|No| Passthrough[build_passthrough_pseudo_model<br/>Crear pseudo-modelo mínimo]
+    IsPseudo -->|No| Passthrough[Passthrough directo<br/>modelo local/desconocido]
     
     Passthrough --> CapDetect
     Steps --> CapDetect[2. Detectar capacidades del turno]
     CapDetect --> ContentValid[3. Validar contenido entrante]
     
     ContentValid --> HasImages{¿Tiene imágenes?}
-    HasImages -->|Sí, sin visión| Images400[400 IMAGES_NOT_SUPPORTED]
+    HasImages -->|Sí, sin visión + tools| DelegateTool[Delegar a tool:<br/>reemplaza image_url por texto URL]
+    HasImages -->|Sí, sin visión + sin tools| Images400[400 IMAGES_NOT_SUPPORTED<br/>Usa modelo con visión]
     HasImages -->|Sí, con visión| InlineCmd
     HasImages -->|No| InlineCmd
+    
+    DelegateTool --> InlineCmd
     
     ContentValid --> HasAudio{¿Tiene audio?}
     HasAudio -->|Sí| Audio400[400 AUDIO_NOT_SUPPORTED]
@@ -115,10 +185,7 @@ flowchart TB
     ContentValid --> HasVideo{¿Tiene video?}
     HasVideo -->|Sí| Video400[400 VIDEO_NOT_SUPPORTED]
     
-    ContentValid --> HasPDF{¿Tiene PDF sin visión?}
-    HasPDF -->|Sí| PDF400[400 PDF_NOT_SUPPORTED]
-    
-    InlineCmd[4. Verificar comando inline] --> IsCmd{¿degrade, status<br/>o help?}
+    InlineCmd[4. Verificar comando inline] --> IsCmd{¿status o help?}
     IsCmd -->|Sí| CmdHandled{skip_llm?}
     CmdHandled -->|Sí| CmdResponse[Responder con resultado<br/>del comando]
     CmdHandled -->|No| SessionLoad
@@ -128,7 +195,7 @@ flowchart TB
     Affinity --> SwitchValid[7. Validar cambio de<br/>pseudo-modelo]
     
     SwitchValid --> SwitchResult{Resultado}
-    SwitchResult -->|BLOCKED| SwitchBlock[409 PSEUDO_MODEL_INCOMPATIBLE]
+    SwitchResult -->|BLOCKED| SwitchBlock[409 PSEUDO_MODEL_INCOMPATIBLE<br/>Usa modelo con visión vía tools]
     SwitchResult -->|WARNING| StoreWarn[Guardar warning]
     SwitchResult -->|SAFE| ToolFilter
     
@@ -137,78 +204,32 @@ flowchart TB
     
     PhysicalResolve --> IsNew{¿Es nueva<br/>conversación?}
     IsNew -->|Sí| CreateConv[Crear en DB]
-    IsNew -->|No| IsSwitch{¿Cambió pseudo-modelo?}
-    
-    IsSwitch -->|Sí| AutoDescribe[10. Auto-describir imágenes]
-    IsSwitch -->|No| ThresholdCheck
+    IsNew -->|No| ThresholdCheck
     CreateConv --> ThresholdCheck
     
-    AutoDescribe --> TargetVision{¿Destino tiene<br/>visión?}
-    TargetVision -->|Sí| PassThrough[Pasar imágenes<br/>sin describir]
-    TargetVision -->|No, auto_describe| DescribeImages[Describir imágenes<br/>con modelo visión]
-    TargetVision -->|No, block| ImageBlocked[409 BLOCKED]
+    ThresholdCheck[10. Verificar umbral<br/>de tokens] --> IsOver{¿input > threshold?}
+    IsOver -->|Sí| Threshold400[400 INPUT_EXCEEDS_THRESHOLD<br/>Usa POST /compact]
+    IsOver -->|No| RouterLLM
     
-    DescribeImages --> ThresholdCheck
-    PassThrough --> ThresholdCheck
-    
-    ThresholdCheck[11. Verificar umbral<br/>de tokens] --> IsOver{¿input > threshold?}
-    IsOver -->|Sí| Threshold400[400 INPUT_EXCEEDS_THRESHOLD]
-    IsOver -->|No| PreCompact[12. Pre-compactación]
-    
-    PreCompact --> PreCheck{¿Habilitada y<br/>input > umbral?}
-    PreCheck -->|Sí| PreCompactExec[Resumir último<br/>mensaje de usuario]
-    PreCheck -->|No| ExternalDetect
-    
-    PreCompactExec --> ExternalDetect[13. Detectar compactación<br/>externa del cliente]
-    
-    ExternalDetect --> IsExternal{¿Cliente compactó<br/>historial?}
-    IsExternal -->|Sí| HandleExternal[Crear snapshot external<br/>resetear total_tokens]
-    IsExternal -->|No| ContinousCheck
-    
-    HandleExternal --> ContinousCheck[14. Compactación continua]
-    
-    ContinousCheck --> IsTrigger{¿total_tokens ><br/>ctx_window × trigger_pct?}
-    IsTrigger -->|Sí| ContinousExec[Compactar turns antiguos<br/>→ ConversaciónSnapshot]
-    IsTrigger -->|No| SnapshotCheck
-    
-    ContinousExec --> SnapshotCheck[15. Ensamblar contexto<br/>desde snapshot]
-    
-    SnapshotCheck --> HasSnapshot{¿Hay snapshot<br/>activo?}
-    HasSnapshot -->|Sí| AssembleContext[Armar: snapshot<br/>+ últimos mensajes]
-    HasSnapshot -->|No| ReEstimate[Usar mensajes originales]
-    
-    AssembleContext --> ReEstimate
-    ReEstimate --> AlertCheck[16. Alerta de contexto]
-    
-    AlertCheck --> UsagePct{¿Porcentaje de<br/>contexto usado?}
-    UsagePct -->|≥100%| Context400[400 CONTEXT_UNUSABLE]
-    UsagePct -->|80-99%| HighAlert[Alta: Compact recommended]
-    UsagePct -->|60-80%| ModerateAlert[Moderada: advertencia]
-    UsagePct -->|<60%| RouterLLM
-    
-    HighAlert --> RouterLLM[17. Router LLM<br/>sugerencia de downgrade]
-    ModerateAlert --> RouterLLM
-    Context400 -.-> End
-
-    RouterLLM --> IsRouter{¿Router LLM<br/>habilitado?}
+    RouterLLM[11. Router LLM<br/>sugerencia de downgrade] --> IsRouter{¿Router LLM<br/>habilitado?}
     IsRouter -->|Sí| EvalComplexity[Evaluar complejidad<br/>vía LLM evaluador]
     IsRouter -->|No| LLMCall
     
     EvalComplexity --> IsSuggest{¿Sugiere downgrade?}
-    IsSuggest -->|Sí| StoreSuggestion[Guardar sugerencia]
+    IsSuggest -->|Sí| StoreSuggestion[Guardar sugerencia<br/>nunca bloquea]
     IsSuggest -->|No| LLMCall
     StoreSuggestion --> LLMCall
     
-    LLMCall[18. Llamar modelo físico<br/>con fallback] --> ForEach[Por cada modelo físico<br/>en orden de prioridad]
+    LLMCall[12. Llamar modelo físico<br/>con fallback] --> ForEach[Por cada modelo físico<br/>en orden de prioridad]
     
     ForEach --> CheckCtx{¿input ><br/>context_window?}
     CheckCtx -->|Sí| SkipModel[Saltar - CONTEXT_SKIPPED]
-    CheckCtx -->|No| CacheOpt[Optimizar caché<br/>si Anthropic]
+    CheckCtx -->|No| CacheOpt[Optimizar caché<br/>si Anthropic/DeepSeek]
     
     CacheOpt --> LiteLLMCall[call_litellm]
     LiteLLMCall --> IsError{¿Error retryable?}
     IsError -->|Sí| Fallback[Registrar fallback<br/>→ siguiente modelo]
-    IsError -->|No| Success[✅ Respuesta exitosa]
+    IsError -->|No| Success[Respuesta exitosa]
     
     Fallback --> NextModel{¿Quedan modelos?}
     NextModel -->|Sí| CheckCtx
@@ -216,20 +237,14 @@ flowchart TB
     AllFailed -->|Sí| Context413[413 CONTEXT_TOO_LARGE]
     AllFailed -->|No| Models503[503 ALL_MODELS_FAILED]
     
-    Success --> SaveTurn[19. Guardar turno en DB]
+    Success --> SaveTurn[13. Guardar turno en DB]
     SaveTurn --> AccumCaps[Acumular capacidades]
     AccumCaps --> Commit[Commit DB]
-    Commit --> Response["20. Responder al cliente<br/>+ proxy_metadata"]
+    Commit --> Response["14. Responder al cliente<br/>+ proxy_metadata"]
     
     Response --> StreamQ{¿Streaming?}
     StreamQ -->|Sí| SSE[Streaming SSE<br/>+ metadata final]
     StreamQ -->|No| JSON[Respuesta JSON<br/>completa]
-
-    subgraph Leyenda
-        L1["🟢 Flujo normal"]
-        L2["🔴 Error / Bloqueo"]
-        L3["🟡 Advertencia"]
-    end
 ```
 
 ---
@@ -248,7 +263,9 @@ stateDiagram-v2
         Conocido --> ValidandoEntrada: validate_incoming_content
         Passthrough --> ValidandoEntrada
         ValidandoEntrada --> Compatible: contenido soportado
-        ValidandoEntrada --> Incompatible: 400 error
+        ValidandoEntrada --> Delegado: imagen delegada a tool
+        ValidandoEntrada --> Incompatible: 400 error explícito
+        Delegado --> CargandoConversacion
         Compatible --> CargandoConversacion
         CargandoConversacion --> NuevaConversacion: no existe
         CargandoConversacion --> SwitchModelo: cambió pseudo-modelo
@@ -262,55 +279,17 @@ stateDiagram-v2
         ValidandoSwitch --> Bloqueado: 409 conflict
         ValidandoSwitch --> Advertencia: warning
         ValidandoSwitch --> Permitido: safe
-        Advertencia --> AutoDescribe: images + auto_describe
-        Permitido --> AutoDescribe: images + auto_describe
-        AutoDescribe --> Describiendo: modelo visión describe imágenes
-        Describiendo --> TurnoDegradacion: degradation_event
-        TurnoDegradacion --> EvaluandoUmbral
-        AutoDescribe --> EvaluandoUmbral: sin imágenes
+        Advertencia --> EvaluandoUmbral
+        Permitido --> EvaluandoUmbral
     }
     
     state EvaluandoUmbral {
         [*] --> BajoUmbral: input ≤ threshold
         [*] --> ExcedeUmbral: input > threshold
-        ExcedeUmbral --> PreCompactando: pre_compaction enabled
         ExcedeUmbral --> Umbral400: 400 error
-        PreCompactando --> BajoUmbral: compactado exitoso
-        PreCompactando --> BajoUmbral: fallback sin compactar
     }
     
-    state Compactacion {
-        [*] --> DetectandoExterna
-        DetectandoExterna --> ExternaDetectada: cliente ya compactó
-        DetectandoExterna --> ContinuaCheck: sin compactación externa
-        ExternaDetectada --> SnapshotExterno
-        ContinuaCheck --> BajoTrigger: tokens < trigger_pct
-        ContinuaCheck --> Compactando: tokens ≥ trigger_pct
-        Compactando --> SnapshotInterno: snapshot creado
-        SnapshotInterno --> EnsamblandoContexto
-        SnapshotExterno --> EnsamblandoContexto
-        BajoTrigger --> EnsamblandoContexto
-        EnsamblandoContexto --> ContextoListo
-    }
-    
-    state LlamandoModelo {
-        [*] --> Intento1: primer modelo físico
-        Intento1 --> VerificandoContexto: check context_window
-        VerificandoContexto --> ContextoExcede: input > window
-        VerificandoContexto --> CacheOptimizando
-        ContextoExcede --> IntentoN: skip → siguiente modelo
-        CacheOptimizando --> LlamandoLiteLLM
-        LlamandoLiteLLM --> Exitoso: ✅ response
-        LlamandoLiteLLM --> ErrorRetryable: ServiceUnavailable / RateLimit
-        ErrorRetryable --> IntentoN: fallback → siguiente modelo
-        IntentoN --> VerificandoContexto: más modelos?
-        IntentoN --> TodosFallaron: sin más modelos
-        TodosFallaron --> Contexto413: todos saltados por contexto
-        TodosFallaron --> Modelos503: errores mixtos
-    }
-    
-    BajoUmbral --> Compactacion
-    ContextoListo --> RouterLLM
+    BajoUmbral --> RouterLLM
     
     state RouterLLM {
         [*] --> Evaluando: evaluate_complexity
@@ -323,6 +302,22 @@ stateDiagram-v2
     
     SugerenciaGuardada --> LlamandoModelo
     SinSugerencia --> LlamandoModelo
+    
+    state LlamandoModelo {
+        [*] --> Intento1: primer modelo físico
+        Intento1 --> VerificandoContexto: check context_window
+        VerificandoContexto --> ContextoExcede: input > window
+        VerificandoContexto --> CacheOptimizando
+        ContextoExcede --> IntentoN: skip → siguiente modelo
+        CacheOptimizando --> LlamandoLiteLLM
+        LlamandoLiteLLM --> Exitoso: response
+        LlamandoLiteLLM --> ErrorRetryable: ServiceUnavailable / RateLimit
+        ErrorRetryable --> IntentoN: fallback → siguiente modelo
+        IntentoN --> VerificandoContexto: más modelos?
+        IntentoN --> TodosFallaron: sin más modelos
+        TodosFallaron --> Contexto413: todos saltados por contexto
+        TodosFallaron --> Modelos503: errores mixtos
+    }
     
     Exitoso --> GuardandoTurno
     GuardandoTurno --> CommitDB
@@ -339,21 +334,25 @@ stateDiagram-v2
 sequenceDiagram
     participant C as Cliente
     participant RL as Rate Limiter
+    participant KV as KeyVault
     participant Auth as Auth
     participant API as Chat API
     participant CS as Chat Service
     participant MR as Model Resolver
     participant CD as Capability Detector
     participant CV as Compatibility Validator
+    participant TD as Tool Detector
     participant TF as Tool Filter
-    participant ID as Image Describer
-    participant COMP as Compactor
     participant RTR as Router LLM
     participant LC as LiteLLM Client
     participant DB as DB
     participant VK as Valkey
     
-    C->>RL: POST /v1/chat/completions
+    C->>KV: POST /v1/chat/completions
+    KV->>KV: detecta secrets, guarda en Valkey
+    KV->>KV: reemplaza por placeholders
+    
+    KV->>RL: body sanitizado
     RL->>VK: INCR rate limit key
     VK-->>RL: count
     RL-->>C: 429 if exceeded
@@ -371,8 +370,14 @@ sequenceDiagram
     CS->>CD: detect_turn_capabilities(messages)
     CD-->>CS: turn_caps (images, audio, tools...)
     
-    CS->>CV: validate_incoming_content(turn_caps, pseudo)
-    CV-->>CS: 400 if unsupported content
+    CS->>CV: validate_incoming_content(turn_caps, pseudo, tools)
+    alt imágenes + sin visión + tools compatibles
+        CV-->>CS: delegation signal
+        CS->>TD: delegate_images_to_tool(messages)
+        TD-->>CS: messages modificados
+    else contenido no soportado
+        CV-->>CS: 400 error explícito
+    end
     
     CS->>DB: get or create conversation
     CS->>VK: get affinity
@@ -383,33 +388,6 @@ sequenceDiagram
     
     CS->>TF: get_eligible_models(physical_models, caps)
     TF-->>CS: filtered models
-    
-    alt is switch and auto_describe
-        CS->>ID: auto_describe_images(history, vision_model)
-        ID->>LC: describe_image(url, vision_model)
-        LC-->>ID: text description
-        ID-->>CS: described messages + metadata
-        CS->>DB: save degradation_event turn
-    end
-    
-    CS->>COMP: _apply_compaction(messages, pseudo, config)
-    
-    alt pre_compaction enabled
-        COMP->>LC: pre_compact_input(user_message)
-        LC-->>COMP: summary
-    end
-    
-    alt external compaction detected
-        COMP->>DB: create external snapshot
-    end
-    
-    alt continuous compaction triggered
-        COMP->>LC: compact old turns
-        LC-->>COMP: snapshot
-        COMP->>DB: save snapshot
-    end
-    
-    COMP-->>CS: processed messages
     
     CS->>CS: check context alert level
     alt context ≥ 100%
@@ -428,10 +406,8 @@ sequenceDiagram
             LC-->>CS: skip
         else success
             LC-->>CS: response
-            Note over CS,LC: Break loop on success
         else retryable error
             LC-->>CS: ServiceUnavailable/RateLimit
-            Note over CS,LC: Continue to next model
         end
     end
     
@@ -446,9 +422,11 @@ sequenceDiagram
     
     alt streaming
         CS-->>API: StreamingResponse
+        KV->>KV: reinyectar secrets en chunks SSE
         API-->>C: SSE chunks + metadata
     else non-streaming
         CS-->>API: ChatResult + proxy_metadata
+        KV->>KV: reinyectar secrets en JSON
         API-->>C: JSON response
     end
 ```
@@ -460,9 +438,9 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     subgraph Usuarios["Actores"]
-        U1["👤 Usuario<br/>(Dev con LLM)"]
-        U2["🤖 Cliente LLM<br/>(OpenCode/Continue)"]
-        U3["🔧 Administrador"]
+        U1["Usuario<br/>(Dev con LLM)"]
+        U2["Cliente LLM<br/>(OpenCode/Continue)"]
+        U3["Administrador"]
     end
     
     subgraph CasosDeUso["Casos de Uso"]
@@ -471,52 +449,47 @@ flowchart LR
         UC3["Cambiar de<br/>pseudo-modelo"]
         UC4["Enviar imágenes<br/>con texto"]
         UC5["Enviar herramientas<br/>(function calling)"]
-        UC6["Enviar herramientas<br/>paralelas"]
-        UC7["Streaming de<br/>respuesta"]
+        UC6["Usar comando inline<br/>status / help"]
+        UC7["Compactar historial<br/>POST /compact"]
         UC8["Ver modelos<br/>disponibles"]
-        UC9["Usar comando inline<br/>degrade / status / help"]
-        UC10["Compactar historial<br/>explícitamente"]
-        UC11["Degradar imágenes<br/>manualmente"]
-        UC12["Ver estado<br/>de salud"]
-        UC13["Ver log de<br/>eventos"]
-        UC14["Normalizar<br/>tool calls"]
+        UC9["Ver estado<br/>de salud"]
+        UC10["Ver log de<br/>eventos"]
     end
 
     subgraph Sistema["Sistema Proxy"]
         P1["Resolver modelo<br/>+ alias"]
         P2["Validar contenido<br/>+ capacidades"]
-        P3["Auto-describir<br/>imágenes"]
-        P4["Compactación<br/>pre/continua/explicita"]
-        P5["Router LLM<br/>sugerir downgrade"]
-        P6["Fallback entre<br/>modelos físicos"]
-        P7["Cache provider<br/>optimización"]
-        P8["Afinnidad de<br/>conversación"]
-        P9["Rate limiting"]
-        P10["Auditoría de<br/>eventos"]
+        P2b["Delegar imagen<br/>a tool"]
+        P3["Router LLM<br/>sugerir downgrade"]
+        P4["Fallback entre<br/>modelos físicos"]
+        P5["Cache provider<br/>optimización"]
+        P6["Afinnidad de<br/>conversación"]
+        P7["Rate limiting"]
+        P8["Auditoría de<br/>eventos"]
     end
 
     U1 -.->|usa| U2
-    U2 --> UC1 & UC2 & UC3 & UC4 & UC5 & UC6 & UC7 & UC8
-    U1 --> UC9 & UC10 & UC11 & UC12 & UC13 & UC14
-    U3 --> UC12
+    U2 --> UC1 & UC2 & UC3 & UC4 & UC5 & UC8
+    U1 --> UC6 & UC7 & UC9 & UC10
+    U3 --> UC9
     
     UC1 --> P1
     UC2 --> P1
-    UC3 --> P2 & P3
-    UC4 --> P2 & P3
+    UC3 --> P2
+    UC4 --> P2
+    UC4 --> P2b
     UC5 --> P2
-    UC6 --> P2
-    UC9 --> P3
-    UC10 --> P4
-    UC11 --> P3
-    UC13 --> P10
+    UC6 --> P1
+    UC7 --> P1
+    UC10 --> P8
     
-    P1 --> P8
-    P2 --> P7
-    P2 --> P8
-    P5 --> P2
-    P6 --> P8
-    P9 -.->|aplica a| UC1
+    P1 --> P6
+    P2 --> P2b
+    P2 --> P5
+    P2 --> P6
+    P3 --> P2
+    P4 --> P6
+    P7 -.->|aplica a| UC1
 ```
 
 ---
@@ -527,32 +500,28 @@ flowchart LR
 timeline
     title Ciclo de Vida de una Solicitud al Proxy
     section 1. Recepción
-        HTTP Request : CORS + Auth + Rate Limit
+        HTTP Request : CORS + Auth + Rate Limit + KeyVault
         Chat API     : POST /v1/chat/completions
     section 2. Resolución
         Model Resolver  : normalize_model_name → pseudo-modelo
         Capability Detector  : detect_turn_capabilities
         Content Validator  : validate_incoming_content
+        Tool Detector  : delegate_images_to_tool (si aplica)
     section 3. Sesión
         Conversation Loader  : get_or_create + affinity
         Switch Validator  : validate_switch
         Tool Filter  : get_eligible_models
-    section 4. Pre-procesamiento
-        Image Describer  : auto_describe_images (si switch)
-        Pre-Compactor  : pre_compact_input (si umbral)
-        External Detector  : detect_external_compaction
-        Continuous Compactor  : continuous_compact (si trigger)
-        Context Assembler  : assemble_context (desde snapshot)
-    section 5. Router
+    section 4. Router
         Router LLM  : evaluate_complexity
-         LLM evaluador  : sugerir downgrade
-    section 6. Ejecución
+        LLM evaluador  : sugerir downgrade
+    section 5. Ejecución
         LiteLLM Call  : attempt modelo 1
         Fallback Loop  : attempt modelo 2, 3...
         Success  : response obtenida
-    section 7. Persistencia
+    section 6. Persistencia
         DB Commit  : turno + métricas
         Valkey  : actualizar afinidad
+        KeyVault  : reinyectar secrets
         Stream  : SSE chunks + metadata final
 ```
 
@@ -564,9 +533,9 @@ timeline
 flowchart LR
     Provider{¿Qué proveedor?} -->|DeepSeek| AutoDC[Automatic prefix caching<br/>Cache hit: $0.0028/M]
     Provider -->|Groq| AutoG[Automatic prefix caching<br/>Cache hit: 50% descuento]
+    Provider -->|Anthropic| ANC[cache_control breakpoints<br/>system + history prefix]
     Provider -->|OpenRouter| AutoOR[Delega al upstream<br/>depende del modelo final]
     Provider -->|Ollama| NoCache[Sin caché de proveedor]
-    Provider -->|Pruna| NoCache2[Sin caché - generación<br/>de imágenes]
 ```
 
 ---
@@ -576,13 +545,13 @@ flowchart LR
 ```mermaid
 graph LR
     subgraph Pseudo_Models["Pseudo-Modelos"]
-        PP["pensamiento-profundo-caro<br/>120K ctx · auto_describe"]
-        TA["tareas-avanzadas<br/>200K ctx · block"]
+        PP["pensamiento-profundo-caro<br/>120K ctx"]
+        TA["tareas-avanzadas<br/>200K ctx"]
         V["vision<br/>120K ctx · visión"]
-        N["normal<br/>500K ctx · block"]
-        NG["normal-gratis<br/>200K ctx · auto_describe"]
-        MF["massive-fast<br/>131K ctx · block"]
-        FL["flash-lowcost<br/>128K ctx · block"]
+        N["normal<br/>500K ctx"]
+        NG["normal-gratis<br/>200K ctx"]
+        MF["massive-fast<br/>131K ctx"]
+        FL["flash-lowcost<br/>128K ctx"]
         AU["audio<br/>131K ctx · whisper"]
         IM["imagen<br/>text-to-image"]
         CM["compactador<br/>20M ctx · operación"]
@@ -622,88 +591,24 @@ graph LR
 
 ---
 
-## 9. Diagrama de Secuencia de Compactación
-
-```mermaid
-sequenceDiagram
-    participant U as Usuario/Cliente
-    participant Proxy as Proxy
-    participant COMP as Compactor
-    participant LC as LiteLLM
-    participant DB as Database
-    
-    rect rgb(200, 220, 240)
-        Note over U,DB: Compactación Previa (automática)
-        U->>Proxy: Mensaje muy largo
-        Proxy->>COMP: pre_compact_input()
-        COMP->>LC: Resumir último mensaje
-        LC-->>COMP: Texto resumido
-        COMP-->>Proxy: Mensaje reemplazado
-    end
-    
-    rect rgb(220, 240, 200)
-        Note over U,DB: Compactación Continua (automática en umbral)
-        U->>Proxy: Múltiples mensajes
-        Proxy->>COMP: continuous_compact()
-        COMP->>DB: Cargar todos los turns
-        COMP->>COMP: turns_to_compact + preserve_recent
-        
-        alt Historial > contexto
-            COMP->>COMP: _chunk_history() → overlap chunks
-            loop por cada chunk
-                COMP->>LC: Compactar chunk
-                LC-->>COMP: Summary parcial
-            end
-        else
-            COMP->>LC: Compactar historial completo
-            LC-->>COMP: Snapshot estructurado
-        end
-        
-        COMP->>DB: Crear ConversationSnapshot
-        COMP-->>Proxy: tokens_after + metadata
-        Proxy-->>U: Respuesta con snapshot metadata
-    end
-    
-    rect rgb(240, 220, 200)
-        Note over U,DB: Compactación Explícita (POST /compact)
-        U->>Proxy: POST /conversations/{id}/compact
-        
-        alt total_tokens > 500K + arq disponible
-            Proxy-->>U: 202 Processing (async)
-            Proxy->>DB: Disparar arq worker
-            DB-->>Proxy: Compactación en background
-        else
-            Proxy->>COMP: compact_conversation()
-            COMP->>DB: Crear snapshot placeholder
-            COMP->>LC: Compactar historial
-            LC-->>COMP: Snapshot
-            COMP->>DB: Actualizar snapshot
-            COMP-->>Proxy: tokens_reduced_pct + metadata
-            Proxy-->>U: 200 OK
-        end
-    end
-```
-
----
-
-## 10. Diagrama de Flujo del Router LLM
+## 9. Diagrama de Flujo del Router LLM
 
 ```mermaid
 flowchart TD
-    Start["evaluate_complexity(messages, suggester_model)"] --> Safety{¿Último mensaje<br/>tiene texto?}
+    Start["evaluate_complexity(messages, suggester_model)"] --> Safety{Último mensaje<br/>tiene texto?}
     Safety -->|No, solo imágenes| ReturnNone[return None]
     Safety -->|Sí| LLMEval[Evaluación LLM<br/>call_litellm con prompt<br/>temperature=0.0]
     
-    LLMEval --> LLMResult{¿Respuesta JSON<br/>parseable?}
+    LLMEval --> LLMResult{Respuesta JSON<br/>parseable?}
     LLMResult -->|Sí| ParseSug[Extraer suggested_model]
     LLMResult -->|No| ReturnNone
     
-    ParseSug --> IsAllowed{¿Está en<br/>ALLOWED_SUGGESTIONS?}
+    ParseSug --> IsAllowed{Está en<br/>ALLOWED_SUGGESTIONS?}
     IsAllowed -->|Sí| CheckDowngrade
     IsAllowed -->|No| ReturnNone
     
-    CheckDowngrade --> SuggestOnly{¿suggest_on_downgrade_only?}
-    SuggestOnly -->|Sí| IsDowngrade{¿Es downgrade?<br/>is_downgrade(suggested, current)}
+    CheckDowngrade --> SuggestOnly{suggest_on_downgrade_only?}
+    SuggestOnly -->|Sí| IsDowngrade["Es downgrade?<br/>is_downgrade(suggested, current)"]
     SuggestOnly -->|No| ReturnSuggestion[return suggested_model]
     
     IsDowngrade -->|Sí| ReturnSuggestion
@@ -715,26 +620,25 @@ flowchart TD
 
 ---
 
-## 11. Mapa de Errores del Sistema
+## 10. Mapa de Errores del Sistema
 
 ```mermaid
 graph TD
     subgraph Errores["Errores del Sistema"]
-        E1["400 IMAGES_NOT_SUPPORTED<br/>Imágenes sin modelo visión"]
+        E1["400 IMAGES_NOT_SUPPORTED<br/>Imágenes sin modelo visión ni tools"]
         E2["400 AUDIO_NOT_SUPPORTED<br/>Audio no soportado en v1"]
         E3["400 PDF_NOT_SUPPORTED<br/>PDF sin modelo visión"]
         E4["400 VIDEO_NOT_SUPPORTED<br/>Video no soportado en v1"]
         E5["400 PARALLEL_TOOLS_NOT_SUPPORTED<br/>Tools paralelas sin soporte"]
-        E6["400 INPUT_EXCEEDS_THRESHOLD<br/>Input supera límite del pseudo-modelo"]
+        E6["400 INPUT_EXCEEDS_THRESHOLD<br/>Input supera límite del pseudo-modelo<br/>Usa POST /compact"]
         E7["400 CONTEXT_UNUSABLE<br/>Contexto al 100%"]
         E8["401 UNAUTHORIZED<br/>Token inválido o faltante"]
         E9["409 PSEUDO_MODEL_INCOMPATIBLE<br/>Switch bloqueado por capacidades"]
         E10["413 CONTEXT_TOO_LARGE_FOR_ALL_MODELS<br/>Todos los modelos físicos excedidos"]
         E11["429 RATE_LIMIT_EXCEEDED<br/>Límite de tasa excedido"]
-        E12["502 COMPACTION_FAILED<br/>Compactación falló"]
-        E13["502 DEGRADE_IMAGES_FAILED<br/>Degradación de imágenes falló"]
-        E14["503 ALL_MODELS_FAILED<br/>Todos los modelos físicos fallaron"]
-        E15["500 INTERNAL_ERROR<br/>Error interno del proxy"]
+        E12["502 PROXY_ERROR<br/>Error interno del proxy"]
+        E13["503 ALL_MODELS_FAILED<br/>Todos los modelos físicos fallaron"]
+        E14["500 INTERNAL_ERROR<br/>Error interno del proxy"]
     end
     
     style E1 fill:#ffcccc
@@ -751,7 +655,6 @@ graph TD
     style E12 fill:#ffcccc
     style E13 fill:#ffcccc
     style E14 fill:#ffcccc
-    style E15 fill:#ffcccc
 ```
 
 ---
@@ -760,8 +663,7 @@ graph TD
 
 | Color | Significado |
 |-------|------------|
-| 🔵 Azul | Componente del sistema |
-| 🟢 Verde | Flujo exitoso |
-| 🔴 Rojo | Error / Bloqueo |
-| 🟡 Amarillo | Advertencia / Decisión |
-| ⚪ Blanco | Actor externo |
+| Azul | Componente del sistema |
+| Verde | Flujo exitoso |
+| Rojo | Error / Bloqueo |
+| Amarillo | Advertencia / Decisión |

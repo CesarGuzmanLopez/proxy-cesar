@@ -44,11 +44,12 @@ def _check_images(
             status=CompatibilityStatus.BLOCKED,
             reason=(
                 "Conversation contains images but destination pseudo-model "
-                "lacks vision support."
+                "lacks vision support. Use a vision-capable model to describe "
+                "images via tools, then switch."
             ),
             remediation=[
-                "Enable 'auto_describe' on destination pseudo-model in pseudo_models.yaml",
-                "POST /conversations/{id}/degrade-images (available in Sprint 5)",
+                "Switch to a vision-capable pseudo-model first",
+                "Use a vision model as a tool to describe images as text",
             ],
         )
 
@@ -306,13 +307,18 @@ def validate_incoming_content(
     pseudo_model: PseudoModelSchema,
     pseudo_model_name: str,
     config: ProxyConfigSchema,
-) -> None:
+    tools: list[dict] | None = None,
+) -> dict | None:
     """Validate that the current pseudo-model can handle the incoming content.
 
     This check runs on EVERY turn, not just on pseudo-model switches.
     It prevents silent data loss when the client sends content the model
     can't process.
 
+    Returns:
+      - None if everything is OK
+      - {"action": "delegate_images", "tool_name": "...", "param_name": "..."}
+        if images can be delegated to a compatible tool
     Raises HTTPException with descriptive error and remediation on failure.
     """
     physical_models = pseudo_model.physical_models
@@ -321,6 +327,18 @@ def validate_incoming_content(
     if turn_caps.has_images:
         has_vision_model = any(m.vision for m in physical_models)
         if not has_vision_model:
+            # Try tool delegation before error
+            from src.service.tool_detector import find_image_compatible_tool
+
+            match = find_image_compatible_tool(tools)
+            if match:
+                tool_name, param_name = match
+                return {
+                    "action": "delegate_images",
+                    "tool_name": tool_name,
+                    "param_name": param_name,
+                }
+
             vision_pseudos = [
                 name
                 for name, pm in config.pseudo_models.items()

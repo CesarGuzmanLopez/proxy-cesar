@@ -211,26 +211,3 @@ def test_assemble_canonical_messages():
     assert result[2]["content"] == "new msg"
     assert tools[0]["function"]["name"] == "a_tool"  # sorted
     assert tools[1]["function"]["name"] == "b_tool"
-
-
-# ── Compaction chunk prefix sharing ────────────────────────────────────────
-
-
-def test_chunk_history_shared_prefix():
-    """Each chunk starts with the same head messages."""
-    from service.compactor.continuous import _chunk_history
-
-    # Build large history to force multi-chunk behavior
-    long_line = " ".join(["token"] * 30)
-    msgs = [{"role": "system", "content": f"You are a bot. {long_line}"}]
-    for i in range(200):
-        msgs.append({"role": "user", "content": f"Message {i}: {long_line}"})
-
-    # Very small context window + no output buffer = aggressive chunking
-    chunks = _chunk_history(msgs, "Compact.", 4000, 0)
-    assert len(chunks) >= 2, f"expected chunks >= 2, got {len(chunks)}"
-
-    first_head = chunks[0][:3]
-    for i, chunk in enumerate(chunks[1:], 1):
-        assert chunk[:len(first_head)] == first_head, \
-            f"Chunk {i} does not share prefix"

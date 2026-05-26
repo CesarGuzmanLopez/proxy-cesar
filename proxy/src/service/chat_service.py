@@ -32,9 +32,6 @@ from src.adapters.cache.message_ordering import (
 )
 from src.adapters.cache.provider_cache import (
     apply_anthropic_cache_control,
-    build_cache_destruction_metadata,
-    build_cache_metadata,
-    should_apply_cache_control,
 )
 from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
 from src.adapters.db.models import Conversation, ConversationTurn
@@ -48,19 +45,17 @@ from src.service.capability_detector import (
     estimate_tokens,
     load_session_capabilities,
 )
-from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
-from src.service.compactor.continuous import (
-    assemble_context,
-    continuous_compact,
-    detect_external_compaction,
-    handle_external_compaction,
+from src.adapters.cache.provider_cache import (
+    build_cache_destruction_metadata,
+    build_cache_metadata,
+    should_apply_cache_control,
 )
-from src.service.compactor.pre_compactor import pre_compact_input
+from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
 from src.service.compatibility import (
     validate_incoming_content,
     validate_switch,
+    _any_vision as _any_vision_comp,
 )
-from src.service.compatibility import _any_vision as _any_vision_comp
 from src.service.context_alert import ContextAlert, get_context_alert
 from src.service.inline_commands import handle_inline_command
 from src.service.model_resolver import (
@@ -118,12 +113,21 @@ async def process_chat_request(
     )
 
     # Step 1-3: Resolve model + detect capabilities + validate content
-    pseudo_model_name, pm_schema, turn_caps = _resolve_and_validate(
+    pseudo_model_name, pm_schema, turn_caps, delegation = _resolve_and_validate(
         model,
         messages,
         tools,
         config,
     )
+    # Apply image→tool delegation if needed
+    if delegation and delegation.get("action") == "delegate_images":
+        from src.service.tool_detector import delegate_images_to_tool
+
+        messages = delegate_images_to_tool(
+            messages,
+            delegation["tool_name"],
+            delegation["param_name"],
+        )
     # Sprint 8: track request metrics
     metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())
@@ -170,7 +174,9 @@ async def process_chat_request(
             is_new_conversation=False,
             affinity_maintained=False,
             total_tokens=0,
-            context_window=pm_schema.context_window if hasattr(pm_schema, 'context_window') else None,
+            context_window=pm_schema.context_window
+            if hasattr(pm_schema, "context_window")
+            else None,
             session_caps=SessionCapabilities(conversation_id=conv_id),
             compatibility_warning=None,
             compatibility_details=None,
@@ -234,23 +240,8 @@ async def process_chat_request(
     est_input = estimate_tokens(messages_for_llm)
     _raise_if_exceeds_threshold(est_input, pm_schema, pseudo_model_name, config)
 
-    # Sprint 4: Pre-compaction, external detection, continuous compaction
-    prep = await _apply_compaction(
-        conv,
-        is_new,
-        messages_for_llm,
-        pm_schema,
-        config,
-        db,
-        est_input,
-    )
-    active_messages = prep["active_messages"]
-
-    # Recalculate after compaction — pre-compaction may have reduced the
-    # input or skipped (images, compactor unavailable).  The stale pre-
-    # compaction estimate would cause call_with_fallback to incorrectly
-    # skip models with adequate context windows.
-    est_input = estimate_tokens(active_messages)
+    # No automatic compaction — if threshold is exceeded, error is returned above.
+    active_messages = messages_for_llm
 
     # Sprint 6: Context alerts — warn before context becomes unusable
     context_alert = get_context_alert(
@@ -339,7 +330,6 @@ async def process_chat_request(
             session_caps=session_caps,
             tools=tools,
             tool_choice=tool_choice,
-            prep=prep,
             compatibility=compatibility,
             tools_filter=tools_filter,
             images_described=images_described,
@@ -358,10 +348,12 @@ def _resolve_and_validate(
     messages: list[dict],
     tools: list[dict] | None,
     config: ProxyConfigSchema,
-) -> tuple[str, object, SessionCapabilities]:
+) -> tuple[str, object, SessionCapabilities, dict | None]:
     """Steps 1-3: Normalize model, detect capabilities, validate content.
 
     If the model name is not a known pseudo-model, creates a direct passthrough.
+    Returns (resolved_model, pseudo_model, capabilities, delegation_signal).
+    delegation_signal is None if OK, or dict with "action": "delegate_images" etc.
     """
     resolved = normalize_model_name(model, config)
     if resolved not in config.pseudo_models:
@@ -369,8 +361,8 @@ def _resolve_and_validate(
     else:
         pm = config.pseudo_models[resolved]
     caps = detect_turn_capabilities(messages, tools)
-    validate_incoming_content(caps, pm, resolved, config)
-    return resolved, pm, caps
+    delegation = validate_incoming_content(caps, pm, resolved, config, tools)
+    return resolved, pm, caps, delegation
 
 
 def _parse_uuid(conv_id: str) -> uuid.UUID:
@@ -490,12 +482,12 @@ def _raise_if_exceeds_threshold(
     pseudo_model_name: str,
     config: ProxyConfigSchema,
 ) -> None:
-    """Step 12: Raise 400 if input exceeds threshold (no pre-compaction)."""
+    """Step 12: Raise 400 if input exceeds threshold (auto-compaction removed)."""
     check = check_input_threshold(
         pseudo_model_name=pseudo_model_name,
         input_token_threshold=pm_schema.input_token_threshold,
         estimated_tokens=estimated_input,
-        pre_compaction_enabled=pm_schema.pre_compaction.enabled,
+        pre_compaction_enabled=False,
     )
     if not check.success:
         error = check.error
@@ -580,7 +572,12 @@ async def handle_auto_describe(
     if vision_model is None:
         if skip_reason:
             logger.debug("auto_describe_skipped reason=%s", skip_reason)
-        return (None, None if not skip_reason else {"auto_describe_skipped": True, "skip_reason": skip_reason})
+        return (
+            None,
+            None
+            if not skip_reason
+            else {"auto_describe_skipped": True, "skip_reason": skip_reason},
+        )
 
     # Load and describe messages from DB history
     all_messages = _load_messages_from_turns(conv)
@@ -621,102 +618,6 @@ async def handle_auto_describe(
         described_in_flight = desc_in_flight
 
     return (described_in_flight, desc_meta)
-
-
-async def _assemble_snapshot_context(
-    conv: Conversation,
-    db: AsyncSession,
-    active_messages: list[dict],
-) -> list[dict] | None:
-    """If conversation has an active snapshot, assemble context with snapshot + last user message.
-
-    Returns the assembled context, or None if no snapshot exists.
-    """
-    if not conv.active_snapshot_id:
-        return None
-
-    context = await assemble_context(conv, db)
-
-    # Find and append the last user message
-    for m in reversed(active_messages):
-        if m.get("role") == "user":
-            context.append(m)
-            break
-
-    return context
-
-
-async def _apply_compaction(
-    conv: Conversation,
-    is_new_conversation: bool,
-    messages: list[dict],
-    pm_schema: object,
-    config: ProxyConfigSchema,
-    db: AsyncSession,
-    estimated_input: int,
-) -> dict:
-    """Sprint 4: Run pre-compaction, external detection, continuous compaction.
-
-    Returns a dict with all compaction state to pass forward.
-    """
-    state: dict = {
-        "pre_compaction_applied": False,
-        "pre_compaction_metadata": None,
-        "active_messages": messages,
-        "external_compaction_detected": False,
-        "external_compaction_metadata": None,
-        "continuous_compaction_applied": False,
-        "continuous_compaction_metadata": None,
-    }
-
-    # Pre-compaction (caller must provide estimated_input — no recalculation)
-    if pm_schema.pre_compaction.enabled and estimated_input > (
-        pm_schema.pre_compaction.threshold or 0
-    ):
-        compacted, meta = await pre_compact_input(
-            messages=messages,
-            pseudo_model=pm_schema,
-            config=config,
-            input_tokens=estimated_input,
-        )
-        state["pre_compaction_applied"] = meta.get("applied", False)
-        state["pre_compaction_metadata"] = meta
-        if meta.get("applied", False):
-            state["active_messages"] = compacted
-
-    active = state["active_messages"]
-
-    # External compaction detection
-    skip_continuous = False
-    if conv is not None and not is_new_conversation:
-        ext_info = await detect_external_compaction(active, conv, db)
-        if ext_info is not None:
-            ext_meta = await handle_external_compaction(active, conv, ext_info, db)
-            state["external_compaction_detected"] = True
-            state["external_compaction_metadata"] = ext_meta
-            skip_continuous = True
-
-    # Continuous compaction
-    if (
-        not skip_continuous
-        and conv is not None
-        and pm_schema.continuous_compaction.enabled
-    ):
-        cc_meta = await continuous_compact(
-            conversation=conv,
-            pseudo_model=pm_schema,
-            config=config,
-            db=db,
-        )
-        state["continuous_compaction_applied"] = cc_meta.get("applied", False)
-        state["continuous_compaction_metadata"] = cc_meta
-
-    # Assemble context if snapshot exists
-    snapshot_context = await _assemble_snapshot_context(conv, db, active)
-    if snapshot_context is not None:
-        state["active_messages"] = snapshot_context
-
-    return state
 
 
 async def _save_and_return(ctx: SaveContext) -> ChatResult:
@@ -786,22 +687,9 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
     await ctx.db.commit()
 
     # Sprint 8: record metrics
-    metrics.record_tokens(
-        input_tokens, output_tokens, input_tokens
-    )  # cached_tokens estimated
+    metrics.record_tokens(input_tokens, output_tokens, input_tokens)
     if ctx.fallback_info.applied:
         metrics.record_fallback(ctx.fallback_info.reason or "unknown")
-    if ctx.prep.get("pre_compaction_applied"):
-        saved = (
-            ctx.prep.get("pre_compaction_metadata", {}).get("savings_tokens", 0) or 0
-        )
-        metrics.record_compaction("pre", saved)
-    if ctx.prep.get("continuous_compaction_applied"):
-        saved = (
-            ctx.prep.get("continuous_compaction_metadata", {}).get("savings_tokens", 0)
-            or 0
-        )
-        metrics.record_compaction("continuous", saved)
 
     affinity_maintained = (
         not ctx.is_new_conversation and ctx.existing_affinity == ctx.physical_model
@@ -826,21 +714,12 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
         tools_incomplete=tools_incomplete,
         thinking_content=thinking_content,
         tool_result_truncated=tool_result_truncated,
-        pre_compaction_applied=ctx.prep["pre_compaction_applied"],
-        pre_compaction_metadata=ctx.prep["pre_compaction_metadata"],
-        continuous_compaction_applied=ctx.prep["continuous_compaction_applied"],
-        continuous_compaction_metadata=ctx.prep["continuous_compaction_metadata"],
-        external_compaction_detected=ctx.prep["external_compaction_detected"],
-        external_compaction_metadata=ctx.prep["external_compaction_metadata"],
         images_described=ctx.images_described,
         images_described_by=ctx.images_described_by,
         router_suggestion=ctx.router_suggestion,
         context_alert=ctx.context_alert,
         cache_metadata=cache_meta,
     )
-
-
-# ── Fallback logic ─────────────────────────────────────────────────────────────
 
 
 async def call_with_fallback(
@@ -877,7 +756,9 @@ async def call_with_fallback(
     cache_optimization_applied = False
 
     # Estimate input tokens once (caller may have pre-computed)
-    _est_input = estimated_input if estimated_input is not None else estimate_tokens(messages)
+    _est_input = (
+        estimated_input if estimated_input is not None else estimate_tokens(messages)
+    )
     _context_skipped: list[str] = []  # Models skipped due to context too large
 
     # Sprint 7: canonical ordering + tool sorting — compute ONCE before the loop
@@ -1032,9 +913,7 @@ async def call_with_fallback(
     # Some models were skipped due to context, some failed — report partial
     context_skipped_note = ""
     if _context_skipped:
-        context_skipped_note = (
-            f" ({len(_context_skipped)} skipped: context too large)"
-        )
+        context_skipped_note = f" ({len(_context_skipped)} skipped: context too large)"
 
     logger.error(
         "llm_fail   | trace=%s elapsed=%.1fs models=%s last_error=%s",

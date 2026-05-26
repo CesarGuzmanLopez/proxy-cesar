@@ -2,7 +2,6 @@
 
 Sprint 2 §6: GET /conversations/{id}, GET /compatible-models, GET /tools-compatibility.
 Sprint 3 §4.3: POST /conversations/{id}/normalize-tools.
-Sprint 5 §6: POST /conversations/{id}/degrade-images.
 Sprint 6 §3: POST /conversations/{id}/compact, GET /conversations/{id}/audit-log.
 """
 
@@ -10,16 +9,13 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
-from src.config.pseudo_models import ProxyConfigSchema
 from src.schemas.tools import NormalizeToolsRequest, NormalizeToolsResponse
 from src.service.capability_detector import load_session_capabilities
 from src.service.compatibility import validate_switch
 from src.service.compactor.explicit import compact_conversation
-from src.service.multimedia.image_describer import auto_describe_images
 from src.service.tools_normalizer import generate_preview, normalize_history
 
 router = APIRouter()
@@ -434,9 +430,9 @@ async def compact_conversation_endpoint(
         raise
     except Exception as e:
         raise HTTPException(
-        status_code=502,
-        detail={"error": "COMPACTION_FAILED", "message": str(e)},
-    ) from e
+            status_code=502,
+            detail={"error": "COMPACTION_FAILED", "message": str(e)},
+        ) from e
     finally:
         await db.close()
 
@@ -567,169 +563,6 @@ async def audit_log(
         raise HTTPException(
             status_code=500,
             detail={"error": "AUDIT_LOG_FAILED", "message": str(e)},
-        ) from e
-    finally:
-        await db.close()
-
-
-# ── Sprint 5: POST /conversations/{id}/degrade-images ─────────────────────────
-
-
-@router.post(
-    "/conversations/{conversation_id}/degrade-images",
-    responses={
-        404: {"description": "Conversation not found"},
-        400: {"description": "No images to degrade or no vision model available"},
-        502: {"description": "Image degradation failed"},
-    },
-)
-async def degrade_images(
-    conversation_id: str,
-    fastapi_request: Request,
-) -> dict:
-    """Manually degrade images in a conversation to text descriptions.
-
-    After this endpoint completes, the conversation's images are described
-    textually. A subsequent switch to a non-vision pseudo-model will be SAFE
-    (images already described).
-
-    python.md §6: FastAPI router — HTTP boundary only.
-    python.md §3: HTTPException for errors at boundary.
-    """
-    db: AsyncSession = fastapi_request.app.state.db_session_factory()
-    config: ProxyConfigSchema = fastapi_request.app.state.config
-
-    try:
-        conv_uuid = _parse_uuid(conversation_id)
-        conv = await db.get(
-            Conversation,
-            conv_uuid,
-            options=[selectinload(Conversation.turns)],
-        )
-        if conv is None:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": "CONVERSATION_NOT_FOUND",
-                },
-            )
-
-        # Check if images exist
-        caps = await load_session_capabilities(db, conv_uuid)
-        if not caps.has_images:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "NO_IMAGES",
-                    "message": "This conversation has no images to degrade.",
-                },
-            )
-
-        # Find a vision model in the current pseudo-model
-        current_pm = config.pseudo_models.get(conv.pseudo_model)
-        if current_pm is None:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "UNKNOWN_PSEUDO_MODEL",
-                    "message": f"Current pseudo-model '{conv.pseudo_model}' not found.",
-                },
-            )
-
-        vision_models = [m for m in current_pm.physical_models if m.vision]
-        if not vision_models:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "NO_VISION_MODEL",
-                    "message": (
-                        f"Current pseudo-model '{conv.pseudo_model}' has no "
-                        f"vision-capable physical model to describe images."
-                    ),
-                },
-            )
-
-        # Use pinned model if it has vision, otherwise first vision model
-        vision_model: str = (
-            conv.physical_model
-            if any(
-                m.model == conv.physical_model and m.vision
-                for m in current_pm.physical_models
-            )
-            else vision_models[0].model
-        )
-
-        # Load all conversation messages from turns
-        all_messages: list[dict] = []
-        for turn in sorted(conv.turns, key=lambda t: t.turn_number):
-            turn_msgs = turn.messages
-            if isinstance(turn_msgs, list):
-                all_messages.extend(turn_msgs)
-
-        # Auto-describe
-        described_messages, desc_meta = await auto_describe_images(
-            all_messages,
-            vision_model,
-        )
-
-        described_count = desc_meta.get("images_described", 0)
-        if described_count == 0:
-            return {
-                "conversation_id": conversation_id,
-                "images_described": 0,
-                "described_by": vision_model,
-                "message": "No images found to degrade.",
-            }
-
-        # Store as a degradation_event turn
-        turn_number: int = (
-            (max(t.turn_number for t in conv.turns) + 1) if conv.turns else 1
-        )
-
-        deg_turn = ConversationTurn(
-            conversation_id=conv_uuid,
-            turn_number=turn_number,
-            pseudo_model=conv.pseudo_model,
-            physical_model=vision_model,
-            messages=described_messages,
-            response={"metadata": desc_meta},
-            input_tokens=0,
-            output_tokens=desc_meta.get("total_description_tokens", 0),
-            turn_type="degradation_event",
-            had_images=False,
-            had_tools=False,
-            had_parallel_tools=False,
-        )
-        db.add(deg_turn)
-
-        # Update conversation tracking
-        conv.images_described = (conv.images_described or 0) + described_count
-        conv.images_degraded_manually = True
-        conv.capability_has_images = False  # Reset after successful degradation
-        await db.commit()
-
-        return {
-            "conversation_id": conversation_id,
-            "images_described": described_count,
-            "described_by": vision_model,
-            "can_now_switch_to": [
-                name
-                for name, pm in config.pseudo_models.items()
-                if not any(m.vision for m in pm.physical_models)
-            ],
-        }
-
-    except HTTPException:
-        await db.rollback()
-        raise
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "DEGRADE_IMAGES_FAILED",
-                "message": str(e),
-            },
         ) from e
     finally:
         await db.close()
