@@ -85,7 +85,7 @@ _DESCRIBE_PROMPTS: dict[str, str] = {
 }
 
 
-async def _describe_content(raw_data: str, mime: str, config, ptype: str) -> str:
+async def _describe_content(raw_data: str, mime: str, config) -> str:
     """Generate a brief description of any content using the cheapest capable model.
 
     For images: uses a vision model.
@@ -95,9 +95,12 @@ async def _describe_content(raw_data: str, mime: str, config, ptype: str) -> str
     Provider-agnostic: the model is selected from config based on capability,
     not hardcoded.
     """
-    prompt_key = (
-        "image" if "image" in mime else ("audio" if "audio" in mime else "file")
-    )
+    if "image" in mime:
+        prompt_key = "image"
+    elif "audio" in mime:
+        prompt_key = "audio"
+    else:
+        prompt_key = "file"
     prompt = _DESCRIBE_PROMPTS.get(prompt_key, _DESCRIBE_PROMPTS["file"])
 
     # Image → use any vision model
@@ -233,7 +236,7 @@ async def _store_blob_with_description(
         return ""
 
     # Generate description
-    description = await _describe_content(raw_data, mime, config, ptype)
+    description = await _describe_content(raw_data, mime, config)
     description = description.strip().replace("\n", " ")[:500]
 
     # Use SETNX so only the first writer persists — prevents duplicate LLM calls
