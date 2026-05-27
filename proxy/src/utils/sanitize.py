@@ -5,7 +5,6 @@ redacts them from any string before it reaches the HTTP response or logs.
 """
 
 import re
-from typing import Any
 
 # ── Known API key patterns (extend as needed) ──────────────────────────────
 _KEY_PATTERNS: list[re.Pattern] = [
@@ -35,9 +34,9 @@ def sanitize(value: str) -> str:
     return value
 
 
-def sanitize_dict(d: dict[str, Any]) -> dict[str, Any]:
+def sanitize_dict(d: dict[str, object]) -> dict[str, object]:
     """Recursively sanitize all string values in a dict."""
-    out: dict[str, Any] = {}
+    out: dict[str, object] = {}
     for k, v in d.items():
         if isinstance(v, str):
             out[k] = sanitize(v)

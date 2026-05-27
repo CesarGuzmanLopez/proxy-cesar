@@ -4,25 +4,18 @@ python.md §5.2: Adapter pattern — wraps external library with our own interfa
 analisis.md: LiteLLM handles all provider translation. Proxy never translates.
 """
 
+import logging
 import os
 from pathlib import Path
 
 _SSL_CERT_FILE = "/etc/ssl/cert.pem"
 _CA_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt"
 
-# ── SSL_CERT_FILE must be set *before* httpx/litellm are imported ────────
-# On NixOS, Python reads NIX_SSL_CERT_FILE but httpx reads SSL_CERT_FILE.
-# httpx caches its default SSL context at import time, so the env var must
-# be present before the first `import httpx` / `import litellm`.
-if not os.environ.get("SSL_CERT_FILE"):
-    for candidate in (
-        os.environ.get("NIX_SSL_CERT_FILE", ""),
-        _CA_CERT_FILE,
-        _SSL_CERT_FILE,
-    ):
-        if candidate and Path(candidate).exists():
-            os.environ["SSL_CERT_FILE"] = candidate
-            break
+logger = logging.getLogger(__name__)
+
+# SSL_CERT_FILE is configured at startup in main.py (runs first).
+# The _ensure_ssl_cert_file() function below provides a safety net for
+# standalone imports where main.py's initialization hasn't run.
 
 import litellm  # noqa: E402 — SSL_CERT_FILE must be set before import
 from litellm.exceptions import RateLimitError, ServiceUnavailableError  # noqa: E402
@@ -139,37 +132,20 @@ def _extract_response_headers(response) -> dict:
 
 
 def normalise_stream_chunk(chunk) -> None:
-    """Normalise a streaming chunk in-place so that ``content`` is always populated.
+    """Normalise a streaming chunk in-place so that ``content`` is never polluted by reasoning.
 
     Some providers (GLM via OpenRouter, DeepSeek in chain-of-thought mode)
     emit the assistant response in ``delta.reasoning_content`` instead of
     ``delta.content``, leaving ``delta.content`` as ``None`` for every chunk.
-    This confuses downstream consumers (the chunk's ``content`` appears empty).
 
-    When a chunk has ``reasoning_content`` but no ``content``, this function
-    copies the reasoning text into ``content`` so the caller always receives
-    a usable payload.
+    Previously this function copied ``reasoning_content`` into ``content``
+    which caused reasoning and content to be mixed together in the client
+    output.  Now it only keeps the chunk as-is: ``reasoning_content`` stays
+    in its own field, ``content`` stays clean.
 
-    The function is a no-op for chunks that already have ``content`` or that
-    lack the ``reasoning_content`` attribute entirely.
+    The function is a no-op for chunks that lack ``reasoning_content``.
     """
-    try:
-        for choice in chunk.choices:
-            delta = choice.delta
-            if delta is None:
-                continue
-            # Some providers (GLM via OpenRouter, DeepSeek in CoT, qwen3.7-max
-            # with extended thinking) emit content in ``reasoning_content``
-            # instead of ``content``, leaving content as None or empty string.
-            # Copy it so the client sees progress (thinking) in real-time
-            # rather than waiting for the full response.
-            if (
-                not delta.content
-                and getattr(delta, "reasoning_content", None) is not None
-            ):
-                delta.content = delta.reasoning_content
-    except (AttributeError, TypeError, IndexError):
-        pass  # Non-standard chunk format — leave untouched
+    pass
 
 
 def setup_litellm(settings: Settings) -> None:
@@ -240,6 +216,14 @@ async def call_litellm(
     api_base = kwargs.pop("api_base", None)
     api_key = kwargs.pop("api_key", None)
 
+    logger.info(
+        "litellm_call model=%s stream=%s messages=%d api_base=%s",
+        model,
+        stream,
+        len(messages),
+        bool(api_base),
+    )
+
     response = await litellm.acompletion(
         model=model,
         messages=messages,
@@ -253,32 +237,12 @@ async def call_litellm(
     # Attach to the response object so callers get headers without any API
     # surface change.  This must happen BEFORE wrapping the stream, since
     # headers live on the response object itself, not in the stream chunks.
-    provider_headers = _extract_response_headers(response) if response is not None else {}
+    provider_headers = (
+        _extract_response_headers(response) if response is not None else {}
+    )
     try:
         response._provider_response_headers = provider_headers
     except (AttributeError, TypeError):
         pass
-
-    # ── Normalise empty content (non-streaming) ────────────────────────────
-    if not stream and response is not None:
-        try:
-            for choice in response.choices:
-                msg = choice.message
-                if msg and not msg.content and getattr(msg, "reasoning_content", None):
-                    msg.content = msg.reasoning_content
-        except (AttributeError, TypeError):
-            pass  # Non-standard response format — leave as-is
-
-    # ── Normalise streaming chunks (wrap generator) ───────────────────────
-    if stream:
-        # Returning the original generator wrapped so every chunk is
-        # normalised on the fly.  The caller iterates over the returned
-        # value transparently.
-        async def _normalised_stream():
-            async for chunk in response:
-                normalise_stream_chunk(chunk)
-                yield chunk
-
-        return _normalised_stream()
 
     return response

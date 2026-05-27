@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.api.conversations import audit_log
+from src.api.conversation_operations import audit_log
 
 
 @pytest.fixture

@@ -8,7 +8,6 @@ conversation turns, tool calls, and system prompts.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 import httpx
 
@@ -36,7 +35,7 @@ class LocalModelInfo:
     tools: bool
     parameter_size: str | None = None
     architecture: str | None = None
-    raw_info: dict[str, Any] = field(default_factory=dict)
+    raw_info: dict[str, object] = field(default_factory=dict)
 
 
 async def discover_local_models() -> list[LocalModelInfo]:

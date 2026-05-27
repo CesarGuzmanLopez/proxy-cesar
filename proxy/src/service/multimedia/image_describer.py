@@ -100,6 +100,10 @@ async def describe_image(
 ) -> tuple[str, int]:
     """Describe a single image using a vision model via LiteLLM.
 
+    Automatically degrades images (downscale + JPEG compression) before
+    sending to reduce token consumption. High-resolution images (4K) are
+    resized to a max of 1024px on the longest side.
+
     Args:
         image_url: Data URL or HTTPS URL of the image.
         detail: Detail level (``auto``, ``low``, or ``high``).
@@ -111,6 +115,9 @@ async def describe_image(
         Tuple of ``(description_text, tokens_used)``.
         On failure, returns an error placeholder with 0 tokens.
     """
+    from src.service.multimedia.image_processor import degrade_image
+
+    degraded_url = degrade_image(image_url)
     img_messages: list[dict] = [
         {
             "role": "user",
@@ -118,7 +125,7 @@ async def describe_image(
                 {"type": "text", "text": DESCRIPTION_PROMPT},
                 {
                     "type": "image_url",
-                    "image_url": {"url": image_url, "detail": detail},
+                    "image_url": {"url": degraded_url, "detail": "high"},
                 },
             ],
         }
@@ -146,56 +153,148 @@ async def auto_describe_images(
     vision_model: str,
     api_base: str | None = None,
     api_key: str | None = None,
+    valkey=None,
 ) -> tuple[list[dict], dict]:
-    """Auto-describe all images in a message list.
+    """Auto-describe all images in a message list using BATCH calls + cache.
 
-    Iterates over all messages, finds ``image_url`` content parts,
-    describes each unique image using the given vision model, and
-    replaces the URL parts with ``[IMAGE_DESCRIBED #N]`` text annotations.
+    Instead of describing each image one by one (legacy behavior), groups
+    all uncached images and sends them in a single batch to the vision model.
+    Caches descriptions in Valkey under ``blob:desc:generic:{url_hash}`` so
+    the same image across conversations reuses the description.
 
     Args:
         messages: Original message list (read-only — not modified).
         vision_model: LiteLLM model identifier with vision capability.
         api_base: Custom API base URL (e.g. for OpenCode Go models).
         api_key: Custom API key (resolved from api_key_env).
+        valkey: Optional Valkey client for description cache.
 
     Returns:
         Tuple of ``(modified_messages, metadata_dict)``.
         Original messages are never mutated — a deep copy is returned.
-        Metadata keys:
-        - ``ok``: always ``True`` (errors are per-image, not aborting)
-        - ``images_described``: total images described (including duplicates)
-        - ``unique_images_described``: unique URLs described
-        - ``duplicate_images_skipped``: repeated URLs reused
-        - ``described_by``: the vision model that described them
-        - ``total_description_tokens``: sum of all description tokens
-        - ``status``: ``"completed"`` or ``"no_images_found"``
     """
-    refs = find_image_refs(messages)
+    import hashlib
+    import json as json_mod
 
+    refs = find_image_refs(messages)
     if not refs:
         return messages, {
-            "ok": True,
-            "images_described": 0,
-            "reason": "no_images_found",
-            "status": "no_images_found",
+            "ok": True, "images_described": 0,
+            "reason": "no_images_found", "status": "no_images_found",
         }
 
-    # Separate unique vs duplicate refs
     unique_refs = [r for r in refs if not r["is_duplicate"]]
     duplicate_refs = [r for r in refs if r["is_duplicate"]]
-
-    # Build URL→description cache by describing unique images
-    url_cache: dict[str, str] = {}
     total_tokens: int = 0
+    url_cache: dict[str, str] = {}
 
-    for idx, ref in enumerate(unique_refs):
-        desc, tokens = await describe_image(
-            ref["url"], ref["detail"], vision_model,
-            api_base=api_base, api_key=api_key,
-        )
-        url_cache[ref["url"]] = desc
-        total_tokens += tokens
+    # Separate cached vs uncached images
+    uncached: list[dict] = []
+    for ref in unique_refs:
+        url_hash = hashlib.sha256(ref["url"].encode()).hexdigest()[:16]
+        cached_desc: str | None = None
+        if valkey is not None:
+            try:
+                cached_desc = await valkey.get(f"blob:desc:generic:{url_hash}")
+            except Exception:
+                pass
+        if cached_desc:
+            url_cache[ref["url"]] = cached_desc
+            total_tokens += len(cached_desc) // 4  # rough token estimate
+        else:
+            uncached.append({**ref, "url_hash": url_hash})
+
+    # Describe uncached images in a single BATCH call
+    if uncached:
+        from src.service.multimedia.image_processor import degrade_image
+
+        batch_content: list[dict] = [
+            {
+                "type": "text",
+                "text": (
+                    "Describe each image briefly (1-2 sentences). "
+                    "Return a JSON array of strings in the order the images were sent. "
+                    'Example: ["A login screen", "A bar chart of Q1 sales"]'
+                ),
+            }
+        ]
+        for ref in uncached:
+            degraded = degrade_image(ref["url"])
+            batch_content.append({
+                "type": "image_url",
+                "image_url": {"url": degraded, "detail": "high"},
+            })
+
+        batch_tokens: int = 0
+        try:
+            response = await call_litellm(
+                model=vision_model,
+                messages=[{"role": "user", "content": batch_content}],
+                api_base=api_base,
+                api_key=api_key,
+                max_tokens=512 * len(uncached),
+                temperature=0.1,
+            )
+            # Extract usage tokens from response
+            try:
+                if hasattr(response, "usage") and response.usage:
+                    batch_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+                elif isinstance(response, dict):
+                    batch_tokens = (response.get("usage") or {}).get("completion_tokens", 0) or 0
+            except (AttributeError, TypeError, KeyError):
+                pass
+
+            # Extract text from response (handles ModelResponse, dict, and MagicMock)
+            text = ""
+            try:
+                if hasattr(response, "choices"):
+                    choice = response.choices[0]
+                    if hasattr(choice, "message"):
+                        text = choice.message.content or ""
+                elif isinstance(response, dict):
+                    text = (response.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+            except (AttributeError, IndexError, TypeError, KeyError):
+                pass
+            if text and isinstance(text, str):
+                text = text.strip()
+                if text.startswith("```"):
+                    text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                try:
+                    parsed = json_mod.loads(text)
+                    if isinstance(parsed, list):
+                        tokens_per_image = max(batch_tokens // len(parsed), 1) if batch_tokens else 0
+                        for i, ref in enumerate(uncached):
+                            desc = str(parsed[i])[:500] if i < len(parsed) else ""
+                            url_cache[ref["url"]] = desc
+                            total_tokens += tokens_per_image if tokens_per_image else len(desc) // 4
+                            if valkey is not None and desc:
+                                try:
+                                    await valkey.set(
+                                        f"blob:desc:generic:{ref['url_hash']}",
+                                        desc,
+                                        ex=86400,
+                                    )
+                                except Exception:
+                                    pass
+                except (json_mod.JSONDecodeError, IndexError, TypeError):
+                    pass
+
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "auto_describe_batch_failed model=%s images=%d error=%s",
+                vision_model, len(uncached), str(exc),
+            )
+
+        # Fallback: any image still missing description gets described individually
+        for ref in uncached:
+            if ref["url"] not in url_cache or not url_cache[ref["url"]]:
+                desc, tokens = await describe_image(
+                    ref["url"], ref["detail"], vision_model,
+                    api_base=api_base, api_key=api_key,
+                )
+                url_cache[ref["url"]] = desc
+                total_tokens += tokens
 
     # Build modified message list
     modified: list[dict] = deepcopy(messages)
@@ -203,19 +302,14 @@ async def auto_describe_images(
 
     for ref in refs:
         description = url_cache.get(ref["url"])
-        if description is None:
-            continue  # Safety — should not happen
-
+        if not description:
+            continue
         described_count += 1
         tag: str = f"[{TAG_PREFIX} #{described_count} — described by {vision_model}]"
         full_text: str = f"{tag}\n\n{description}"
-
         msg = modified[ref["msg_idx"]]
         content_list = msg["content"]
-        content_list[ref["part_idx"]] = {
-            "type": "text",
-            "text": full_text,
-        }
+        content_list[ref["part_idx"]] = {"type": "text", "text": full_text}
 
     metadata: dict = {
         "ok": True,

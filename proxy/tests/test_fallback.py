@@ -39,9 +39,11 @@ async def test_2_primary_503_fallback(async_client: AsyncClient, mock_litellm):
     second_response.usage = MagicMock()
     second_response.usage.prompt_tokens = 10
     second_response.usage.completion_tokens = 20
+    second_response.model = "deepseek/deepseek-v4-pro"
     second_response.model_dump.return_value = {
         "id": "chatcmpl-fallback",
         "object": "chat.completion",
+        "model": "deepseek/deepseek-v4-pro",
         "choices": [{"message": {"role": "assistant", "content": "Fallback response"}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 20},
     }
@@ -95,10 +97,12 @@ async def test_4_primary_429_fallback(async_client: AsyncClient, mock_litellm):
     second_response.usage = MagicMock()
     second_response.usage.prompt_tokens = 10
     second_response.usage.completion_tokens = 20
+    second_response.model = "deepseek/deepseek-v4-pro"
     second_response.model_dump.return_value = {
-        "id": "chatcmpl-fallback-429",
+        "id": "chatcmpl-fallback",
         "object": "chat.completion",
-        "choices": [{"message": {"role": "assistant", "content": "Fallback"}}],
+        "model": "deepseek/deepseek-v4-pro",
+        "choices": [{"message": {"role": "assistant", "content": "Fallback response"}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 20},
     }
 
@@ -150,9 +154,11 @@ async def test_6_fallback_reason_explains(async_client: AsyncClient, mock_litell
     second_response.usage = MagicMock()
     second_response.usage.prompt_tokens = 10
     second_response.usage.completion_tokens = 20
+    second_response.model = "deepseek/deepseek-v4-pro"
     second_response.model_dump.return_value = {
         "id": "chatcmpl-fallback",
         "object": "chat.completion",
+        "model": "deepseek/deepseek-v4-pro",
         "choices": [{"message": {"role": "assistant", "content": "OK"}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 20},
     }

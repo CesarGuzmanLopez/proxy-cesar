@@ -5,9 +5,14 @@ python.md §4: pure functions, no side effects.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from uuid import UUID
 
-from src.domain.capabilities import SessionCapabilities
+from litellm.types.utils import ModelResponse
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from src.adapters.db.models import Conversation
+from src.config.pseudo_models import PseudoModelSchema
+from src.domain.capabilities import SessionCapabilities, TurnCapabilities
 from src.service.context_alert import ContextAlert
 
 
@@ -22,14 +27,14 @@ class FallbackInfo:
 class StreamContext:
     """Context for streaming response generation — reduces params from 31 to 1."""
 
-    litellm_response: Any
+    litellm_response: ModelResponse
     conversation_id: str
     pseudo_model: str
     physical_model: str
     fallback_info: FallbackInfo | None = None
     affinity_maintained: bool = True
     context_window: int | None = None
-    session_caps: Any = None
+    session_caps: SessionCapabilities | None = None
     compatibility_warning: str | None = None
     compatibility_details: dict | None = None
     tools_filter_applied: bool = False
@@ -40,10 +45,10 @@ class StreamContext:
     context_alert: ContextAlert | None = None
     cache_metadata: dict | None = None
     images_degraded_manually: bool = False
-    db: Any = None
-    conv: Any = None
-    conv_uuid: Any = None
-    turn_caps: Any = None
+    db: AsyncSession | None = None
+    conv: Conversation | None = None
+    conv_uuid: UUID | None = None
+    turn_caps: TurnCapabilities | None = None
     provider: str | None = None
     messages: list | None = None
     tools: list | None = None
@@ -51,30 +56,32 @@ class StreamContext:
     resolved_model: str | None = None
     is_new: bool | None = None
     # Sprint 11: fields for token-limit fallback continuation
-    pm_schema: Any = None
+    pm_schema: PseudoModelSchema | None = None
     """Pseudo-model schema with physical_models list — needed for continuing."""
     call_kwargs: dict | None = None
     """Kwargs to pass when calling the next model for continuation."""
+    active_messages: list | None = None
+    """Full assembled message list (history + current) for continuation context."""
 
 
 @dataclass
 class SaveContext:
     """Context for saving a turn and returning ChatResult — reduces params from 23 to 1."""
 
-    db: Any
-    conv: Any
-    conv_uuid: Any
+    db: AsyncSession
+    conv: Conversation
+    conv_uuid: UUID
     conv_id: str
     pseudo_model_name: str
     physical_model: str
     provider: str | None
     turn_caps: SessionCapabilities
     messages: list[dict]
-    response: Any
+    response: ModelResponse | dict
     fallback_info: FallbackInfo
     is_new_conversation: bool
     existing_affinity: str | None
-    pm_schema: Any
+    pm_schema: PseudoModelSchema
     session_caps: SessionCapabilities
     tools: list[dict] | None
     tool_choice: str | dict | None
@@ -98,7 +105,7 @@ class MetadataContext:
     context_window: int | None = None
     fallback_info: FallbackInfo | None = None
     affinity_maintained: bool = True
-    session_caps: Any = None
+    session_caps: SessionCapabilities | None = None
     compatibility_warning: str | None = None
     compatibility_details: dict | None = None
     tools_filter_applied: bool = False

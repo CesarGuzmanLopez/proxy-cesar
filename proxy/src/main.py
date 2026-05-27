@@ -39,9 +39,10 @@ from sqlalchemy import inspect as sa_inspect  # noqa: E402
 from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter, setup_valkey  # noqa: E402
 from src.adapters.litellm.client import setup_litellm  # noqa: E402
 from src.api.chat import router as chat_router  # noqa: E402
+from src.api.conversation_operations import router as conversation_operations_router  # noqa: E402
 from src.api.conversations import router as conversations_router  # noqa: E402
 from src.api.health import router as health_router  # noqa: E402
-from src.api.metrics import router as metrics_router  # noqa: E402
+from src.api.metrics import metrics, router as metrics_router  # noqa: E402
 from src.api.models import router as models_router  # noqa: E402
 
 from src.auth import AuthMiddleware  # noqa: E402
@@ -94,7 +95,14 @@ async def lifespan(app: FastAPI):
 
         def _migrate_columns(sync_conn):
             """Add columns that may be missing on existing SQLite databases.
-            Uses inspector to check column existence first (safe pattern)."""
+            Uses inspector to check column existence first (safe pattern).
+
+            This function is the single source of truth for schema migrations.
+            SQLite does not support transactional DDL like PostgreSQL, and for
+            this project's scale inline ALTER TABLE is simpler than maintaining
+            a separate Alembic migration chain. All schema changes (new columns,
+            new tables managed by SQLModel.metadata.create_all) live here.
+            """
             inspector = sa_inspect(sync_conn)
             if "conversations" not in inspector.get_table_names():
                 return
@@ -116,6 +124,11 @@ async def lifespan(app: FastAPI):
     valkey_client = await setup_valkey(settings)
     app.state.valkey = valkey_client
     app.state.affinity = ValkeyAffinityAdapter(valkey_client)
+
+    # Metrics — persist to Valkey so counters survive restarts
+    from src.api.metrics import metrics as _metrics
+    _metrics.set_valkey(valkey_client)
+    await _metrics.restore_from_valkey()
 
     # LiteLLM
     setup_litellm(settings)
@@ -186,6 +199,7 @@ app.add_middleware(
 
 @app.exception_handler(HTTPException)
 async def sanitize_http_exception(request, exc: HTTPException):
+    metrics.record_error(exc.status_code, "HTTPException")
     detail = exc.detail
     if isinstance(detail, dict):
         detail = sanitize_dict(detail)
@@ -202,6 +216,7 @@ async def sanitize_http_exception(request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def sanitize_generic_exception(request, exc: Exception):
+    metrics.record_error(500, "INTERNAL_ERROR")
     return JSONResponse(
         status_code=500,
         content={
@@ -214,6 +229,7 @@ async def sanitize_generic_exception(request, exc: Exception):
 
 app.include_router(chat_router)
 app.include_router(conversations_router)
+app.include_router(conversation_operations_router)
 app.include_router(metrics_router)
 app.include_router(models_router)
 app.include_router(health_router)

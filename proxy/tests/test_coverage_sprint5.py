@@ -7,11 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.service.chat_service import (
-    _suggest_higher_threshold_models,
-    call_with_fallback,
-    evaluate_router_suggestion,
-)
+from src.service.chat_fallback import call_with_fallback
+from src.service.chat_persistence import _suggest_higher_threshold_models
+from src.service.chat_service import evaluate_router_suggestion
 from src.config.pseudo_models import load_config
 
 _CONFIG = load_config("pseudo_models.yaml")
@@ -23,12 +21,16 @@ async def test_call_with_fallback_non_retryable_propagates():
     mock_phys = MagicMock()
     mock_phys.model = "test-model"
     mock_phys.context_window = None
+    mock_phys.provider = "test"
+    mock_phys.api_key_env = None
+    mock_phys.api_base = None
     mock_schema = MagicMock()
     mock_schema.physical_models = [mock_phys]
     mock_schema.display_name = "Test"
+    mock_schema.default_thinking = None
 
     with patch(
-        "src.service.chat_service.call_litellm",
+        "src.service.chat_fallback.call_litellm",
         side_effect=ValueError("Non-retryable error"),
     ):
         with pytest.raises(ValueError, match="Non-retryable error"):
@@ -41,12 +43,19 @@ async def test_call_with_fallback_retryable_triggers_fallback():
     mock_phys1 = MagicMock()
     mock_phys1.model = "test-model-1"
     mock_phys1.context_window = None
+    mock_phys1.provider = "test"
+    mock_phys1.api_key_env = None
+    mock_phys1.api_base = None
     mock_phys2 = MagicMock()
     mock_phys2.model = "test-model-2"
     mock_phys2.context_window = None
+    mock_phys2.provider = "test"
+    mock_phys2.api_key_env = None
+    mock_phys2.api_base = None
     mock_schema = MagicMock()
     mock_schema.physical_models = [mock_phys1, mock_phys2]
     mock_schema.display_name = "Test"
+    mock_schema.default_thinking = None
 
     from fastapi import HTTPException
     from litellm.exceptions import ServiceUnavailableError
@@ -56,7 +65,7 @@ async def test_call_with_fallback_retryable_triggers_fallback():
         llm_provider="test",
         model="test-model",
     )
-    with patch("src.service.chat_service.call_litellm", side_effect=svc_err):
+    with patch("src.service.chat_fallback.call_litellm", side_effect=svc_err):
         with pytest.raises(HTTPException) as exc:
             await call_with_fallback(mock_schema, [])
         assert exc.value.status_code == 503

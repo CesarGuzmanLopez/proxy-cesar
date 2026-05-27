@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config.pseudo_models import PhysicalModelSchema
 from src.service.compactor.explicit import (
     compact_conversation,
     select_compactor_model,
@@ -72,18 +73,24 @@ def mock_litellm_success():
 
 @pytest.fixture
 def config_with_compactador():
-    """Config with compactador pseudo-model."""
+    """Config with compactador pseudo-model using real schemas."""
     config = MagicMock()
+    phys1 = PhysicalModelSchema(
+        provider="google",
+        model="gemini-3.5-flash",
+        context_window=1000000,
+    )
+    phys2 = PhysicalModelSchema(
+        provider="anthropic",
+        model="claude-haiku-4-5",
+        context_window=200000,
+    )
+    phys3 = PhysicalModelSchema(
+        provider="glm",
+        model="glm-4.5-flash",
+        context_window=128000,
+    )
     compactador_pm = MagicMock()
-    phys1 = MagicMock()
-    phys1.model = "gemini-3.5-flash"
-    phys1.context_window = 1000000
-    phys2 = MagicMock()
-    phys2.model = "claude-haiku-4-5"
-    phys2.context_window = 200000
-    phys3 = MagicMock()
-    phys3.model = "glm-4.5-flash"
-    phys3.context_window = 128000
     compactador_pm.physical_models = [phys1, phys2, phys3]
     config.pseudo_models = {"compactador": compactador_pm}
     return config
@@ -113,25 +120,26 @@ def conversation_with_turns():
 
 def test_select_compactor_model_large_enough(config_with_compactador):
     """Selects model with enough context window for the history."""
-    model, ctx = select_compactor_model(config_with_compactador, 50000)
-    assert model == "gemini-3.5-flash"  # First model with 1M ctx window (enough for 50K)
-    assert ctx == 1000000
+    model = select_compactor_model(config_with_compactador, 50000)
+    assert model is not None
+    assert model.model == "gemini-3.5-flash"  # First model with 1M ctx window (enough for 50K)
+    assert model.context_window == 1000000
 
 
 def test_select_compactor_model_largest_fallback(config_with_compactador):
     """When history exceeds all models, returns the one with largest window."""
-    model, ctx = select_compactor_model(config_with_compactador, 2000000)
-    assert model == "gemini-3.5-flash"  # Largest available
-    assert ctx == 1000000
+    model = select_compactor_model(config_with_compactador, 2000000)
+    assert model is not None
+    assert model.model == "gemini-3.5-flash"  # Largest available
+    assert model.context_window == 1000000
 
 
 def test_select_compactor_model_no_compactador():
     """When compactador pseudo-model is missing, returns None."""
     config = MagicMock()
     config.pseudo_models = {}
-    model, ctx = select_compactor_model(config, 50000)
+    model = select_compactor_model(config, 50000)
     assert model is None
-    assert ctx is None
 
 
 # ── Explicit compaction tests ────────────────────────────────────────────
@@ -317,6 +325,8 @@ async def test_async_dispatch_to_arq(
         "compact_conversation_async",
         str(conv.id),
         "gemini-3.5-flash",
+        None,  # api_base
+        None,  # api_key
     )
 
 

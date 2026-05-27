@@ -42,7 +42,9 @@ class Settings(BaseSettings):
         """Parse disabled providers into a set (lowercase)."""
         if not self.disabled_providers:
             return set()
-        return {p.strip().lower() for p in self.disabled_providers.split(",") if p.strip()}
+        return {
+            p.strip().lower() for p in self.disabled_providers.split(",") if p.strip()
+        }
 
 
 settings = Settings()

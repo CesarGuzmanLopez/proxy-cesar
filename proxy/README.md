@@ -213,7 +213,7 @@ pip install -e ".[dev]"
 # Tests
 pytest                          # All tests
 pytest tests/ -x                # Stop on first failure
-pytest tests/test_streaming.py  # Streaming only
+pytest tests/test_e2e.py -k streaming  # Streaming only
 
 # Lint
 ruff check src/

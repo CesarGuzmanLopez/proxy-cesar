@@ -9,6 +9,7 @@ python.md §3: HTTPException at boundary, Result monad in service layer.
 """
 
 import json
+import logging
 import uuid
 
 from fastapi import HTTPException
@@ -19,6 +20,8 @@ from src.adapters.db.models import Conversation, ConversationSnapshot, Conversat
 from src.adapters.litellm import call_litellm
 from src.service.capability_detector import estimate_tokens
 from src.service.compactor.prompts import build_explicit_compaction_prompt
+
+logger = logging.getLogger(__name__)
 
 _MIN_RETENTION = 0.05
 
@@ -57,7 +60,9 @@ def select_compactor_model(config, total_tokens: int):
             return phys
 
     # Fall back to the model with the largest context window (skip audio models)
-    candidates = [m for m in compactador_pm.physical_models if not getattr(m, "audio", False)]
+    candidates = [
+        m for m in compactador_pm.physical_models if not getattr(m, "audio", False)
+    ]
     if not candidates:
         return None
     largest = max(
@@ -125,22 +130,27 @@ async def _run_compaction_sync(
     api_key: str | None = None,
     *,
     turn_count: int = 0,
+    valkey=None,
+    trace_id: str | None = None,
 ) -> dict:
     """Run compaction synchronously and store the snapshot.
 
-    All DB operations happen *before* the compactor API call to avoid
-    losing the SQLAlchemy greenlet context (known issue when calling
-    async HTTP clients and then re-entering the async session).
+    Snapshot is created ONLY after the API call succeeds to avoid
+    orphan snapshots on failure. The flush + chaining happens after
+    the compactor response is received.
 
     If turn_count is passed (pre-computed), skips re-querying turns.
     """
+    _trace = trace_id or str(uuid.uuid4())[:8]
     conv_uuid = _parse_uuid(conversation_id)
     compaction_prompt = build_explicit_compaction_prompt()
 
     # ── DB operations BEFORE the API call ──────────────────────────────
     if turn_count == 0:
         result = await db.execute(
-            select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)
+            select(ConversationTurn).where(
+                ConversationTurn.conversation_id == conv_uuid
+            )
         )
         all_turns = result.scalars().all()
         turn_count = len(all_turns)
@@ -149,30 +159,8 @@ async def _run_compaction_sync(
     if conv is None:
         conv = await db.get(Conversation, conv_uuid)
 
-    # Create snapshot (added + flushed before the API call)
-    new_snapshot = ConversationSnapshot(
-        conversation_id=conv_uuid,
-        snapshot_type="explicit",
-        tokens_before=total_tokens,
-        tokens_after=0,  # placeholder
-        compactor_model=compactor_model,
-        snapshot_content="",  # placeholder
-        turn_number_at_compaction=turn_count,
-    )
-    db.add(new_snapshot)
-    await db.flush()
-
-    # Chain with previous snapshot
-    if conv and conv.active_snapshot_id:
-        old = await db.get(ConversationSnapshot, conv.active_snapshot_id)
-        if old:
-            old.superseded_by = new_snapshot.id
-
-    if conv:
-        conv.active_snapshot_id = new_snapshot.id
-
     # ── Describe images using any available vision model ──────────────
-    all_messages = await _prepare_multimedia_for_compaction(all_messages, config)
+    all_messages = await _prepare_multimedia_for_compaction(all_messages, config, valkey)
 
     # ── Call compactor model API ───────────────────────────────────────
     compaction_messages = [
@@ -191,6 +179,13 @@ async def _run_compaction_sync(
         )
         snapshot_content, snapshot_tokens = _parse_compactor_response(response)
     except Exception as exc:
+        logger.error(
+            "compaction_failed trace=%s conv=%s compactor=%s: %s",
+            _trace,
+            conversation_id[:12],
+            compactor_model,
+            exc,
+        )
         raise HTTPException(
             status_code=502,
             detail={
@@ -200,10 +195,38 @@ async def _run_compaction_sync(
             },
         )
 
-    # ── Update snapshot with API results ───────────────────────────────
-    new_snapshot.tokens_after = snapshot_tokens
-    new_snapshot.snapshot_content = snapshot_content or ""
+    # ── Create snapshot ONLY after API call succeeds ───────────────────
+    new_snapshot = ConversationSnapshot(
+        conversation_id=conv_uuid,
+        snapshot_type="explicit",
+        tokens_before=total_tokens,
+        tokens_after=snapshot_tokens,
+        compactor_model=compactor_model,
+        snapshot_content=snapshot_content or "",
+        turn_number_at_compaction=turn_count,
+    )
+    db.add(new_snapshot)
+    await db.flush()
+
+    # Chain with previous snapshot
+    if conv and conv.active_snapshot_id:
+        old = await db.get(ConversationSnapshot, conv.active_snapshot_id)
+        if old:
+            old.superseded_by = new_snapshot.id
+
+    if conv:
+        conv.active_snapshot_id = new_snapshot.id
+
     await db.commit()
+
+    logger.info(
+        "compaction_done trace=%s conv=%s tokens_before=%d tokens_after=%d compactor=%s",
+        _trace,
+        conversation_id[:12],
+        total_tokens,
+        snapshot_tokens,
+        compactor_model,
+    )
 
     return {
         "status": "completed",
@@ -229,6 +252,7 @@ async def compact_conversation(
     db: AsyncSession,
     config,
     arq_pool=None,
+    valkey=None,
 ) -> dict:
     """Explicitly compact a conversation into a structured snapshot.
 
@@ -237,6 +261,7 @@ async def compact_conversation(
         db: Async DB session.
         config: Proxy config with pseudo-model definitions.
         arq_pool: Optional arq Redis pool for async dispatch (>500K tokens).
+        valkey: Optional Valkey client for image description cache.
 
     Returns:
         Dict with compaction result metadata.
@@ -252,6 +277,13 @@ async def compact_conversation(
             status_code=404,
             detail={"error": "CONVERSATION_NOT_FOUND"},
         )
+
+    _trace = str(uuid.uuid4())[:8]
+    logger.info(
+        "compaction_start trace=%s conv=%s",
+        _trace,
+        conversation_id[:12],
+    )
 
     # Load all turns
     result = await db.execute(
@@ -295,7 +327,8 @@ async def compact_conversation(
         max_window = 0
         if compactador_pm and compactador_pm.physical_models:
             max_window = max(
-                (m.context_window or 0) for m in compactador_pm.physical_models
+                (m.context_window or 0)
+                for m in compactador_pm.physical_models
                 if not getattr(m, "audio", False)
             )
         raise HTTPException(
@@ -346,6 +379,8 @@ async def compact_conversation(
         config=config,
         conv=conv,
         turn_count=len(turns),
+        valkey=valkey,
+        trace_id=_trace,
     )
 
 
@@ -439,10 +474,13 @@ def _resolve_api_key(phys) -> str | None:
     if not phys or not phys.api_key_env:
         return None
     import os
+
     return os.environ.get(phys.api_key_env) or None
 
 
-async def _prepare_multimedia_for_compaction(history: list[dict], config) -> list[dict]:
+async def _prepare_multimedia_for_compaction(
+    history: list[dict], config, valkey=None,
+) -> list[dict]:
     """Describe images using any available vision model before compaction."""
     if not _history_has_images(history):
         return history
@@ -459,8 +497,11 @@ async def _prepare_multimedia_for_compaction(history: list[dict], config) -> lis
 
     try:
         described, _meta = await auto_describe_images(
-            history, vision_model,
-            api_base=api_base, api_key=api_key,
+            history,
+            vision_model,
+            api_base=api_base,
+            api_key=api_key,
+            valkey=valkey,
         )
         return described
     except Exception:

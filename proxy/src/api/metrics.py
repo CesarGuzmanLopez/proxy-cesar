@@ -1,18 +1,14 @@
 """Metrics endpoint (Sprint 8 §6).
 
-GET /metrics returns aggregated stats:
-  - Request counts per pseudo-model
-  - Token usage (input, output, cached, saved by compaction)
-  - Cache hit rate
-  - Compaction counts (explicit only)
-  - Fallback counts
-  - Rate limit hits
-  - Conversation counts
-  - Error breakdown
+GET /metrics returns aggregated stats persisted to Valkey (survives restarts).
+In-memory counters serve as the fast path; Valkey persists every write
+asynchronously so metrics survive proxy redeploys.
 """
 
 import logging
+import threading
 import time
+from typing import Any
 
 from fastapi import APIRouter, Request
 from sqlalchemy import func, select, text
@@ -23,17 +19,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["metrics"])
 
-# Module-level start time for uptime calculation
 _START_TIME = time.time()
-
-
-# ── In-memory counter store ──────────────────────────────────────────────────
+_METRICS_TTL = 7 * 86400  # 7 days
 
 
 class MetricsStore:
-    """Thread-safe in-memory metrics store. Reset on restart."""
+    """Thread-safe metrics store with optional Valkey persistence."""
 
     def __init__(self):
+        self._lock = threading.Lock()
+        self._valkey: Any = None
         self.total_requests: int = 0
         self.requests_by_pseudo: dict[str, int] = {}
         self.total_input_tokens: int = 0
@@ -46,41 +41,131 @@ class MetricsStore:
         self.errors_5xx: int = 0
         self.errors_by_type: dict[str, int] = {}
 
+    def set_valkey(self, client) -> None:
+        """Attach a Valkey client for persistent metric storage."""
+        self._valkey = client
+
     def record_request(self, pseudo_model: str) -> None:
-        self.total_requests += 1
-        self.requests_by_pseudo[pseudo_model] = (
-            self.requests_by_pseudo.get(pseudo_model, 0) + 1
-        )
+        with self._lock:
+            self.total_requests += 1
+            self.requests_by_pseudo[pseudo_model] = (
+                self.requests_by_pseudo.get(pseudo_model, 0) + 1
+            )
+        self._sync_key("total_requests", 1)
+        self._sync_hash("requests_by_pseudo", pseudo_model)
 
     def record_tokens(
         self, input_tokens: int, output_tokens: int, cached_tokens: int = 0
     ) -> None:
-        self.total_input_tokens += input_tokens
-        self.total_output_tokens += output_tokens
-        self.total_cached_tokens += cached_tokens
+        with self._lock:
+            self.total_input_tokens += input_tokens
+            self.total_output_tokens += output_tokens
+            self.total_cached_tokens += cached_tokens
+            if cached_tokens > 0:
+                self.cache_hits += 1
+        self._sync_key("total_input_tokens", input_tokens)
+        self._sync_key("total_output_tokens", output_tokens)
+        self._sync_key("total_cached_tokens", cached_tokens)
         if cached_tokens > 0:
-            self.cache_hits += 1
+            self._sync_key("cache_hits", 1)
 
     def record_compaction(self, tokens_saved: int) -> None:
-        self.total_saved_by_compaction += tokens_saved
+        with self._lock:
+            self.total_saved_by_compaction += tokens_saved
+        self._sync_key("total_saved_by_compaction", tokens_saved)
 
     def record_fallback(self, reason: str) -> None:
-        self.fallbacks[reason] = self.fallbacks.get(reason, 0) + 1
+        with self._lock:
+            self.fallbacks[reason] = self.fallbacks.get(reason, 0) + 1
+        self._sync_hash("fallbacks", reason)
 
     def record_error(self, status_code: int, error_type: str | None = None) -> None:
+        with self._lock:
+            if 400 <= status_code < 500:
+                self.errors_4xx += 1
+            elif 500 <= status_code < 600:
+                self.errors_5xx += 1
+            if error_type:
+                self.errors_by_type[error_type] = (
+                    self.errors_by_type.get(error_type, 0) + 1
+                )
         if 400 <= status_code < 500:
-            self.errors_4xx += 1
+            self._sync_key("errors_4xx", 1)
         elif 500 <= status_code < 600:
-            self.errors_5xx += 1
-        if error_type:
-            self.errors_by_type[error_type] = self.errors_by_type.get(error_type, 0) + 1
+            self._sync_key("errors_5xx", 1)
+
+    # ── Valkey sync (best-effort, non-blocking) ──────────────────────
+
+    def _sync_key(self, key: str, delta: int) -> None:
+        v = self._valkey
+        if v is None:
+            return
+        import asyncio
+        try:
+            asyncio.create_task(self._incrby(v, f"metrics:{key}", delta, _METRICS_TTL))
+        except RuntimeError:
+            pass  # No event loop (e.g., sync context)
+
+    def _sync_hash(self, base: str, field: str) -> None:
+        v = self._valkey
+        if v is None:
+            return
+        import asyncio
+        try:
+            asyncio.create_task(self._hincrby(v, f"metrics:{base}", field, _METRICS_TTL))
+        except RuntimeError:
+            pass
+
+    @staticmethod
+    async def _incrby(v, key: str, delta: int, ttl: int) -> None:
+        try:
+            await v.incrby(key, delta)
+            await v.expire(key, ttl, nx=True)
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _hincrby(v, key: str, field: str, ttl: int) -> None:
+        try:
+            await v.hincrby(key, field, 1)
+            await v.expire(key, ttl, nx=True)
+        except Exception:
+            pass
+
+    async def restore_from_valkey(self) -> None:
+        """Restore in-memory counters from Valkey on startup."""
+        v = self._valkey
+        if v is None:
+            return
+        try:
+            with self._lock:
+                t = await v.get("metrics:total_requests")
+                if t:
+                    self.total_requests = int(t)
+                for k in ("total_input_tokens", "total_output_tokens",
+                          "total_cached_tokens", "total_saved_by_compaction",
+                          "cache_hits", "errors_4xx", "errors_5xx"):
+                    val = await v.get(f"metrics:{k}")
+                    if val:
+                        setattr(self, k, int(val))
+
+                rbp = await v.hgetall("metrics:requests_by_pseudo")
+                self.requests_by_pseudo = {k.decode(): int(v) for k, v in (rbp or {}).items()}
+
+                fb = await v.hgetall("metrics:fallbacks")
+                self.fallbacks = {k.decode(): int(v) for k, v in (fb or {}).items()}
+
+                eb = await v.hgetall("metrics:errors_by_type")
+                self.errors_by_type = {k.decode(): int(v) for k, v in (eb or {}).items()}
+        except Exception as exc:
+            logger.debug("metrics_valkey_restore_failed error=%s", exc)
 
 
-# Global metrics store (reset on proxy restart)
+# Global metrics store
 metrics = MetricsStore()
 
 
-# ── Endpoint ──────────────────────────────────────────────────────────────────
+# ── Endpoint ──────────────────────────────────────────────────────
 
 
 @router.get("/metrics")
@@ -100,8 +185,7 @@ async def get_metrics(request: Request):
                 active_convs = (
                     await db.scalar(
                         select(func.count(Conversation.id)).where(
-                            Conversation.updated_at
-                            > func.now() - text("1 day")
+                            Conversation.updated_at > func.now() - text("1 day")
                         )
                     )
                     or 0

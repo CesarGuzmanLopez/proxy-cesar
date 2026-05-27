@@ -34,28 +34,40 @@ def validate_incoming_content(
 
     # Images → model without vision
     result = _check_content_support(
-        turn_caps, "has_images", phys, "vision",
+        turn_caps,
+        "has_images",
+        phys,
+        "vision",
     )
     if result is not None:
         return result
 
     # Audio → model without audio
     result = _check_content_support(
-        turn_caps, "has_audio", phys, "audio",
+        turn_caps,
+        "has_audio",
+        phys,
+        "audio",
     )
     if result is not None:
         return result
 
     # PDF → model without vision
     result = _check_content_support(
-        turn_caps, "has_pdf", phys, "vision",
+        turn_caps,
+        "has_pdf",
+        phys,
+        "vision",
     )
     if result is not None:
         return result
 
     # Video → model without video
     result = _check_content_support(
-        turn_caps, "has_video", phys, "video",
+        turn_caps,
+        "has_video",
+        phys,
+        "video",
     )
     if result is not None:
         return result

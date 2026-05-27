@@ -32,7 +32,7 @@ class _MockConversation:
 
 def test_build_conversation_messages_basic():
     """Simple conversation has history + current messages."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Hello"}], None),
@@ -48,7 +48,7 @@ def test_build_conversation_messages_basic():
 
 def test_build_conversation_messages_with_assistant_response():
     """Assistant response is inserted after its turn's request messages."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Hello"}], {
@@ -65,7 +65,7 @@ def test_build_conversation_messages_with_assistant_response():
 
 def test_build_conversation_messages_preserves_tool_calls():
     """tool_calls are preserved in the assistant entry."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Get weather"}], {
@@ -90,7 +90,7 @@ def test_build_conversation_messages_preserves_tool_calls():
 
 def test_build_conversation_messages_preserves_reasoning():
     """reasoning_content is preserved in the assistant entry."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Think step by step"}], {
@@ -113,7 +113,7 @@ def test_build_conversation_messages_preserves_reasoning():
 
 def test_build_conversation_messages_preserves_thinking_blocks():
     """thinking_blocks are preserved in the assistant entry."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Explain"}], {
@@ -136,7 +136,7 @@ def test_build_conversation_messages_preserves_thinking_blocks():
 
 def test_build_conversation_messages_multiple_turns():
     """Multiple turns are interleaved correctly in order."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Q1"}], {
@@ -159,7 +159,7 @@ def test_build_conversation_messages_multiple_turns():
 
 def test_build_conversation_messages_empty_turns():
     """Empty turn list returns just the current messages."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     conv = _MockConversation([])
     result = build_conversation_messages(conv, [{"role": "user", "content": "Q"}])
@@ -169,7 +169,7 @@ def test_build_conversation_messages_empty_turns():
 
 def test_build_conversation_messages_does_not_mutate_input():
     """Original current_messages list is not mutated."""
-    from src.service.chat_service import build_conversation_messages
+    from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Q1"}], {
@@ -188,14 +188,14 @@ def test_build_conversation_messages_does_not_mutate_input():
 
 def test_normalise_thinking_param_none():
     """None thinking param returns None."""
-    from src.service.chat_service import _normalise_thinking_param
+    from src.service.chat_fallback import _normalise_thinking_param
 
     assert _normalise_thinking_param(None) is None
 
 
 def test_normalise_thinking_param_bool_true():
     """True becomes {'type': 'enabled'}."""
-    from src.service.chat_service import _normalise_thinking_param
+    from src.service.chat_fallback import _normalise_thinking_param
 
     result = _normalise_thinking_param(True)
     assert result == {"type": "enabled"}
@@ -203,7 +203,7 @@ def test_normalise_thinking_param_bool_true():
 
 def test_normalise_thinking_param_bool_false():
     """False returns {'type': 'disabled'}."""
-    from src.service.chat_service import _normalise_thinking_param
+    from src.service.chat_fallback import _normalise_thinking_param
 
     result = _normalise_thinking_param(False)
     assert result == {"type": "disabled"}
@@ -211,7 +211,7 @@ def test_normalise_thinking_param_bool_false():
 
 def test_normalise_thinking_param_dict():
     """Dict passes through unchanged."""
-    from src.service.chat_service import _normalise_thinking_param
+    from src.service.chat_fallback import _normalise_thinking_param
 
     d = {"type": "enabled", "budget_tokens": 2000}
     result = _normalise_thinking_param(d)
@@ -223,7 +223,7 @@ def test_normalise_thinking_param_dict():
 
 def test_resolve_api_key_from_env(monkeypatch):
     """API key is resolved from environment variable."""
-    from src.service.chat_service import _resolve_api_key
+    from src.service.chat_fallback import _resolve_api_key
 
     phys = MagicMock()
     phys.api_key_env = "MY_API_KEY"
@@ -236,7 +236,7 @@ def test_resolve_api_key_from_env(monkeypatch):
 
 def test_resolve_api_key_no_env():
     """No api_key_env returns None regardless of phys.api_key."""
-    from src.service.chat_service import _resolve_api_key
+    from src.service.chat_fallback import _resolve_api_key
 
     phys = MagicMock()
     phys.api_key_env = None
@@ -246,7 +246,7 @@ def test_resolve_api_key_no_env():
 
 def test_resolve_api_key_env_missing():
     """api_key_env set but env var not set returns None."""
-    from src.service.chat_service import _resolve_api_key
+    from src.service.chat_fallback import _resolve_api_key
 
     phys = MagicMock()
     phys.api_key_env = "MISSING_ENV_VAR"
@@ -264,7 +264,7 @@ async def test_try_physical_model_cache_provider_anthropic():
     This tests Bug 1: the cache provider is derived from model prefix
     (e.g. 'anthropic/claude-...' → 'anthropic'), not from the YAML provider field.
     """
-    from src.service.chat_service import _try_physical_model
+    from src.service.chat_fallback import _try_physical_model
 
     phys = MagicMock()
     phys.provider = "opencode-go"
@@ -275,10 +275,10 @@ async def test_try_physical_model_cache_provider_anthropic():
     phys.api_key_env = None
 
     with (
-        patch("src.service.chat_service.should_apply_cache_control") as mock_should,
-        patch("src.service.chat_service.apply_anthropic_cache_control") as mock_apply,
-        patch("src.service.chat_service.call_litellm", new_callable=AsyncMock) as mock_call,
-        patch("src.service.chat_service._resolve_api_key") as mock_key,
+        patch("src.service.chat_fallback.should_apply_cache_control") as mock_should,
+        patch("src.service.chat_fallback.apply_anthropic_cache_control") as mock_apply,
+        patch("src.service.chat_fallback.call_litellm", new_callable=AsyncMock) as mock_call,
+        patch("src.service.chat_fallback._resolve_api_key") as mock_key,
     ):
         mock_should.return_value = True
         mock_apply.side_effect = lambda msgs: msgs
@@ -307,7 +307,7 @@ async def test_try_physical_model_cache_provider_anthropic():
 @pytest.mark.asyncio
 async def test_try_physical_model_cache_provider_non_anthropic():
     """Non-Anthropic models do NOT get cache_control even with model prefix."""
-    from src.service.chat_service import _try_physical_model
+    from src.service.chat_fallback import _try_physical_model
 
     phys = MagicMock()
     phys.provider = "opencode-go"
@@ -318,9 +318,9 @@ async def test_try_physical_model_cache_provider_non_anthropic():
     phys.api_key_env = None
 
     with (
-        patch("src.service.chat_service.should_apply_cache_control") as mock_should,
-        patch("src.service.chat_service.call_litellm", new_callable=AsyncMock) as mock_call,
-        patch("src.service.chat_service._resolve_api_key") as mock_key,
+        patch("src.service.chat_fallback.should_apply_cache_control") as mock_should,
+        patch("src.service.chat_fallback.call_litellm", new_callable=AsyncMock) as mock_call,
+        patch("src.service.chat_fallback._resolve_api_key") as mock_key,
     ):
         mock_should.return_value = False
         mock_key.return_value = None
@@ -348,7 +348,7 @@ async def test_try_physical_model_cache_provider_non_anthropic():
 @pytest.mark.asyncio
 async def test_try_physical_model_thinking_passed_to_anthropic():
     """Thinking parameter is passed through for Anthropic models."""
-    from src.service.chat_service import _try_physical_model
+    from src.service.chat_fallback import _try_physical_model
 
     phys = MagicMock()
     phys.provider = "opencode-go"
@@ -359,9 +359,9 @@ async def test_try_physical_model_thinking_passed_to_anthropic():
     phys.api_key_env = None
 
     with (
-        patch("src.service.chat_service.should_apply_cache_control") as mock_should,
-        patch("src.service.chat_service.call_litellm", new_callable=AsyncMock) as mock_call,
-        patch("src.service.chat_service._resolve_api_key") as mock_key,
+        patch("src.service.chat_fallback.should_apply_cache_control") as mock_should,
+        patch("src.service.chat_fallback.call_litellm", new_callable=AsyncMock) as mock_call,
+        patch("src.service.chat_fallback._resolve_api_key") as mock_key,
     ):
         mock_should.return_value = False
         mock_key.return_value = None
@@ -388,7 +388,7 @@ async def test_try_physical_model_thinking_passed_to_anthropic():
 @pytest.mark.asyncio
 async def test_try_physical_model_thinking_not_passed_to_non_anthropic():
     """Thinking parameter is NOT passed to non-Anthropic models (Bug 7)."""
-    from src.service.chat_service import _try_physical_model
+    from src.service.chat_fallback import _try_physical_model
 
     phys = MagicMock()
     phys.provider = "opencode-go"
@@ -399,9 +399,9 @@ async def test_try_physical_model_thinking_not_passed_to_non_anthropic():
     phys.api_key_env = None
 
     with (
-        patch("src.service.chat_service.should_apply_cache_control") as mock_should,
-        patch("src.service.chat_service.call_litellm", new_callable=AsyncMock) as mock_call,
-        patch("src.service.chat_service._resolve_api_key") as mock_key,
+        patch("src.service.chat_fallback.should_apply_cache_control") as mock_should,
+        patch("src.service.chat_fallback.call_litellm", new_callable=AsyncMock) as mock_call,
+        patch("src.service.chat_fallback._resolve_api_key") as mock_key,
     ):
         mock_should.return_value = False
         mock_key.return_value = None
@@ -430,7 +430,7 @@ async def test_try_physical_model_thinking_not_passed_to_non_anthropic():
 @pytest.mark.asyncio
 async def test_try_physical_model_kwargs_not_mutated():
     """kwargs dict is not mutated by _try_physical_model (Bug 3: get() vs pop())."""
-    from src.service.chat_service import _try_physical_model
+    from src.service.chat_fallback import _try_physical_model
 
     phys = MagicMock()
     phys.provider = "opencode-go"
@@ -443,9 +443,9 @@ async def test_try_physical_model_kwargs_not_mutated():
     original_kwargs = {"thinking": True, "temperature": 0.7}
 
     with (
-        patch("src.service.chat_service.should_apply_cache_control") as mock_should,
-        patch("src.service.chat_service.call_litellm", new_callable=AsyncMock) as mock_call,
-        patch("src.service.chat_service._resolve_api_key") as mock_key,
+        patch("src.service.chat_fallback.should_apply_cache_control") as mock_should,
+        patch("src.service.chat_fallback.call_litellm", new_callable=AsyncMock) as mock_call,
+        patch("src.service.chat_fallback._resolve_api_key") as mock_key,
     ):
         mock_should.return_value = False
         mock_key.return_value = None
@@ -476,7 +476,7 @@ async def test_affinity_set_after_llm_call_unit():
     This indirectly tests Bug 5 by checking the code flow in _try_physical_model
     and verifying the caller's wrapping logic.
     """
-    from src.service.chat_service import _try_physical_model
+    from src.service.chat_fallback import _try_physical_model
 
     phys = MagicMock()
     phys.provider = "opencode-go"
@@ -496,9 +496,9 @@ async def test_affinity_set_after_llm_call_unit():
         return resp
 
     with (
-        patch("src.service.chat_service.should_apply_cache_control", return_value=False),
-        patch("src.service.chat_service.call_litellm", side_effect=_fake_call_litellm),
-        patch("src.service.chat_service._resolve_api_key", return_value=None),
+        patch("src.service.chat_fallback.should_apply_cache_control", return_value=False),
+        patch("src.service.chat_fallback.call_litellm", side_effect=_fake_call_litellm),
+        patch("src.service.chat_fallback._resolve_api_key", return_value=None),
     ):
         # The _try_physical_model should only return when LLM call succeeds
         response, skip = await _try_physical_model(

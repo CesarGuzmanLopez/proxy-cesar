@@ -96,11 +96,18 @@ def test_video_sent_to_any_model_returns_transform():
 
 
 def test_parallel_tools_sent_to_no_parallel_model_returns_400():
-    """Parallel tools sent to 'compactador' (no parallel models) → 400 error."""
+    """Parallel tools sent to a pseudo-model without parallel_tools → 400 error."""
+    from unittest.mock import MagicMock
+
+    # All real pseudo-models support parallel tools now, so we mock one that doesn't
+    mock_pm = MagicMock()
+    mock_pm.physical_models = [MagicMock(parallel_tools=False)]
+    mock_pm_name = "mock-no-parallel"
+
     turn_caps = TurnCapabilities(has_parallel_tools=True)
     with pytest.raises(HTTPException) as exc:
         validate_incoming_content(
-            turn_caps, _get_pm("compactador"), "compactador", CONFIG
+            turn_caps, mock_pm, mock_pm_name, CONFIG
         )
     assert exc.value.status_code == 400
     assert "PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL" in str(

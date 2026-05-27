@@ -33,10 +33,11 @@ async def compact_conversation_async(
     """Async compaction task for very large conversations.
 
     Called by arq worker when a compaction job is dequeued.
-    Creates its own DB session since it runs in a separate process.
+    Self-contained: recreates DB factory and config because the
+    worker runs in a *separate process* (arq-recommended pattern).
 
     Args:
-        ctx: arq worker context (contains db_session_factory, config).
+        ctx: arq worker context (unused — kept for arq signature).
         conversation_id: UUID string of the conversation to compact.
         compactor_model: Physical model name to use for compaction.
         api_base: Custom API base URL (e.g. for OpenCode Go models).
@@ -45,25 +46,41 @@ async def compact_conversation_async(
     Returns:
         Dict with compaction result metadata.
     """
+    from pathlib import Path
+
+    from sqlmodel.ext.asyncio.session import AsyncSession
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from src.config.pseudo_models import load_config
+    from src.config.settings import settings
     from src.service.compactor.explicit import _compact_async
 
-    db_session_factory = ctx.get("db_session_factory")
-    config = ctx.get("config")
-    if not db_session_factory or not config:
-        return {
-            "status": "failed",
-            "error": "arq context missing db_session_factory or config",
-        }
-
-    result = await _compact_async(
-        conversation_id=conversation_id,
-        compactor_model=compactor_model,
-        db_session_factory=db_session_factory,
-        config=config,
-        api_base=api_base,
-        api_key=api_key,
+    config = load_config(
+        Path(__file__).resolve().parent.parent.parent / "pseudo_models.yaml"
     )
-    return result
+    engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        connect_args={"check_same_thread": False}
+        if "sqlite" in settings.database_url
+        else {},
+    )
+    db_session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    try:
+        result = await _compact_async(
+            conversation_id=conversation_id,
+            compactor_model=compactor_model,
+            db_session_factory=db_session_factory,
+            config=config,
+            api_base=api_base,
+            api_key=api_key,
+        )
+        return result
+    finally:
+        await engine.dispose()
 
 
 # ── Worker settings for CLI ──────────────────────────────────────────────

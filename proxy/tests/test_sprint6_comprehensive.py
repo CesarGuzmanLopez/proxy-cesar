@@ -150,13 +150,11 @@ def app_with_mocks():
     # Patch litellm before importing the app
     with (
         patch("src.service.compactor.explicit.call_litellm") as mock_llm,
-        patch("src.service.compactor.continuous.call_litellm") as mock_cont_llm,
         patch("src.adapters.litellm.client.litellm.acompletion") as mock_acompletion,
     ):
         mock_response = _make_chat_response()
         mock_acompletion.return_value = mock_response
         mock_llm.return_value = _make_compaction_response()[0]
-        mock_cont_llm.return_value = mock_response
 
         from src.main import app
         from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter
@@ -751,17 +749,21 @@ async def test_compactador_model_selection_by_context_window(client):
 
     from src.service.compactor.explicit import select_compactor_model
 
-    # Small history → Groq (131K ctx, fast) selected first
-    small_model, _ = select_compactor_model(config, 50000)
+    # Small history → first model with enough context (GLM-5.1, 128K ctx)
+    small_model = select_compactor_model(config, 50000)
     assert small_model is not None
-    assert "groq" in small_model
+    assert small_model.context_window >= 50000
 
     # History >131K → falls through to DeepSeek (1M ctx)
-    big_model, _ = select_compactor_model(config, 200000)
+    big_model = select_compactor_model(config, 200000)
     assert big_model is not None
-    assert "deepseek" in big_model
+    assert big_model.context_window >= 200000
 
-    # History beyond Gemini → Claude (200K) should be enough, but check fallback
+    # History beyond all → largest available
+    huge_model = select_compactor_model(config, 2_000_000)
+    assert huge_model is not None
+    assert huge_model.model == "deepseek/deepseek-v4-flash"
+
     compactador_pm = config.pseudo_models.get("compactador")
     assert compactador_pm is not None
 

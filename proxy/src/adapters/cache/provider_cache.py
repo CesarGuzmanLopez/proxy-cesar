@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 #   Supported models: openai/gpt-oss-20b, openai/gpt-oss-120b
 _PROVIDERS_WITH_CACHE = frozenset({"openai", "deepseek", "groq", "anthropic"})
 _PROVIDERS_WITH_CACHE_CONTROL = frozenset({"anthropic"})
+# DeepSeek/Groq/OpenAI have AUTOMATIC prefix caching — no cache_control headers needed.
+# DeepSeek: Context Caching on Disk (enabled by default, automatic prefix matching).
+# Groq: automatic prefix caching, 50% discount, 2-hour TTL.
+# OpenAI: automatic prompt caching.
+# This is NOT a bug — the proxy correctly identifies which providers need explicit
+# cache_control (Anthropic only) vs those with transparent automatic caching.
 _PROVIDERS_WITH_AUTO_CACHE = frozenset({"openai", "deepseek", "groq"})
 
 

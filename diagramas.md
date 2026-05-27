@@ -168,12 +168,12 @@ graph TD
 graph TB
     subgraph "Dominio (core)"
         DM[Domain Models<br/>PseudoModel, PhysicalModel,<br/>Conversation, Message]
-        SRVC[Services<br/>ChatService, CompactService,<br/>PseudoModelRegistry]
+        SRVC[Services<br/>chat_service.py → chat_fallback.py<br/>chat_persistence.py, chat_messages.py<br/>CompactService, PseudoModelRegistry]
         PORTS[Ports<br/>ICache, IDatabase, IAuditLog,<br/>ILLMProvider]
     end
 
     subgraph "Aplicación (API)"
-        API[FastAPI Router<br/>/v1/chat/completions<br/>/conversations<br/>/health /metrics]
+        API[FastAPI Router<br/>chat.py → chat_streaming.py<br/>chat_stream_persistence.py<br/>conversations.py + conversation_operations.py<br/>/health /metrics]
         MIDD[Middleware<br/>KeyVault, BlobVault,<br/>AuditLog, Metrics]
     end
 
@@ -235,3 +235,22 @@ sequenceDiagram
 | 4210 | chemistry-apps API (Docker) | root | No |
 | 8000 | deepbde-backend (Docker) | root | No |
 | 22 | SSH | root | No |
+
+---
+
+## 8. Blob Description Cache
+
+Las descripciones de imágenes/audio/PDF generadas por el Blob Vault se
+almacenan en Redis (Valkey) con una clave compuesta:
+
+```
+{prefix}:{content_hash}:desc:{prompt_hash}
+```
+
+- `content_hash` — hash SHA-256 de 8 caracteres del contenido binario
+- `prompt_hash` — hash SHA-256 de 8 caracteres del texto del mensaje del usuario
+
+Esto permite que una misma imagen reciba descripciones distintas según el
+contexto del prompt en que se envía, mejorando la calidad de las respuestas
+sin recalcular descripciones idénticas para prompts repetidos. Ver
+`src/service/tool_detector.py:396` para la implementación.

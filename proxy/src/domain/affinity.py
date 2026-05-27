@@ -1,6 +1,11 @@
 """Affinity port (Protocol) for physical model pinning.
 
 python.md §5.2: Use Protocol for ports/abstractions.
+
+NOTE: This Protocol is defined for architectural clarity but is currently NOT
+consumed via dependency injection. The service layer imports ValkeyAffinityAdapter
+directly. This is a known architectural debt — the port should be consumed
+via DI (e.g., FastAPI Depends) in a future refactor.
 """
 
 from typing import Protocol

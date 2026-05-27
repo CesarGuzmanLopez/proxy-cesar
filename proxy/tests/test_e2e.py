@@ -162,8 +162,6 @@ class TestE2EOpenCodeFlow:
             "warning",
             "tools_filter_applied",
             "tools_filter_reason",
-            "pre_compaction_applied",
-            "continuous_compaction_applied",
             "images_described",
             "images_described_by",
             "router_suggestion",

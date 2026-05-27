@@ -12,6 +12,12 @@ from httpx import AsyncClient
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "pseudo_models.yaml"
 
+# Load expected primary model from YAML config so tests don't hardcode model names
+import yaml
+with open(CONFIG_PATH) as _f:
+    _raw_config = yaml.safe_load(_f)
+NORMAL_PRIMARY = _raw_config["pseudo_models"]["normal"]["physical_models"][0]["model"]
+
 
 @pytest.mark.asyncio
 async def test_1_new_conversation(async_client: AsyncClient, mock_litellm):
@@ -28,7 +34,7 @@ async def test_1_new_conversation(async_client: AsyncClient, mock_litellm):
     data = response.json()
     assert "proxy_metadata" in data
     assert data["proxy_metadata"]["pseudo_model"] == "normal"
-    assert data["proxy_metadata"]["physical_model"] == "deepseek/deepseek-v4-flash"
+    assert data["proxy_metadata"]["physical_model"] == NORMAL_PRIMARY
     assert data["proxy_metadata"]["conversation_id"] == "conv-test-1"
 
 
@@ -282,7 +288,7 @@ async def test_auto_describe_on_vision_switch(async_client: AsyncClient, mock_li
             "src.service.chat_service.load_session_capabilities", new_callable=AsyncMock
         ) as mock_load_caps,
         patch(
-            "src.service.chat_service.auto_describe_images", new_callable=AsyncMock
+            "src.service.chat_messages.auto_describe_images", new_callable=AsyncMock
         ) as mock_auto,
     ):
         mock_load_caps.return_value = session_caps

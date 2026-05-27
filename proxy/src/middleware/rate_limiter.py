@@ -1,14 +1,16 @@
 """Rate limiting middleware per pseudo-model (Sprint 8 §4).
 
-Fixed-window counter in Valkey. Key: ratelimit:{pseudo_model}:{minute_bucket}
-Reads only the first 2 KB of the request body to extract the model name —
-never loads the full body (which may contain multi-MB base64 images).
+Sliding-window rate limiter using Valkey sorted sets.
+Key: ratelimit:{ip}:{pseudo_model}
+Scans first 64 KB of request body to extract model name —
+avoids full parse of multi-MB base64 payloads.
 """
 
 import logging
 import os
 import re
 import time
+import uuid
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -20,21 +22,26 @@ logger = logging.getLogger(__name__)
 # Avoids full json.loads() of large chat bodies (images, tools, etc.)
 _MODEL_RE = re.compile(rb'"model"\s*:\s*"([^"]+)"', re.IGNORECASE)
 
-# Only read the first 2 KB — the model field always appears near the start
-_MAX_BODY_SCAN = 2048
+# Scan up to 64 KB — covers virtually all real-world payloads.
+# The model field always appears near the start of the JSON body.
+# 2 KB was too small for requests with very long system prompts.
+_MAX_BODY_SCAN = 65536
 
 # Default rate limits: requests per minute per pseudo-model
 _DEFAULT_RATE_LIMITS: dict[str, int] = {
     "pensamiento-profundo-caro": 5,
     "tareas-avanzadas": 20,
     "normal": 60,
-    "deep-flash": 120,
+    "codigo-preciso": 40,
+    "massive-fast": 200,
     "flash-lowcost": 200,
     "vision": 15,
     "compactador": 5,
 }
 
 _DEFAULT_LIMIT = 60  # for unknown pseudo-models
+
+_WINDOW_SECONDS = 60
 
 
 def _load_rate_limits() -> dict[str, int]:
@@ -81,7 +88,7 @@ def _extract_model(body_bytes: bytes) -> str:
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Fixed-window rate limiter per pseudo-model in Valkey.
+    """Sliding-window rate limiter per pseudo-model in Valkey sorted sets.
 
     Reads the request body to determine the pseudo-model.
     Body is cached by Starlette after first read, so downstream handlers
@@ -89,6 +96,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        _trace = str(uuid.uuid4())[:8]
+
         if request.url.path != _CHAT_PATH:
             return await call_next(request)
 
@@ -104,22 +113,39 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limits = _get_limits()
         limit = limits.get(pseudo_model, _DEFAULT_LIMIT)
 
-        minute_bucket = int(time.time() / 60)
-        key = f"ratelimit:{pseudo_model}:{minute_bucket}"
+        # Get client IP for per-user rate limiting (B13).
+        # Backward-compatible: installations without proxy will use client.host.
+        forwarded = request.headers.get("x-forwarded-for")
+        client_ip = (forwarded or request.client.host) if request.client else "0.0.0.0"
+
+        key = f"ratelimit:{client_ip}:{pseudo_model}"
 
         valkey = request.app.state.valkey
         if valkey is None:
             return await call_next(request)
 
         try:
-            count = await valkey.incr(key)
-            if count == 1:
-                await valkey.expire(key, 120)
+            now = time.time()
+            window_start = now - _WINDOW_SECONDS
+
+            await valkey.zremrangebyscore(key, "-inf", window_start)
+
+            member = str(now)
+            await valkey.zadd(key, {member: now})
+
+            count = await valkey.zcard(key)
+            await valkey.expire(key, 120)
+
+            reset_seconds = _WINDOW_SECONDS
+            oldest = await valkey.zrange(key, 0, 0, withscores=True)
+            if oldest:
+                oldest_score = oldest[0][1]
+                reset_seconds = max(1, int(oldest_score + _WINDOW_SECONDS - now))
 
             if count > limit:
-                retry_after = 60 - (int(time.time()) % 60)
                 logger.warning(
-                    "rate_limit_hit | pseudo=%s limit=%d count=%d",
+                    "rate_limit_hit trace=%s | pseudo=%s limit=%d count=%d",
+                    _trace,
                     pseudo_model,
                     limit,
                     count,
@@ -132,16 +158,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                             f"Rate limit exceeded for pseudo-model '{pseudo_model}'. "
                             f"Limit: {limit}/minute."
                         ),
-                        "retry_after_seconds": retry_after,
+                        "retry_after_seconds": reset_seconds,
                     },
-                    headers={"Retry-After": str(retry_after)},
+                    headers={"Retry-After": str(reset_seconds)},
                 )
         except Exception as exc:
-            logger.error("rate_limit_error: %s", exc)
+            logger.error("rate_limit_error trace=%s: %s", _trace, exc)
             return await call_next(request)
 
         response = await call_next(request)
         response.headers["X-RateLimit-Limit"] = str(limit)
         response.headers["X-RateLimit-Remaining"] = str(max(0, limit - count))
-        response.headers["X-RateLimit-Reset"] = str((minute_bucket + 1) * 60)
+        response.headers["X-RateLimit-Reset"] = str(int(now + reset_seconds))
         return response

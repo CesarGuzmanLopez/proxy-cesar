@@ -26,9 +26,7 @@ def stable_message_hash(messages: list[dict]) -> str:
     - Tracking whether cacheable prefixes changed between turns
     - Debugging context corruption
     """
-    return hashlib.sha256(
-        stable_json_dumps_bytes(messages)
-    ).hexdigest()[:16]
+    return hashlib.sha256(stable_json_dumps_bytes(messages)).hexdigest()[:16]
 
 
 def assemble_canonical_messages(
@@ -96,6 +94,13 @@ def sort_tool_definitions(tools: list[dict]) -> list[dict]:
     )
 
 
+# NOTE: Tools are sorted ONCE inside call_with_fallback() (chat_service.py:771-773)
+# and the sorted result is preserved in call_kwargs through the entire continuation
+# chain. In streaming continuation (api/chat.py:920), ctx.call_kwargs already contains
+# the ALREADY-SORTED tools list, so no re-sorting is needed.
+# This is NOT a bug.
+
+
 def canonicalize_message_order(messages: list[dict]) -> list[dict]:
     """Reorder a flat message list into canonical order for provider cache hits.
 
@@ -132,7 +137,8 @@ def canonicalize_message_order(messages: list[dict]) -> list[dict]:
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
             reordered.append(msg)
             tool_ids = {
-                tc.get("id", "") for tc in msg["tool_calls"]
+                tc.get("id", "")
+                for tc in msg["tool_calls"]
                 if isinstance(tc, dict) and tc.get("id")
             }
             pending_tool_ids.update(tool_ids)
@@ -141,4 +147,4 @@ def canonicalize_message_order(messages: list[dict]) -> list[dict]:
             pending_tool_ids.discard(msg["tool_call_id"])
         else:
             reordered.append(msg)
-    return system_msgs + reordered
+    return deepcopy(system_msgs + reordered)

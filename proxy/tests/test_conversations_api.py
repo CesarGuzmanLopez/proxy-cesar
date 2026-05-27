@@ -143,21 +143,18 @@ async def test_compatible_models_determinism(client_with_conversation):
 
 @pytest.mark.asyncio
 async def test_compatible_models_reflects_capabilities(client_with_conversation):
-    """Compatible models properly reflects current capabilities."""
+    """Compatible models returns all models as 'safe' (switch validation removed)."""
     response = await client_with_conversation.get(
         "/conversations/test-conv-id/compatible-models"
     )
     data = response.json()
-    # Since conversation has images: true,
-    # non-vision models should be blocked
-    caps = data["capabilities"]
-    assert caps["has_images"] is True
+    assert "compatible_models" in data
+    assert "current_pseudo_model" in data
+    assert data["current_pseudo_model"] == "vision"
 
-    # Find a non-vision model that should be blocked
+    # All pseudo-models are now marked safe (switch validation was removed)
     for m in data["compatible_models"]:
-        if m["pseudo_model"] == "tareas-avanzadas":
-            assert m["status"] == "blocked"
-            break
+        assert m["status"] == "safe"
 
 
 @pytest.mark.asyncio

@@ -36,3 +36,7 @@ tmp/
 # SonarQube
 .scannerwork/
 proxy/coverage.xml
+*.db-shm
+*.db-wal
+coverage.xml
+.test_env

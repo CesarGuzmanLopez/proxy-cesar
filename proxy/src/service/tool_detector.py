@@ -53,7 +53,8 @@ def _find_model_with_capability(config, cap: str = "vision"):
 def _extract_user_text(content: list[dict]) -> str:
     """Join all text parts from a user message for context."""
     return " ".join(
-        str(p.get("text", "")) for p in content
+        str(p.get("text", ""))
+        for p in content
         if isinstance(p, dict) and p.get("type") == "text"
     )
 
@@ -63,6 +64,7 @@ def _resolve_api_key(phys) -> str | None:
     if not phys or not phys.api_key_env:
         return None
     import os
+
     return os.environ.get(phys.api_key_env) or None
 
 
@@ -71,8 +73,12 @@ async def _describe_image_batch(
 ) -> list[str]:
     """Describe multiple images together in one vision model call.
 
-    Sends ALL images + the user's text prompt together so the vision
-    model gives contextual descriptions. Returns one per image.
+    Degrades images before sending (reduces quality to save tokens).
+    Checks context window capacity and splits into batches if needed.
+    Returns one description per image. Returns empty strings on failure.
+
+    If a single image exceeds the model's context capacity, returns an
+    error description so the user knows the images are too large.
     """
     vision_phys = _find_model_with_capability(config, "vision")
     if not vision_phys:
@@ -80,25 +86,99 @@ async def _describe_image_batch(
     if not images:
         return []
 
+    from src.service.multimedia.image_processor import (
+        can_batch_fit,
+        degrade_image,
+        estimate_image_tokens,
+    )
+
     vision_model = vision_phys.model
+    context_window = vision_phys.context_window or 128000
+    # Degrade all images first
+    degraded: list[tuple[str, str]] = []
+    for h, raw in images:
+        degraded_raw = degrade_image(raw)
+        degraded.append((h, degraded_raw))
+
     system = (
         "You receive images that the user sent to a model without vision. "
         "Describe each briefly (1-2 sentences). "
         "Return a JSON array of strings in image order. "
         'Example: ["A login screen", "A bar chart of Q1 sales"]'
     )
-    content: list[dict] = [{
-        "type": "text",
-        "text": f"User: {user_prompt}\nDescribe each image below in JSON array format:"
-    }]
+
+    # Estimate if all images fit in one batch
+    sample_tokens = estimate_image_tokens(degraded[0][1], "high")
+    text_tokens = len(user_prompt) // 4 + 200  # rough text estimate
+
+    if not can_batch_fit(len(degraded), sample_tokens, context_window, text_tokens):
+        # Split into smaller batches
+        from src.service.multimedia.image_processor import _MAX_IMAGES_PER_BATCH
+
+        results: list[str] = []
+        for i in range(0, len(degraded), _MAX_IMAGES_PER_BATCH):
+            batch = degraded[i : i + _MAX_IMAGES_PER_BATCH]
+            batch_tokens = estimate_image_tokens(batch[0][1], "high")
+            if not can_batch_fit(len(batch), batch_tokens, context_window, text_tokens):
+                # Single batch still too large — return error descriptions
+                logger.warning(
+                    "batch_too_large model=%s images=%d ctx=%d",
+                    vision_model,
+                    len(batch),
+                    context_window,
+                )
+                results.extend(
+                    [
+                        "[ERROR: Esta imagen es demasiado grande para ser procesada. Redúcela o usa el modelo Visión directamente.]"
+                    ]
+                    * len(batch)
+                )
+                continue
+            batch_descs = await _describe_single_batch(
+                batch,
+                user_prompt,
+                system,
+                vision_model,
+                vision_phys,
+            )
+            results.extend(batch_descs)
+        return results
+
+    return await _describe_single_batch(
+        degraded,
+        user_prompt,
+        system,
+        vision_model,
+        vision_phys,
+    )
+
+
+async def _describe_single_batch(
+    images: list[tuple[str, str]],
+    user_prompt: str,
+    system: str,
+    vision_model: str,
+    vision_phys,
+) -> list[str]:
+    """Send a single batch of images to the vision model for description."""
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": f"User: {user_prompt}\nDescribe each image below in JSON array format:",
+        }
+    ]
     for _, raw in images:
         content.append({"type": "image_url", "image_url": {"url": raw}})
 
     try:
         from src.adapters.litellm import call_litellm
+
         response = await call_litellm(
             model=vision_model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
             api_base=vision_phys.api_base or None,
             api_key=_resolve_api_key(vision_phys),
             max_tokens=500 * len(images),
@@ -112,11 +192,17 @@ async def _describe_image_batch(
                 if text.startswith("```"):
                     text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
                 import json
+
                 parsed = json.loads(text)
                 if isinstance(parsed, list):
                     return [str(d)[:500] for d in parsed]
     except Exception as exc:
-        logger.warning("batch_describe_failed model=%s error=%s", vision_model, str(exc))
+        logger.warning(
+            "batch_describe_failed model=%s images=%d error=%s",
+            vision_model,
+            len(images),
+            str(exc),
+        )
     return [""] * len(images)
 
 
@@ -130,6 +216,7 @@ async def _transcribe_audio(raw_data: str, config) -> str:
         audio_bytes = base64.b64decode(raw_data.split(",", 1)[-1])
         from litellm import atranscription
         from io import BytesIO
+
         audio_file = BytesIO(audio_bytes)
         audio_file.name = "audio.wav"
         response = await atranscription(
@@ -141,12 +228,15 @@ async def _transcribe_audio(raw_data: str, config) -> str:
         )
         return (getattr(response, "text", None) or "")[:500]
     except Exception as exc:
-        logger.warning("audio_transcribe_failed model=%s error=%s", audio_model, str(exc))
+        logger.warning(
+            "audio_transcribe_failed model=%s error=%s", audio_model, str(exc)
+        )
         return ""
 
 
 async def _try_extract_pdf_text(base64_data: str) -> str:
     """Extract text from a base64-encoded PDF using PyMuPDF (offloaded to thread pool)."""
+
     def _sync_extract() -> str:
         try:
             pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
@@ -162,15 +252,24 @@ async def _try_extract_pdf_text(base64_data: str) -> str:
                     remainder = len(text) - _CONTENT_PREVIEW_MAX
                     return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
                 return f"{meta}\n\n{text}]"
-            return f"{meta} PyMuPDF could not extract text — scanned or image-based PDF.]"
+            return (
+                f"{meta} PyMuPDF could not extract text — scanned or image-based PDF.]"
+            )
         except Exception as exc:
             return f"[PDF could not parse: {str(exc)[:100]}]"
+
     return await asyncio.to_thread(_sync_extract)
 
 
 def _classify_content_parts(  # noqa: S3776 — 3 content types × multiple checks
     content: list,
-) -> tuple[list[str], list[tuple[str, str, str, str]], list[tuple[str, str, str, str]], list[tuple[str, str, str, str]], list[dict]]:
+) -> tuple[
+    list[str],
+    list[tuple[str, str, str, str]],
+    list[tuple[str, str, str, str]],
+    list[tuple[str, str, str, str]],
+    list[dict],
+]:
     """Classify content parts into images, audio, files, and others."""
     user_text = _extract_user_text(content)
     images: list[tuple[str, str, str, str]] = []
@@ -241,38 +340,79 @@ async def _process_msg_blobs(
         return [msg]
 
     # Pass 1: classify and store
-    user_text, image_blobs, audio_blobs, file_blobs, other_parts = _classify_content_parts(content)
-    store_tasks = [_store_blob_if_missing(valkey, f"{prefix}:{h}", r) for h, r, _, _ in image_blobs + audio_blobs + file_blobs]
+    user_text, image_blobs, audio_blobs, file_blobs, other_parts = (
+        _classify_content_parts(content)
+    )
+    store_tasks = [
+        _store_blob_if_missing(valkey, f"{prefix}:{h}", r)
+        for h, r, _, _ in image_blobs + audio_blobs + file_blobs
+    ]
     if store_tasks:
         await asyncio.gather(*store_tasks)
 
     # Pass 2: describe
-    descriptions = await _describe_images(valkey, prefix, image_blobs, user_text, config)
-    audio_results = await asyncio.gather(*[
-        _describe_audio(valkey, f"{prefix}:{h}:desc", r, config) for h, r, _, _ in audio_blobs
-    ]) if audio_blobs else []
-    pdf_results = await asyncio.gather(*[
-        _describe_pdf(valkey, f"{prefix}:{h}:desc", r) for h, r, _, _ in file_blobs
-    ]) if file_blobs else []
+    descriptions = await _describe_images(
+        valkey, prefix, image_blobs, user_text, config
+    )
+    audio_results = (
+        await asyncio.gather(
+            *[
+                _describe_audio(valkey, f"{prefix}:{h}:desc", r, config)
+                for h, r, _, _ in audio_blobs
+            ]
+        )
+        if audio_blobs
+        else []
+    )
+    pdf_results = (
+        await asyncio.gather(
+            *[
+                _describe_pdf(valkey, f"{prefix}:{h}:desc", r)
+                for h, r, _, _ in file_blobs
+            ]
+        )
+        if file_blobs
+        else []
+    )
 
     # Pass 3: build output
-    out = _build_blob_output(other_parts, image_blobs, descriptions, audio_blobs, audio_results, file_blobs, pdf_results)
+    out = _build_blob_output(
+        other_parts,
+        image_blobs,
+        descriptions,
+        audio_blobs,
+        audio_results,
+        file_blobs,
+        pdf_results,
+    )
     return [{**msg, "content": out}]
 
 
 async def _describe_images(valkey, prefix, blobs, user_text, config):
-    """Batch describe images or return cached descriptions."""
+    """Batch describe images or return cached descriptions.
+
+    Cache key includes a hash of the user prompt so that the same image
+    asked with a different question gets a different (correct) description.
+    Key format: {prefix}:{hash}:desc:{prompt_hash}
+    """
     if not blobs:
         return []
-    cached = await asyncio.gather(*[
-        _get_cached(valkey, f"{prefix}:{h}:desc") for h, _, _, _ in blobs
-    ])
+    prompt_hash = hashlib.sha256((user_text or "").encode()).hexdigest()[:8]
+    cached = await asyncio.gather(
+        *[_get_cached(valkey, f"{prefix}:{h}:desc:{prompt_hash}") for h, _, _, _ in blobs]
+    )
     if all(cached):
         return cached
-    descs = await _describe_image_batch([(h, r) for h, r, _, _ in blobs], user_text, config)
+    descs = await _describe_image_batch(
+        [(h, r) for h, r, _, _ in blobs], user_text, config
+    )
     while len(descs) < len(blobs):
         descs.append("")
-    store = [_store_desc(valkey, f"{prefix}:{h}:desc", d) for (h, _, _, _), d in zip(blobs, descs) if d]
+    store = [
+        _store_desc(valkey, f"{prefix}:{h}:desc:{prompt_hash}", d)
+        for (h, _, _, _), d in zip(blobs, descs)
+        if d
+    ]
     if store:
         await asyncio.gather(*store)
     return descs

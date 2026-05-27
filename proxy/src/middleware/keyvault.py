@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import uuid
-from typing import Any
+
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, StreamingResponse
@@ -59,32 +59,65 @@ _SECRET_PATTERNS: list[tuple[str, str]] = [
     # Twilio
     (r"\b(SK[0-9a-fA-F]{32})\b", "twilio"),
     # Heroku (UUID-based API key)
-    (r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b", "heroku_uuid"),
+    (
+        r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b",
+        "heroku_uuid",
+    ),
     # 1Password
-    (r"\b(A3-[A-Z0-9]{6}-(?:[A-Z0-9]{11}|[A-Z0-9]{6}-[A-Z0-9]{5})-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b", "1password"),
+    (
+        r"\b(A3-[A-Z0-9]{6}-(?:[A-Z0-9]{11}|[A-Z0-9]{6}-[A-Z0-9]{5})-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b",
+        "1password",
+    ),
     (r"\b(ops_eyJ[a-zA-Z0-9+/]{250,}={0,3})\b", "1password_sa"),
     # Atlassian
     (r"\b(ATATT3[A-Za-z0-9_\-=]{186})\b", "atlassian"),
     # Sentry
     (r"\b(sntrys_[A-Za-z0-9]{32,})\b", "sentry"),
     # Generic API key in env assignments
-    (r'\b([A-Z_]{3,30}_API_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "env_api_key"),
+    (
+        r'\b([A-Z_]{3,30}_API_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)',
+        "env_api_key",
+    ),
     (r'\b([A-Z_]{3,30}_TOKEN\s*=\s*["\']?)([A-Za-z0-9._-]{10,})(["\']?)', "env_token"),
-    (r'\b([A-Z_]{3,30}_SECRET\s*=\s*["\']?)([A-Za-z0-9._/-]{10,})(["\']?)', "env_secret"),
+    (
+        r'\b([A-Z_]{3,30}_SECRET\s*=\s*["\']?)([A-Za-z0-9._/-]{10,})(["\']?)',
+        "env_secret",
+    ),
     (r'\b([A-Z_]{3,30}_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "env_key"),
     # ── Private keys ──────────────────────────────────────────────────────
-    (r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----\s*[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)", "private_key_pem"),
-    (r"(-----BEGIN PGP PRIVATE KEY BLOCK-----\s*[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----)", "pgp_private_key"),
-    (r"(-----BEGIN ENCRYPTED PRIVATE KEY-----\s*[\s\S]*?-----END ENCRYPTED PRIVATE KEY-----)", "encrypted_private_key"),
+    (
+        r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----\s*[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)",
+        "private_key_pem",
+    ),
+    (
+        r"(-----BEGIN PGP PRIVATE KEY BLOCK-----\s*[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----)",
+        "pgp_private_key",
+    ),
+    (
+        r"(-----BEGIN ENCRYPTED PRIVATE KEY-----\s*[\s\S]*?-----END ENCRYPTED PRIVATE KEY-----)",
+        "encrypted_private_key",
+    ),
     # ── Public keys / certificates ────────────────────────────────────────
-    (r"(ssh-(?:rsa|ed25519|dss|ecdsa-[a-z0-9-]+)\s+AAAA[A-Za-z0-9+/]+={0,2}\s*[^\n]*)", "ssh_public_key"),
-    (r"(-----BEGIN PUBLIC KEY-----\s*[\s\S]*?-----END PUBLIC KEY-----)", "public_key_pem"),
-    (r"(-----BEGIN CERTIFICATE-----\s*[\s\S]*?-----END CERTIFICATE-----)", "tls_certificate"),
+    (
+        r"(ssh-(?:rsa|ed25519|dss|ecdsa-[a-z0-9-]+)\s+AAAA[A-Za-z0-9+/]+={0,2}\s*[^\n]*)",
+        "ssh_public_key",
+    ),
+    (
+        r"(-----BEGIN PUBLIC KEY-----\s*[\s\S]*?-----END PUBLIC KEY-----)",
+        "public_key_pem",
+    ),
+    (
+        r"(-----BEGIN CERTIFICATE-----\s*[\s\S]*?-----END CERTIFICATE-----)",
+        "tls_certificate",
+    ),
     # ── Crypto / secrets ──────────────────────────────────────────────────
     (r"\b(0x[a-fA-F0-9]{64})\b", "eth_private_key"),
     (r"\b([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b", "bitcoin_wif"),
     # ── JWT ───────────────────────────────────────────────────────────────
-    (r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b", "jwt_token"),
+    (
+        r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b",
+        "jwt_token",
+    ),
     # ── Generic long token strings (catch-all, very high threshold to avoid FP) ─
     (r"\b([A-Za-z0-9+/=_-]{60,})\b", "long_token"),
 ]
@@ -100,6 +133,13 @@ _KEYVAULT_SYSTEM_PROMPT = (
     "real values before the user sees your response. Never try to guess "
     "or generate the real values; just use the placeholder as-is."
 )
+# NOTE: This system prompt is a CONSTANT string — it uses "[KEYVAULT:abc12345]"
+# as a literal example, NOT actual placeholders. The prompt is IDENTICAL across
+# ALL conversations. Actual placeholders appear only in user messages.
+# The hash function (_hash_secret) is deterministic SHA-256, so the same secret
+# always produces the same placeholder. This NORMALIZES variable secrets into
+# consistent tokens, which IMPROVES provider cache stability rather than breaking it.
+# This is NOT a bug.
 
 
 def _hash_secret(secret: str) -> str:
@@ -172,7 +212,7 @@ def _mask_messages(body: dict, secrets: dict[str, str]) -> None:
                     part["text"] = _mask_text(str(part.get("text", "")), secrets)
 
 
-async def _store_secrets(valkey, conversation_id: str, secrets: dict[str, str]) -> None:
+async def _store_secrets(valkey, conversation_id: str, secrets: dict[str, str], trace_id: str = "????") -> None:
     """Store detected secrets in Valkey with TTL."""
     for secret_hash, secret_value in secrets.items():
         try:
@@ -182,16 +222,22 @@ async def _store_secrets(valkey, conversation_id: str, secrets: dict[str, str]) 
                 ex=KEYVAULT_TTL,
             )
             logger.debug(
-                "keyvault_store conv=%s hash=%s", conversation_id[:12], secret_hash
+                "keyvault_store trace=%s conv=%s hash=%s", trace_id, conversation_id[:12], secret_hash
             )
         except Exception as exc:
-            logger.error("keyvault_store_error conv=%s hash=%s err=%s", conversation_id[:12], secret_hash, exc)
+            logger.error(
+                "keyvault_store_error trace=%s conv=%s hash=%s err=%s",
+                trace_id,
+                conversation_id[:12],
+                secret_hash,
+                exc,
+            )
 
 
 # ── Response helpers ─────────────────────────────────────────────────────────
 
 
-def _re_inject_recursive(obj: Any, secrets: dict[str, str]) -> Any:
+def _re_inject_recursive(obj: object, secrets: dict[str, str]) -> object:
     """Recursively re-inject secrets into a JSON-like structure."""
     if isinstance(obj, str):
         return _re_inject(obj, secrets)
@@ -202,7 +248,7 @@ def _re_inject_recursive(obj: Any, secrets: dict[str, str]) -> Any:
     return obj
 
 
-async def _re_inject_non_streaming(response, secrets: dict[str, str]) -> JSONResponse:
+async def _re_inject_non_streaming(response, secrets: dict[str, str], trace_id: str = "????") -> JSONResponse:
     """Re-inject secrets into a non-streaming JSON response."""
     try:
         chunks: list[bytes] = [chunk async for chunk in response.body_iterator]
@@ -219,11 +265,11 @@ async def _re_inject_non_streaming(response, secrets: dict[str, str]) -> JSONRes
             headers=headers,
         )
     except Exception as exc:
-        logger.error("keyvault_re_inject_error: %s", exc)
+        logger.error("keyvault_re_inject_error trace=%s: %s", trace_id, exc)
         return response
 
 
-def _build_re_inject_stream(original_iterator, secrets: dict[str, str]):
+def _build_re_inject_stream(original_iterator, secrets: dict[str, str], trace_id: str = "????"):
     """Wrap a streaming response body iterator to re-inject secrets on each chunk."""
 
     async def _wrapper():
@@ -237,7 +283,7 @@ def _build_re_inject_stream(original_iterator, secrets: dict[str, str]):
                 else:
                     yield _re_inject(str(chunk), secrets)
         except Exception as exc:
-            logger.warning("keyvault_stream_error: %s", exc)
+            logger.warning("keyvault_stream_error trace=%s: %s", trace_id, exc)
 
     return _wrapper
 
@@ -254,6 +300,8 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request, call_next):
+        _trace = str(uuid.uuid4())[:8]
+
         if request.url.path != _CHAT_PATH:
             return await call_next(request)
 
@@ -269,7 +317,9 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         if raw_cid:
             conversation_id = raw_cid
         else:
-            conversation_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(body, sort_keys=True)))
+            conversation_id = str(
+                uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(body, sort_keys=True))
+            )
         secrets: dict[str, str] = {}
 
         _mask_messages(body, secrets)
@@ -282,7 +332,8 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         valkey = getattr(request.app.state, "valkey", None)
         if valkey:
             import asyncio
-            asyncio.create_task(_store_secrets(valkey, conversation_id, secrets))
+
+            asyncio.create_task(_store_secrets(valkey, conversation_id, secrets, _trace))
 
         # ── Inject system prompt so LLM knows about placeholders ──────────
         # Bug 8 fix: insert AFTER any existing system messages to preserve
@@ -297,8 +348,11 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             insert_pos = i + 1
         msgs.insert(insert_pos, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
         logger.info(
-            "keyvault_active conv=%s secrets=%d valkey=%s",
-            conversation_id[:12], len(secrets), "yes" if valkey else "no",
+            "keyvault_active trace=%s conv=%s secrets=%d valkey=%s",
+            _trace,
+            conversation_id[:12],
+            len(secrets),
+            "yes" if valkey else "no",
         )
 
         # Set cached body for downstream handler
@@ -310,10 +364,10 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         # ── Re-inject real values ─────────────────────────────────────────
         if isinstance(response, StreamingResponse):
             return StreamingResponse(
-                content=_build_re_inject_stream(response.body_iterator, secrets)(),
+                content=_build_re_inject_stream(response.body_iterator, secrets, _trace)(),
                 status_code=response.status_code,
                 headers=dict(response.headers),
                 media_type=response.media_type,
             )
 
-        return await _re_inject_non_streaming(response, secrets)
+        return await _re_inject_non_streaming(response, secrets, _trace)

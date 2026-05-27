@@ -40,9 +40,7 @@ async def list_models(request: Request):
         # endpoint (api_base without /v1/ suffix, or provider=anthropic) supports
         # the ``thinking`` parameter.
         supports_thinking = any(
-            phys.api_base
-            and "/v1" not in phys.api_base
-            for phys in pm.physical_models
+            phys.api_base and "/v1" not in phys.api_base for phys in pm.physical_models
         )
         caps = dict(ALL_CAPABILITIES)
         caps["thinking"] = supports_thinking

@@ -122,16 +122,6 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/mimo-v2-pro
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 128000
-        note: "Go primary: MiMo V2 Pro. Especializado en código."
-      - provider: opencode-go
         model: openai/mimo-v2.5-pro
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
@@ -140,7 +130,17 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 128000
-        note: "Go fallback: MiMo V2.5 Pro (~6.450 req/mes)."
+        note: "Go primary: MiMo V2.5 Pro. Especializado en código (~6.450 req/mes)."
+      - provider: opencode-go
+        model: openai/mimo-v2-pro
+        api_base: https://opencode.ai/zen/go/v1
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 128000
+        note: "Go fallback: MiMo V2 Pro."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true

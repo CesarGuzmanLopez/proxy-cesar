@@ -44,7 +44,7 @@ _CONFIG = load_config()
         ("local/gpt-4o-mini", "normal"),
         ("o3", "pensamiento-profundo-caro"),
         ("local/o3", "pensamiento-profundo-caro"),
-        ("o4-mini", "pensamiento-profundo-caro"),
+        ("o4-mini", "pensamiento-rapido"),
         # Google alias
         ("gemini-2.5-flash", "vision"),
         ("local/gemini-2.5-flash", "vision"),

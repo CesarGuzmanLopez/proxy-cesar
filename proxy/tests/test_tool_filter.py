@@ -53,7 +53,7 @@ def test_tareas_avanzadas_no_parallel_returns_all():
         pm.physical_models, _make_caps(has_parallel_tools=False)
     )
     models = [m.model for m in result]
-    assert len(models) == 2
+    assert len(models) == 3
     assert "deepseek/deepseek-v4-pro" in models
     assert "deepseek/deepseek-v4-flash" in models
 

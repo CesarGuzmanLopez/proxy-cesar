@@ -11,6 +11,8 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
+from src.config.settings import settings
+
 logger = logging.getLogger(__name__)
 
 # Paths that do NOT require authentication
@@ -22,6 +24,18 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
         "/redoc",
     }
 )
+
+
+def _get_api_key() -> str:
+    """Resolve API key with runtime override support.
+
+    Primary source is settings.proxy_api_key (from .env / env vars at startup).
+    Falls back to os.environ for test compatibility (monkeypatch after import).
+    """
+    key = settings.proxy_api_key
+    if not key:
+        key = os.environ.get("PROXY_API_KEY", "")
+    return key
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -36,8 +50,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if normalized_path in PUBLIC_PATHS:
             return await call_next(request)
 
-        # Dev mode — auth disabled if PROXY_API_KEY is not set
-        api_key = os.getenv("PROXY_API_KEY", "")
+        # Dev mode — auth disabled if proxy_api_key is not set
+        api_key = _get_api_key()
         if not api_key:
             return await call_next(request)
 

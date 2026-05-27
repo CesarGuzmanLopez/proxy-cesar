@@ -43,12 +43,27 @@ def _make_text_msg(text: str = "Hello") -> dict:
     return {"role": "user", "content": text}
 
 
-def _make_mock_litellm(description: str = "A screenshot of a code editor."):
-    """Create a mock for call_litellm that returns a description."""
+def _make_mock_litellm_individual(description: str = "A screenshot."):
+    """Mock for individual describe_image() calls — returns plain string."""
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.content = description
     mock_response.usage.completion_tokens = 15
+    return mock_response
+
+
+def _make_mock_litellm(description: str = "A screenshot of a code editor.", count: int = 1):
+    """Mock for batch auto_describe_images() calls — returns JSON array.
+
+    The batch parser expects a JSON array of strings as the response content.
+    """
+    import json as _json
+    descriptions = [f"{description}" if i == 0 else f"{description} ({i+1})" for i in range(count)]
+    json_response = _json.dumps(descriptions)
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock()]
+    mock_response.choices[0].message.content = json_response
+    mock_response.usage.completion_tokens = 15 * count
     return mock_response
 
 
@@ -112,7 +127,7 @@ class TestDescribeImage:
     @patch("src.service.multimedia.image_describer.call_litellm")
     async def test_calls_litellm_with_correct_args(self, mock_call):
         """describe_image calls call_litellm with correct vision model."""
-        mock_call.return_value = _make_mock_litellm("A screenshot.")
+        mock_call.return_value = _make_mock_litellm_individual("A screenshot.")
         desc, tokens = await describe_image(
             image_url="https://example.com/img.png",
             detail="high",
@@ -137,7 +152,7 @@ class TestDescribeImage:
     @patch("src.service.multimedia.image_describer.call_litellm")
     async def test_returns_description_and_tokens(self, mock_call):
         """Returns (description_text, tokens_used)."""
-        mock_call.return_value = _make_mock_litellm("A diagram of architecture.")
+        mock_call.return_value = _make_mock_litellm_individual("A diagram of architecture.")
         desc, tokens = await describe_image(
             image_url="https://example.com/diag.png",
             detail="auto",
@@ -197,7 +212,7 @@ class TestAutoDescribeImages:
     @patch("src.service.multimedia.image_describer.call_litellm")
     async def test_multiple_images_sequential_tags(self, mock_call):
         """Multiple images → #1, #2, #3 sequential tags."""
-        mock_call.return_value = _make_mock_litellm("Description.")
+        mock_call.return_value = _make_mock_litellm("Description.", count=3)
         messages = [
             _make_image_msg("https://example.com/a.png"),
             _make_image_msg("https://example.com/b.png"),
@@ -209,6 +224,7 @@ class TestAutoDescribeImages:
         )
         assert meta["images_described"] == 3
         assert meta["unique_images_described"] == 3
+        mock_call.assert_awaited_once()  # Single batch call
         # Each modified message should have the tag
         for msg in modified:
             content = msg["content"]
@@ -222,7 +238,7 @@ class TestAutoDescribeImages:
     @patch("src.service.multimedia.image_describer.call_litellm")
     async def test_deduplicates_urls(self, mock_call):
         """Same URL → described once, metadata shows skipped duplicate."""
-        mock_call.return_value = _make_mock_litellm("Description.")
+        mock_call.return_value = _make_mock_litellm("Description.", count=1)
         messages = [
             _make_image_msg("https://example.com/same.png"),
             _make_image_msg("https://example.com/same.png"),
@@ -234,7 +250,7 @@ class TestAutoDescribeImages:
         assert meta["images_described"] == 2  # Both instances tagged
         assert meta["unique_images_described"] == 1  # Only 1 unique
         assert meta["duplicate_images_skipped"] == 1
-        mock_call.assert_awaited_once()  # Only one API call
+        mock_call.assert_awaited_once()  # One batch call
 
     @patch("src.service.multimedia.image_describer.call_litellm")
     async def test_preserves_non_image_content(self, mock_call):
@@ -267,14 +283,14 @@ class TestAutoDescribeImages:
     @patch("src.service.multimedia.image_describer.call_litellm")
     async def test_handles_detail_level(self, mock_call):
         """detail parameter is passed through to the vision model."""
-        mock_call.return_value = _make_mock_litellm("Description.")
+        mock_call.return_value = _make_mock_litellm("Description.", count=1)
         messages = [_make_image_msg("https://example.com/img.png", detail="high")]
         modified, meta = await auto_describe_images(
             messages,
             "gemini/gemini-3.5-flash",
         )
         assert meta["images_described"] == 1
-        mock_call.assert_called_once()
+        mock_call.assert_awaited_once()
         _, kwargs = mock_call.call_args
         msg = kwargs["messages"][0]
         content = msg["content"]
