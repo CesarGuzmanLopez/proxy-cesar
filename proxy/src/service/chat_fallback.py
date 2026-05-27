@@ -5,6 +5,7 @@ and provider-specific cache optimisations.
 """
 
 import logging
+import re
 import time
 import uuid
 
@@ -212,12 +213,16 @@ async def _try_physical_model(
 
     raw_thinking = kwargs.get("thinking", None)
 
-    # Determine reasoning capability from model prefix + provider
+    # Determine reasoning capability from model prefix + provider.
+    # Only actual OpenAI o-series models (o1, o3, o4-mini, etc.) support
+    # reasoning_effort. Models with openai/ prefix that are NOT actual
+    # OpenAI models (e.g. kimi-k2.5, qwen3.6-plus) get auto.
     supports_anthropic = model_prefix == "anthropic" or provider == "anthropic"
-    supports_openai = model_prefix == "openai" or provider == "openai"
+    is_openai_reasoning_model = bool(re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model))
+    supports_reasoning_effort = is_openai_reasoning_model
     if supports_anthropic:
         reasoning_capability = "anthropic"
-    elif supports_openai:
+    elif supports_reasoning_effort:
         reasoning_capability = "openai"
     else:
         reasoning_capability = "other"
@@ -236,7 +241,7 @@ async def _try_physical_model(
 
     if supports_anthropic and thinking_dict is not None:
         call_kwargs["thinking"] = thinking_dict
-    elif supports_openai and reasoning_effort is not None:
+    elif supports_reasoning_effort and reasoning_effort is not None:
         call_kwargs["reasoning_effort"] = reasoning_effort
     # else: auto — no param sent, provider decides
 

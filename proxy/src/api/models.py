@@ -7,6 +7,8 @@ Local models (Ollama, LM Studio) are discovered live and included with
 their actual capabilities and a conservative 30% context window limit.
 """
 
+import re
+
 from fastapi import APIRouter, Request
 
 from src.adapters.local_discovery import discover_local_models
@@ -43,7 +45,10 @@ async def list_models(request: Request):
             model_prefix = phys.model.split("/")[0].lower() if "/" in phys.model else prov
             if prov == "anthropic" or model_prefix == "anthropic":
                 supports_thinking = True
-            if prov == "openai" or model_prefix == "openai":
+            # Only actual OpenAI o-series models (o1, o3, o4-mini, etc.) support
+            # reasoning_effort. Models with openai/ prefix that are NOT actual
+            # OpenAI models (e.g. kimi-k2.5, qwen3.6-plus) get auto.
+            if re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model):
                 supports_reasoning_effort = True
 
         caps = dict(ALL_CAPABILITIES)
