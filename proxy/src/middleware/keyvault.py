@@ -24,9 +24,15 @@ KEYVAULT_TTL = 3600
 PLACEHOLDER_PREFIX = "KEYVAULT"
 
 _SECRET_PATTERNS: list[tuple[str, str]] = [
-    # ── API keys (prefixed — highly specific, low false positive) ──────────
-    # Generic sk- / gsk_ / skg_ / usk_ (any 0-1 char before/after 'sk')
+    # ── API keys (prefixed — provider-specific, low false positive) ────────
+    # Generic sk- / gsk_ / usk_ / skg_ (0-1 char before/after 'sk')
     (r"\b([a-z]{0,1}sk[a-z]{0,1}[-_][A-Za-z0-9_-]{10,})\b", "sk_key"),
+    # OpenAI project key
+    (r"\b(sk-proj-[A-Za-z0-9_-]{20,})\b", "openai_proj"),
+    # Anthropic (exact format)
+    (r"\b(sk-ant-(?:api03|admin01)-[a-zA-Z0-9_-]{93}AA)\b", "anthropic"),
+    # OpenRouter
+    (r"\b(sk-or-v1-[A-Za-z0-9]{10,})\b", "openrouter"),
     # GitHub
     (r"\b(ghp_[A-Za-z0-9]{36})\b", "github_classic"),
     (r"\b(github_pat_[A-Za-z0-9-_]{10,})\b", "github_pat"),
@@ -34,22 +40,37 @@ _SECRET_PATTERNS: list[tuple[str, str]] = [
     (r"\b(glpat-[A-Za-z0-9-_]{10,})\b", "gitlab"),
     # HuggingFace
     (r"\b(hf_[A-Za-z0-9]{10,})\b", "huggingface"),
-    # Google AI
+    # Google AI / GCP
     (r"\b(AIza[0-9A-Za-z_-]{35})\b", "google_ai"),
+    (r"\b(ya29\.[0-9A-Za-z_-]{50,})\b", "google_oauth"),
     # AWS
-    (r"\b(AKIA[0-9A-Z]{16})\b", "aws_access"),
-    (r"\b([A-Za-z0-9+/]{40})[?&](\S{6,})?\b", "aws_secret"),
+    (r"\b((?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16})\b", "aws_access"),
+    (r"\b(ABSK[A-Za-z0-9+/]{109,269}={0,2})\b", "aws_bedrock"),
+    # Azure
+    (r"\b([a-zA-Z0-9_~.]{3}\dQ~[a-zA-Z0-9_~.-]{31,34})\b", "azure"),
     # Slack
-    (r"\b(xox[bpsar]-(?:[0-9]+-){0,3}[A-Za-z0-9-]{10,})\b", "slack"),
+    (r"\b(xox[bpsar]-(?:\d+-){0,3}[A-Za-z0-9-]{10,})\b", "slack"),
+    # Discord
+    (r"\b([A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27})\b", "discord"),
     # Stripe
     (r"\b(sk_live_[0-9a-zA-Z]{24,})\b", "stripe_live"),
     (r"\b(rk_live_[0-9a-zA-Z]{24,})\b", "stripe_restricted"),
     # Twilio
     (r"\b(SK[0-9a-fA-F]{32})\b", "twilio"),
-    # Generic API key in env assignment
+    # Heroku (UUID-based API key)
+    (r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b", "heroku_uuid"),
+    # 1Password
+    (r"\b(A3-[A-Z0-9]{6}-(?:[A-Z0-9]{11}|[A-Z0-9]{6}-[A-Z0-9]{5})-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b", "1password"),
+    (r"\b(ops_eyJ[a-zA-Z0-9+/]{250,}={0,3})\b", "1password_sa"),
+    # Atlassian
+    (r"\b(ATATT3[A-Za-z0-9_\-=]{186})\b", "atlassian"),
+    # Sentry
+    (r"\b(sntrys_[A-Za-z0-9]{32,})\b", "sentry"),
+    # Generic API key in env assignments
     (r'\b([A-Z_]{3,30}_API_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "env_api_key"),
-    # Generic API key in env (KEY=value)
     (r'\b([A-Z_]{3,30}_TOKEN\s*=\s*["\']?)([A-Za-z0-9._-]{10,})(["\']?)', "env_token"),
+    (r'\b([A-Z_]{3,30}_SECRET\s*=\s*["\']?)([A-Za-z0-9._/-]{10,})(["\']?)', "env_secret"),
+    (r'\b([A-Z_]{3,30}_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "env_key"),
     # ── Private keys ──────────────────────────────────────────────────────
     (r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----\s*[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)", "private_key_pem"),
     (r"(-----BEGIN PGP PRIVATE KEY BLOCK-----\s*[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----)", "pgp_private_key"),
@@ -63,8 +84,8 @@ _SECRET_PATTERNS: list[tuple[str, str]] = [
     (r"\b([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b", "bitcoin_wif"),
     # ── JWT ───────────────────────────────────────────────────────────────
     (r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b", "jwt_token"),
-    # ── Generic long token strings (catch-all, high threshold to avoid FP) ─
-    (r"\b([A-Za-z0-9+/=_-]{40,})\b", "long_token"),
+    # ── Generic long token strings (catch-all, very high threshold to avoid FP) ─
+    (r"\b([A-Za-z0-9+/=_-]{60,})\b", "long_token"),
 ]
 
 _PLACEHOLDER_RE = re.compile(rf"\[{PLACEHOLDER_PREFIX}:([a-f0-9]{{8}})\]")
