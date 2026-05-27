@@ -1,13 +1,10 @@
 # Diagramas de Arquitectura — proxy-cesar
 
-> **Advertencia:** Estos diagramas reflejan la arquitectura **actual** post-reparación (Mayo 2026).
-> Si el código cambia, actualiza este documento.
+> **Advertencia:** Reflejan el estado actual (Mayo 2026). Si el código cambia, actualiza este documento.
 
 ---
 
-## 1. Flujo de una Solicitud Chat
-
-Un pseudo-modelo se resuelve a un physical model, se aplican capas (KeyVault, Blob Vault, Compactación), y se cursa la solicitud al LLM externo.
+## 1. Flujo de Solicitud Chat
 
 ```mermaid
 sequenceDiagram
@@ -55,7 +52,7 @@ graph TB
     end
 
     subgraph Servicios
-        H[Caddy reverse proxy]
+        H[Caddy reverse proxy :443]
         I[proxy-cesar.service<br/>FastAPI :9110]
         J[Redis nativo :6380<br/>systemd redis-6380]
         K[deepbde-redis Docker :6379]
@@ -77,9 +74,6 @@ graph TB
     I -.->|No depende| M
 ```
 
-> **Nota:** El proxy NO usa PostgreSQL. Usa SQLite como base de datos.
-> El proxy NO usa el Redis Docker de deepbde (puerto 6379). Usa Redis nativo en puerto 6380.
-
 ---
 
 ## 3. Pseudo-Modelos → Physical Models
@@ -87,12 +81,12 @@ graph TB
 ```mermaid
 graph LR
     subgraph Pseudo Modelos
-        NORMAL[norma<br/>kimi-k2.5]
+        NORMAL[normal<br/>kimi-k2.5]
         TAREA[tareas-avanzadas<br/>kimi-k2.6]
         PROF[pensamiento-profundo-caro<br/>qwen3.7-max]
-        RAP[pensamiento-rapido<br/>custom]
+        RAP[pensamiento-rapido<br/>qwen3.6-plus]
         VIS[vision<br/>mimo-v2-omni]
-        COD[codigo-preciso<br/>kimi-k2.5]
+        COD[codigo-preciso<br/>mimo-v2-pro]
         GRAT[normal-gratis<br/>Nemotron]
         MASS[massive-fast<br/>minimax-m2.7]
         COMP[compactador<br/>GLM-5.1]
@@ -100,9 +94,10 @@ graph LR
     end
 
     subgraph Proveedores
-        OG[OpenCode Go<br/>api.opencode.net]
-        OR[OpenRouter<br/>openrouter.ai]
-        GQ[Groq<br/>groq.com]
+        OG[OpenCode Go]
+        OR[OpenRouter]
+        GQ[Groq]
+        DS[DeepSeek]
     end
 
     NORMAL -->|primary| OG
@@ -111,25 +106,36 @@ graph LR
     RAP -->|primary| OG
     VIS -->|primary| OG
     COD -->|primary| OG
-    GRAT -->|primary| OR
     MASS -->|primary| OG
     COMP -->|primary| OG
     FLASH -->|primary| OG
-    GRAT -.->|fallback| GQ
+    GRAT -->|primary| OR
+
+    NORMAL -.->|fallback| DS
+    PROF -.->|fallback| DS
+    TAREA -.->|fallback| DS
+    RAP -.->|fallback| DS
+    COD -.->|fallback| DS
+    FLASH -.->|fallback| DS
+    COMP -.->|fallback| GQ
+    COMP -.->|fallback| DS
     VIS -.->|fallback| GQ
     MASS -.->|fallback| GQ
+    GRAT -.->|fallback| GQ
 ```
 
-> **Detalle de physical models:**
-> - `openai/kimi-k2.5` → normal, codigo-preciso
-> - `openai/kimi-k2.6` → tareas-avanzadas
-> - `anthropic/qwen3.7-max` → pensamiento-profundo-caro (usa endpoint Anthropic)
-> - `openai/mimo-v2-omni` → vision
-> - `openai/minimax-m2.7` → massive-fast
-> - `openai/qwen3.5-plus` → flash-lowcost
-> - `openai/glm-5.1` → compactador
-> - `openrouter/nvidia/nemotron-3-super-120b-a12b:free` → normal-gratis
-> - `deepseek/deepseek-v4-pro` y `deepseek/deepseek-v4-flash` → fallbacks varios
+**Physical models clave:**
+- `openai/kimi-k2.5` → normal
+- `openai/kimi-k2.6` → tareas-avanzadas
+- `anthropic/qwen3.7-max` → pensamiento-profundo-caro (usa endpoint Anthropic de Go)
+- `openai/mimo-v2-omni` → vision
+- `openai/mimo-v2-pro` → codigo-preciso
+- `openai/minimax-m2.7` → massive-fast
+- `openai/qwen3.5-plus` → flash-lowcost
+- `openai/qwen3.6-plus` → pensamiento-rapido
+- `openai/glm-5.1` → compactador
+- `openrouter/nvidia/nemotron-3-super-120b-a12b:free` → normal-gratis
+- `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash` → fallbacks
 
 ---
 
@@ -202,33 +208,30 @@ sequenceDiagram
     Dev->>GH: git push origin main
     GH->>GA: trigger deploy.yml
     GA->>Server: ssh root@plata
-    Server->>Server: git clone --branch main --depth 1
-    Server->>Server: Backup SQLite DB (si existe)
+    Server->>Server: git clone --branch main --depth 1 /tmp/proxy-cesar
+    Server->>Server: Backup SQLite DB (proxy.db → proxy.db.bak)
     Server->>Server: chown -R proxy:proxy /tmp/proxy-cesar
-    Server->>Server: Restore SQLite DB desde backup
+    Server->>Server: Restore SQLite DB (proxy.db.bak → proxy.db)
     Server->>Server: systemctl restart proxy-cesar
     Server->>Server: Health check (curl localhost:9110/health)
     Server-->>GA: Deploy result (OK/FAIL)
     GA-->>Dev: Notificación
 ```
 
-> **Nota importante:** El deploy corre como `root`, pero el servicio corre como `proxy`.
-> El `chown` post-clone es crítico para que el servicio pueda leer los archivos.
-> La DB SQLite se preserva entre deploys mediante backup/restore.
+> **Nota:** El deploy corre como `root`, el servicio corre como `proxy`. El `chown` post-clone es crítico. La DB se preserva entre deploys.
 
 ---
 
-## 7. Puerto de Servicios en el Servidor
+## 7. Puertos en el Servidor
 
 | Puerto | Servicio | Propietario | Proxy-related |
 |--------|----------|-------------|---------------|
-| 80     | HTTP redirect → 443 | Caddy | No directo |
-| 443    | HTTPS (Caddy) | Caddy | Sí (rutea a :9110) |
-| 9110   | proxy-cesar FastAPI | proxy | **Sí** |
-| 6380   | Redis nativo | proxy | **Sí** (cache + rate limit) |
-| 6379   | Redis Docker (deepbde) | root | No |
-| 5432   | PostgreSQL 14 | postgres | No |
-| 8080   | chemistry-apps (Docker) | root | No |
-| 4210   | chemistry-apps API (Docker) | root | No |
-| 22     | SSH | root | No |
-| 8000   | deepbde-backend (Docker) | root | No |
+| 443 | HTTPS (Caddy) | Caddy | Sí (→ :9110) |
+| 9110 | proxy-cesar FastAPI | proxy | **Sí** |
+| 6380 | Redis nativo | proxy | **Sí** |
+| 6379 | Redis Docker (deepbde) | root | No |
+| 5432 | PostgreSQL 14 | postgres | No |
+| 8080 | chemistry-apps (Docker) | root | No |
+| 4210 | chemistry-apps API (Docker) | root | No |
+| 8000 | deepbde-backend (Docker) | root | No |
+| 22 | SSH | root | No |
