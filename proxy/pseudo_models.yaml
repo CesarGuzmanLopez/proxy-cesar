@@ -32,39 +32,7 @@ pseudo_models:
         note: "Fallback: DeepSeek V4 Pro directo. Razonamiento profundo."
     fallback_strategy: sequential
 
-  # ── Razonamiento avanzado con profundidad configurable ────────────────────
-  razonamiento-avanzado:
-    display_name: Razonamiento Avanzado
-    description: "Razonamiento profundo configurable. Default rápido (low). Usa thinking=high para análisis exhaustivo. Límite 120K tokens — compacta si lo superas."
-    input_token_threshold: 120000
-    context_window: 120000
-    default_thinking: low
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: auto_describe
-    physical_models:
-      - provider: opencode-go
-        model: anthropic/qwen3.7-max
-        api_base: https://opencode.ai/zen/go
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-        note: "Go primary: Qwen3.7 Max vía Anthropic /messages. Razonamiento premium (~4.770 req/mes)."
-      - provider: openrouter
-        model: openrouter/deepseek/deepseek-v4-pro
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-        note: "Fallback emergencia: DeepSeek V4 Pro vía OpenRouter. Similar capacidad, menor costo."
-    fallback_strategy: sequential
-
-  # ── Razonamiento ligero (NUEVO) ────────────────────────────────────────────
+  # ── Razonamiento ligero ────────────────────────────────────────────────────
   pensamiento-rapido:
     display_name: Pensamiento Rápido
     description: "Razonamiento ligero. Debug, code review, análisis rápidos. Límite 120K — usa compactalo si lo superas."
@@ -392,6 +360,4 @@ model_aliases:
   gemini-2.5-pro: codigo-preciso
   claude-sonnet-4-20250514: codigo-preciso
   claude-haiku-3-5-20241022: flash-lowcost
-  o3-high: razonamiento-avanzado
-  deep-research: razonamiento-avanzado
   default: normal
