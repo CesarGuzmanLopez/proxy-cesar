@@ -511,6 +511,22 @@ async def _handle_streaming_with_db(
     images_described: int = 0
     images_described_by: str | None = None
 
+    # Extract provider response headers (cache, rate-limit, request-id, etc.)
+    # and include them in the SSE response so the client can observe
+    # provider-level metadata.
+    _sse_headers = {"X-Conversation-Id": conversation_id}
+    if hasattr(litellm_response, "_provider_response_headers"):
+        provider_headers = litellm_response._provider_response_headers
+        if provider_headers:
+            # Forward rate-limit / OpenAI-style headers directly
+            for h in ("x-ratelimit-limit-requests", "x-ratelimit-remaining-requests",
+                       "x-ratelimit-limit-tokens", "x-ratelimit-remaining-tokens",
+                       "x-request-id", "x-cache"):
+                if h in provider_headers:
+                    _sse_headers[h] = str(provider_headers[h])
+            # Prefix remaining provider-specific headers (preserves all info)
+            _sse_headers["X-Provider-Headers"] = json.dumps(provider_headers)
+
     _streaming_response = StreamingResponse(
         _stream_response_generator(
             StreamContext(
@@ -543,7 +559,7 @@ async def _handle_streaming_with_db(
             )
         ),
         media_type="text/event-stream",
-        headers={"X-Conversation-Id": conversation_id},
+        headers=_sse_headers,
     )
     return _streaming_response
 

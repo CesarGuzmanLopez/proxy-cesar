@@ -563,6 +563,11 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
         else ctx.response
     )
 
+    # Sprint 10: attach provider response headers (cache, rate-limit, request-id)
+    provider_headers = getattr(ctx.response, "_provider_response_headers", None)
+    if provider_headers:
+        response_dict["provider_headers"] = provider_headers
+
     input_tokens, output_tokens = _parse_usage(response_dict)
     tool_meta = _process_tool_metadata(response_dict, ctx)
 

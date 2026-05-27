@@ -111,6 +111,33 @@ def _setup_keyclaw_proxy() -> None:
         os.environ.setdefault("NODE_EXTRA_CA_CERTS", str(keyclaw_ca))
 
 
+def _extract_response_headers(response) -> dict:
+    """Extract provider response headers from a LiteLLM response object.
+
+    Both streaming (CustomStreamWrapper) and non-streaming (ModelResponse)
+    LiteLLM responses store provider response headers in
+    ``_hidden_params["additional_headers"]``.  Streaming also stores raw
+    headers in ``_response_headers``.
+
+    Returns an empty dict if the response doesn't have headers (e.g. error
+    responses, non-standard providers).
+    """
+    try:
+        # CustomStreamWrapper (streaming) stores headers directly
+        raw = getattr(response, "_response_headers", None)
+        if raw:
+            return dict(raw)
+        # ModelResponse (non-streaming) stores headers in _hidden_params
+        hidden = getattr(response, "_hidden_params", None)
+        if hidden and isinstance(hidden, dict):
+            additional = hidden.get("additional_headers")
+            if additional:
+                return dict(additional)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return {}
+
+
 def normalise_stream_chunk(chunk) -> None:
     """Normalise a streaming chunk in-place so that ``content`` is always populated.
 
@@ -221,6 +248,16 @@ async def call_litellm(
         api_key=api_key,
         **kwargs,
     )
+
+    # ── Extract provider response headers ─────────────────────────────────
+    # Attach to the response object so callers get headers without any API
+    # surface change.  This must happen BEFORE wrapping the stream, since
+    # headers live on the response object itself, not in the stream chunks.
+    provider_headers = _extract_response_headers(response) if response is not None else {}
+    try:
+        response._provider_response_headers = provider_headers
+    except (AttributeError, TypeError):
+        pass
 
     # ── Normalise empty content (non-streaming) ────────────────────────────
     if not stream and response is not None:
