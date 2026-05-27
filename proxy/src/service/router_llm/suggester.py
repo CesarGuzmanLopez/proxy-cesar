@@ -102,6 +102,7 @@ async def evaluate_complexity(
             api_key=api_key,
             max_tokens=MAX_EVAL_TOKENS,
             temperature=0.0,
+            timeout=10.0,  # Fast timeout — router is advisory only
         )
         content: str = response.choices[0].message.content or ""
         result: dict = _parse_evaluation_response(content)

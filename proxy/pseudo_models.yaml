@@ -7,7 +7,7 @@ pseudo_models:
     context_window: 120000
     router_llm:
       enabled: true
-      suggester: flash-lowcost
+      suggester: pensamiento-rapido
       suggest_on_downgrade_only: true
     image_handling:
       on_downgrade: auto_describe
