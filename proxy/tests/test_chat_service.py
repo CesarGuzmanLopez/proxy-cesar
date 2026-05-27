@@ -183,39 +183,122 @@ def test_build_conversation_messages_does_not_mutate_input():
     assert current[0]["content"] == original_content
 
 
-# ── _normalise_thinking_param ────────────────────────────────────────────────
+# ── _normalise_reasoning_param ────────────────────────────────────────────────
 
 
-def test_normalise_thinking_param_none():
-    """None thinking param returns None."""
-    from src.service.chat_fallback import _normalise_thinking_param
+def test_normalise_reasoning_param_none():
+    """None thinking param returns (None, None) for any provider."""
+    from src.service.chat_fallback import _normalise_reasoning_param
 
-    assert _normalise_thinking_param(None) is None
-
-
-def test_normalise_thinking_param_bool_true():
-    """True becomes {'type': 'enabled'}."""
-    from src.service.chat_fallback import _normalise_thinking_param
-
-    result = _normalise_thinking_param(True)
-    assert result == {"type": "enabled"}
+    assert _normalise_reasoning_param(None, "anthropic") == (None, None)
+    assert _normalise_reasoning_param(None, "openai") == (None, None)
+    assert _normalise_reasoning_param(None, "openrouter") == (None, None)
 
 
-def test_normalise_thinking_param_bool_false():
-    """False returns {'type': 'disabled'}."""
-    from src.service.chat_fallback import _normalise_thinking_param
+def test_normalise_reasoning_param_bool_true_anthropic():
+    """True for Anthropic becomes ({'type': 'enabled'}, None)."""
+    from src.service.chat_fallback import _normalise_reasoning_param
 
-    result = _normalise_thinking_param(False)
-    assert result == {"type": "disabled"}
+    result = _normalise_reasoning_param(True, "anthropic")
+    assert result == ({"type": "enabled"}, None)
 
 
-def test_normalise_thinking_param_dict():
-    """Dict passes through unchanged."""
-    from src.service.chat_fallback import _normalise_thinking_param
+def test_normalise_reasoning_param_bool_true_openai():
+    """True for OpenAI returns (None, None) — auto."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    result = _normalise_reasoning_param(True, "openai")
+    assert result == (None, None)
+
+
+def test_normalise_reasoning_param_bool_false_anthropic():
+    """False for Anthropic returns ({'type': 'disabled'}, None)."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    result = _normalise_reasoning_param(False, "anthropic")
+    assert result == ({"type": "disabled"}, None)
+
+
+def test_normalise_reasoning_param_bool_false_openai():
+    """False for OpenAI returns (None, None) — auto."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    result = _normalise_reasoning_param(False, "openai")
+    assert result == (None, None)
+
+
+def test_normalise_reasoning_param_dict_anthropic():
+    """Dict for Anthropic passes through unchanged."""
+    from src.service.chat_fallback import _normalise_reasoning_param
 
     d = {"type": "enabled", "budget_tokens": 2000}
-    result = _normalise_thinking_param(d)
-    assert result == d
+    result = _normalise_reasoning_param(d, "anthropic")
+    assert result == (d, None)
+
+
+def test_normalise_reasoning_param_dict_openai():
+    """Dict for OpenAI returns (None, None) — auto (Anthropic format not applicable)."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    d = {"type": "enabled", "budget_tokens": 2000}
+    result = _normalise_reasoning_param(d, "openai")
+    assert result == (None, None)
+
+
+def test_normalise_reasoning_param_effort_anthropic():
+    """Effort strings for Anthropic map to budget_tokens."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    assert _normalise_reasoning_param("low", "anthropic") == ({"type": "enabled", "budget_tokens": 2048}, None)
+    assert _normalise_reasoning_param("medium", "anthropic") == ({"type": "enabled", "budget_tokens": 8192}, None)
+    assert _normalise_reasoning_param("high", "anthropic") == ({"type": "enabled", "budget_tokens": 16000}, None)
+    assert _normalise_reasoning_param("xhigh", "anthropic") == ({"type": "enabled", "budget_tokens": 32000}, None)
+    assert _normalise_reasoning_param("max", "anthropic") == ({"type": "enabled", "budget_tokens": 64000}, None)
+
+
+def test_normalise_reasoning_param_effort_openai():
+    """Effort strings for OpenAI map to reasoning_effort."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    assert _normalise_reasoning_param("low", "openai") == (None, "low")
+    assert _normalise_reasoning_param("medium", "openai") == (None, "medium")
+    assert _normalise_reasoning_param("high", "openai") == (None, "high")
+    assert _normalise_reasoning_param("xhigh", "openai") == (None, "high")
+    assert _normalise_reasoning_param("max", "openai") == (None, "high")
+
+
+def test_normalise_reasoning_param_effort_other():
+    """Effort strings for other providers return (None, None) — auto."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    assert _normalise_reasoning_param("high", "openrouter") == (None, None)
+    assert _normalise_reasoning_param("high", "deepseek") == (None, None)
+    assert _normalise_reasoning_param("high", "google-gemini") == (None, None)
+
+
+def test_normalise_reasoning_param_auto():
+    """"auto" string returns (None, None) for any provider."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    assert _normalise_reasoning_param("auto", "anthropic") == (None, None)
+    assert _normalise_reasoning_param("auto", "openai") == (None, None)
+    assert _normalise_reasoning_param("auto", "openrouter") == (None, None)
+
+
+def test_normalise_reasoning_param_disabled_anthropic():
+    """"disabled" string for Anthropic returns explicit disabled dict."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    result = _normalise_reasoning_param("disabled", "anthropic")
+    assert result == ({"type": "disabled"}, None)
+
+
+def test_normalise_reasoning_param_disabled_openai():
+    """"disabled" string for OpenAI returns (None, None) — auto."""
+    from src.service.chat_fallback import _normalise_reasoning_param
+
+    result = _normalise_reasoning_param("disabled", "openai")
+    assert result == (None, None)
 
 
 # ── _resolve_api_key ─────────────────────────────────────────────────────────

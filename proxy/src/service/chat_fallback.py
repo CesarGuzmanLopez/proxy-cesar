@@ -42,7 +42,7 @@ __all__ = [
     "_log_model_call_result",
     "_build_context_too_large_error",
     "_build_all_models_failed_error",
-    "_normalise_thinking_param",
+    "_normalise_reasoning_param",
     "_resolve_api_key",
 ]
 
@@ -50,24 +50,24 @@ __all__ = [
 # ── Helpers used by _try_physical_model ─────────────────────────────────────
 
 
-def _normalise_thinking_param(thinking: dict | str | bool | None) -> dict | None:
-    """Normalise ``thinking`` from client-friendly shorthands to Anthropic dict.
+def _normalise_reasoning_param(
+    thinking: dict | str | bool | None,
+    provider: str,
+) -> tuple[dict | None, str | None]:
+    """Normalise ``thinking`` into the format the target provider understands.
 
-    Accepts:
-      - ``{"type": "enabled", "budget_tokens": 16000}`` → as-is
-      - ``{"type": "disabled"}`` → as-is
-      - ``True`` / ``"enabled"`` → ``{"type": "enabled"}``  (provider default budget)
-      - ``False`` / ``"disabled"`` → ``{"type": "disabled"}``
-      - ``"low"`` → ``{"type": "enabled", "budget_tokens": 2048}``
-      - ``"medium"`` → ``{"type": "enabled", "budget_tokens": 8192}``
-      - ``"high"`` → ``{"type": "enabled", "budget_tokens": 16000}``
-      - ``"xhigh"`` → ``{"type": "enabled", "budget_tokens": 32000}``
-      - ``"max"`` → ``{"type": "enabled", "budget_tokens": 64000}``
-      - ``None`` → ``None``  (leave unset, provider default applies)
+    Returns ``(thinking_dict, reasoning_effort)`` where exactly one is set:
+      - Anthropic → ``(thinking_dict, None)``  (``thinking`` dict with budget_tokens)
+      - OpenAI   → ``(None, reasoning_effort_string)``  (``reasoning_effort`` param)
+      - Others   → ``(None, None)``  (auto — provider decides)
 
-    Effort strings (low→max) map to ``budget_tokens`` values compatible with
-    Anthropic's extended-thinking budget model.  The result is passed to
-    ``litellm.acompletion()`` which forwards it to the provider.
+    Accepts ``thinking`` in these forms:
+      - ``None`` → auto
+      - ``True`` / ``"enabled"`` → enabled with provider default budget
+      - ``False`` / ``"disabled"`` → auto (disabled = don't send)
+      - ``"low"``, ``"medium"``, ``"high"``, ``"xhigh"``, ``"max"`` → effort mapped per provider
+      - ``"auto"`` → auto
+      - ``{"type": ..., "budget_tokens": N}`` → passthrough for Anthropic, auto for others
     """
     _EFFORT_TO_BUDGET = {
         "low": 2048,
@@ -76,20 +76,65 @@ def _normalise_thinking_param(thinking: dict | str | bool | None) -> dict | None
         "xhigh": 32000,
         "max": 64000,
     }
+    # Map extended effort strings (xhigh, max) to max OpenAI tier
+    _EFFORT_TO_REASONING = {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high",
+    }
+
+    provider_lower = provider.lower() if provider else ""
+    is_anthropic = provider_lower == "anthropic"
+    is_openai = provider_lower == "openai"
 
     if thinking is None:
-        return None
+        return None, None
+
     if isinstance(thinking, bool):
-        return {"type": "enabled" if thinking else "disabled"}
+        if not thinking:
+            # Explicit disabled: Anthropic gets {"type": "disabled"}
+            if is_anthropic:
+                return {"type": "disabled"}, None
+            return None, None  # other providers → auto
+        # True / enabled
+        if is_anthropic:
+            return {"type": "enabled"}, None
+        return None, None  # non-Anthropic → auto (no budget param to send)
+
     if isinstance(thinking, str):
         tl = thinking.lower()
-        if tl in ("enabled", "disabled"):
-            return {"type": tl}
-        budget = _EFFORT_TO_BUDGET.get(tl)
-        if budget is not None:
-            return {"type": "enabled", "budget_tokens": budget}
-        return {"type": "enabled"}
-    return thinking
+        if tl == "disabled":
+            if is_anthropic:
+                return {"type": "disabled"}, None
+            return None, None
+        if tl in ("auto",):
+            return None, None
+        if tl == "enabled":
+            if is_anthropic:
+                return {"type": "enabled"}, None
+            return None, None
+        # Effort string
+        if is_anthropic:
+            budget = _EFFORT_TO_BUDGET.get(tl)
+            if budget is not None:
+                return {"type": "enabled", "budget_tokens": budget}, None
+            return {"type": "enabled"}, None  # unknown string → enabled, no budget
+        if is_openai:
+            effort = _EFFORT_TO_REASONING.get(tl)
+            if effort is not None:
+                return None, effort
+            return None, None  # unknown string → auto
+        return None, None  # other providers → auto
+
+    # Dict passthrough
+    if isinstance(thinking, dict):
+        if is_anthropic:
+            return thinking, None
+        return None, None  # non-Anthropic → auto
+
+    return None, None
 
 
 def _resolve_api_key(phys) -> str | None:
@@ -166,22 +211,34 @@ async def _try_physical_model(
     api_key = _resolve_api_key(phys)
 
     raw_thinking = kwargs.get("thinking", None)
-    thinking = _normalise_thinking_param(raw_thinking)
-    supports_thinking = model_prefix == "anthropic" or provider == "anthropic"
-    if thinking is not None:
-        logger.debug(
-            "thinking    | trace=%s model=%s thinking=%s supports=%s",
-            _trace_id,
-            phys.model,
-            thinking,
-            supports_thinking,
-        )
+
+    # Determine reasoning capability from model prefix + provider
+    supports_anthropic = model_prefix == "anthropic" or provider == "anthropic"
+    supports_openai = model_prefix == "openai" or provider == "openai"
+    if supports_anthropic:
+        reasoning_capability = "anthropic"
+    elif supports_openai:
+        reasoning_capability = "openai"
+    else:
+        reasoning_capability = "other"
+
+    thinking_dict, reasoning_effort = _normalise_reasoning_param(raw_thinking, reasoning_capability)
+    logger.debug(
+        "reasoning   | trace=%s model=%s raw=%s cap=%s",
+        _trace_id,
+        phys.model,
+        raw_thinking,
+        reasoning_capability,
+    )
 
     call_kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    if not supports_thinking:
-        call_kwargs.pop("thinking", None)
-    elif thinking is not None:
-        call_kwargs["thinking"] = thinking
+    call_kwargs.pop("thinking", None)  # Remove raw — replaced by formatted version below
+
+    if supports_anthropic and thinking_dict is not None:
+        call_kwargs["thinking"] = thinking_dict
+    elif supports_openai and reasoning_effort is not None:
+        call_kwargs["reasoning_effort"] = reasoning_effort
+    # else: auto — no param sent, provider decides
 
     response = await call_litellm(
         model=phys.model,

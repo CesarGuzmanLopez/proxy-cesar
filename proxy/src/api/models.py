@@ -36,14 +36,19 @@ async def list_models(request: Request):
 
     # Pseudo-models from config
     for name, pm in config.pseudo_models.items():
-        # Detect thinking support: any physical model using an Anthropic-compatible
-        # endpoint (api_base without /v1/ suffix, or provider=anthropic) supports
-        # the ``thinking`` parameter.
-        supports_thinking = any(
-            phys.api_base and "/v1" not in phys.api_base for phys in pm.physical_models
-        )
+        supports_thinking = False
+        supports_reasoning_effort = False
+        for phys in pm.physical_models:
+            prov = phys.provider.lower() if phys.provider else ""
+            model_prefix = phys.model.split("/")[0].lower() if "/" in phys.model else prov
+            if prov == "anthropic" or model_prefix == "anthropic":
+                supports_thinking = True
+            if prov == "openai" or model_prefix == "openai":
+                supports_reasoning_effort = True
+
         caps = dict(ALL_CAPABILITIES)
         caps["thinking"] = supports_thinking
+        caps["reasoning_effort"] = supports_reasoning_effort
 
         models.append(
             {

@@ -58,7 +58,7 @@ from src.service.chat_persistence import (
 
 # ── Re-exports for backward compatibility ────────────────────────────────────
 from src.adapters.cache.message_ordering import canonicalize_message_order
-from src.service.chat_fallback import _normalise_thinking_param, _try_physical_model
+from src.service.chat_fallback import _normalise_reasoning_param, _try_physical_model
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ __all__ = [
     # Re-exports
     "call_with_fallback",
     "_try_physical_model",
-    "_normalise_thinking_param",
+    "_normalise_reasoning_param",
     "_resolve_api_key",
     "build_conversation_messages",
     "handle_auto_describe",
