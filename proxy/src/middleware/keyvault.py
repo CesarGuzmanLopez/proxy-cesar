@@ -249,14 +249,18 @@ def _re_inject_recursive(obj: object, secrets: dict[str, str]) -> object:
 
 
 async def _re_inject_non_streaming(response, secrets: dict[str, str], trace_id: str = "????") -> JSONResponse:
-    """Re-inject secrets into a non-streaming JSON response."""
+    """Re-inject secrets into a non-streaming response."""
     try:
-        chunks: list[bytes] = [chunk async for chunk in response.body_iterator]
-        body_bytes = b"".join(chunks)
+        if hasattr(response, "body_iterator") and response.body_iterator is not None:
+            chunks: list[bytes] = [chunk async for chunk in response.body_iterator]
+            body_bytes = b"".join(chunks)
+        elif hasattr(response, "body") and response.body:
+            body_bytes = response.body
+        else:
+            return response
 
         resp_json = json.loads(body_bytes)
         resp_json = _re_inject_recursive(resp_json, secrets)
-        # Remove Content-Length — re-injection changes response size
         headers = dict(response.headers)
         headers.pop("content-length", None)
         return JSONResponse(
@@ -284,6 +288,8 @@ def _build_re_inject_stream(original_iterator, secrets: dict[str, str], trace_id
                     yield _re_inject(str(chunk), secrets)
         except Exception as exc:
             logger.warning("keyvault_stream_error trace=%s: %s", trace_id, exc)
+            # Re-raise to avoid silent failure — the client will see the error
+            raise
 
     return _wrapper
 

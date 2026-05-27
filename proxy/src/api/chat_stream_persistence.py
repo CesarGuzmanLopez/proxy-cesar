@@ -250,29 +250,40 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
                 if isinstance(reasoning_val, str) and reasoning_val:
                     reasoning_parts.append(reasoning_val)
 
+                # Tool calls: extract with defensive handling
                 tc_deltas = getattr(delta, "tool_calls", None)
                 if tc_deltas:
                     for tc in tc_deltas:
-                        idx = getattr(tc, "index", 0)
-                        if idx not in tool_calls_map:
-                            tool_calls_map[idx] = {
-                                "id": None,
-                                "type": "function",
-                                "function": {"name": None, "arguments": ""},
-                            }
-                        tc_id = getattr(tc, "id", None)
-                        if tc_id and isinstance(tc_id, str):
-                            tool_calls_map[idx]["id"] = tc_id
-                        func = getattr(tc, "function", None)
-                        if func:
-                            func_name = getattr(func, "name", None)
-                            if func_name and isinstance(func_name, str):
-                                tool_calls_map[idx]["function"]["name"] = func_name
-                            func_args = getattr(func, "arguments", None)
-                            if func_args and isinstance(func_args, str):
-                                tool_calls_map[idx]["function"]["arguments"] += (
-                                    func_args
-                                )
+                        try:
+                            idx = getattr(tc, "index", None)
+                            if idx is None:
+                                idx = 0
+                            if idx not in tool_calls_map:
+                                tool_calls_map[idx] = {
+                                    "id": None,
+                                    "type": "function",
+                                    "function": {"name": None, "arguments": ""},
+                                }
+                            tc_id = getattr(tc, "id", None)
+                            if tc_id and isinstance(tc_id, str):
+                                tool_calls_map[idx]["id"] = tc_id
+                            func = getattr(tc, "function", None)
+                            if func:
+                                func_name = getattr(func, "name", None)
+                                if func_name and isinstance(func_name, str):
+                                    tool_calls_map[idx]["function"]["name"] = func_name
+                                func_args = getattr(func, "arguments", None)
+                                if func_args and isinstance(func_args, str):
+                                    tool_calls_map[idx]["function"]["arguments"] += (
+                                        func_args
+                                    )
+                        except Exception as e:
+                            logger.warning(
+                                "extract_tool_delta_error | idx=%s error=%s",
+                                getattr(tc, "index", "unknown"),
+                                str(e),
+                            )
+                            continue
 
             fr = getattr(choice, "finish_reason", None)
             if fr is not None:

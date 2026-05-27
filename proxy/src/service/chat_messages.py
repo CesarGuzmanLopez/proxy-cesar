@@ -187,8 +187,23 @@ async def handle_auto_describe(
         api_key=api_key,
     )
     described_count = desc_meta.get("images_described", 0)
-    if described_count == 0:
-        return (None, desc_meta)
+
+    # Process in_flight messages BEFORE early return — current turn images must be described
+    described_in_flight: list[dict] | None = None
+    in_flight_count = 0
+    if in_flight_messages:
+        desc_in_flight, in_flight_meta = await auto_describe_images(
+            in_flight_messages,
+            vision_model,
+            api_base=api_base,
+            api_key=api_key,
+        )
+        if desc_in_flight is not None:
+            described_in_flight = desc_in_flight
+            in_flight_count = in_flight_meta.get("images_described", 0)
+
+    if described_count == 0 and in_flight_count == 0:
+        return (None, desc_meta if desc_meta else None)
 
     turn_number = max(t.turn_number for t in conv.turns) + 1 if conv.turns else 1
     deg_turn = ConversationTurn(
@@ -198,7 +213,7 @@ async def handle_auto_describe(
         physical_model=vision_model,
         input_tokens=0,
         output_tokens=desc_meta.get("total_description_tokens", 0),
-        messages=described_history,
+        messages=described_history or all_messages,
         response={"metadata": desc_meta},
         turn_type="degradation_event",
         had_images=False,
@@ -206,18 +221,8 @@ async def handle_auto_describe(
         had_parallel_tools=False,
     )
     db.add(deg_turn)
-    conv.images_described = max(conv.images_described or 0, 0) + described_count
+    conv.images_described = max(conv.images_described or 0, 0) + described_count + in_flight_count
     conv.capability_has_images = False
-
-    described_in_flight: list[dict] | None = None
-    if in_flight_messages:
-        desc_in_flight, _ = await auto_describe_images(
-            in_flight_messages,
-            vision_model,
-            api_base=api_base,
-            api_key=api_key,
-        )
-        described_in_flight = desc_in_flight
 
     return (described_in_flight, desc_meta)
 

@@ -448,36 +448,62 @@ async def _stream_response_generator(ctx: StreamContext):
                     # Accumulate text content and tool_calls for potential continuation
                     try:
                         delta = chunk.choices[0].delta
-                        if delta:
-                            if hasattr(delta, "content") and delta.content:
-                                accumulated_content += delta.content
-                            tc_deltas = getattr(delta, "tool_calls", None)
-                            if tc_deltas:
-                                for tcd in tc_deltas:
-                                    idx = tcd.index if tcd.index is not None else 0
+                    except (AttributeError, IndexError):
+                        delta = None
+
+                    if delta:
+                        # Content: safe to process
+                        if hasattr(delta, "content") and delta.content:
+                            accumulated_content += delta.content
+
+                        # Tool calls: accumulate with defensive extraction
+                        tc_deltas = getattr(delta, "tool_calls", None)
+                        if tc_deltas:
+                            for tcd in tc_deltas:
+                                try:
+                                    # Extract index safely (default to 0)
+                                    idx = getattr(tcd, "index", None)
+                                    if idx is None:
+                                        idx = 0
+
+                                    # Initialize tool_calls_by_index entry if needed
                                     if idx not in tool_calls_by_index:
                                         tool_calls_by_index[idx] = {
-                                            "id": tcd.id or "",
+                                            "id": getattr(tcd, "id", "") or "",
                                             "type": "function",
                                             "function": {
                                                 "name": "",
                                                 "arguments_parts": [],
                                             },
                                         }
+
                                     entry = tool_calls_by_index[idx]
-                                    if tcd.id:
-                                        entry["id"] = tcd.id
-                                    if tcd.function:
-                                        if tcd.function.name:
-                                            entry["function"]["name"] += (
-                                                tcd.function.name
-                                            )
-                                        if tcd.function.arguments:
+
+                                    # Update id if present
+                                    tc_id = getattr(tcd, "id", None)
+                                    if tc_id:
+                                        entry["id"] = tc_id
+
+                                    # Extract and accumulate function details
+                                    func = getattr(tcd, "function", None)
+                                    if func:
+                                        func_name = getattr(func, "name", None)
+                                        if func_name:
+                                            entry["function"]["name"] += func_name
+
+                                        func_args = getattr(func, "arguments", None)
+                                        if func_args:
                                             entry["function"]["arguments_parts"].append(
-                                                tcd.function.arguments
+                                                func_args
                                             )
-                    except (AttributeError, IndexError):
-                        pass
+                                except Exception as e:
+                                    logger.warning(
+                                        "stream_tool_call_delta_error conv=%s | error=%s",
+                                        ctx.conversation_id[:12],
+                                        str(e),
+                                    )
+                                    # Continue processing other tool_calls
+                                    continue
 
                     if not _first_chunk_logged:
                         _first_chunk_logged = True

@@ -104,8 +104,20 @@ async def degrade_images(
                 detail={"error": "CONVERSATION_NOT_FOUND"},
             )
 
-        session_caps = await load_session_capabilities(db, conv_uuid)
-        if not session_caps.has_images:
+        # Collect all messages from turns first
+        all_messages = _load_messages_from_turns(conv)
+
+        # Scan actual messages for images instead of relying on capability flag
+        # (the flag may be False if a previous auto-describe cleared it)
+        has_actual_images = any(
+            isinstance(msg.get("content"), list)
+            and any(
+                isinstance(p, dict) and p.get("type") == "image_url"
+                for p in msg["content"]
+            )
+            for msg in all_messages
+        )
+        if not has_actual_images:
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -113,9 +125,6 @@ async def degrade_images(
                     "message": "This conversation has no images to degrade.",
                 },
             )
-
-        # Collect all messages from turns
-        all_messages = _load_messages_from_turns(conv)
 
         # Find a vision model from the current pseudo model
         current_pm = config.pseudo_models.get(conv.pseudo_model)
