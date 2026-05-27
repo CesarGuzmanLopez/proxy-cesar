@@ -235,8 +235,8 @@ def _build_re_inject_stream(original_iterator, secrets: dict[str, str]):
                     ).encode("utf-8")
                 else:
                     yield _re_inject(str(chunk), secrets)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("keyvault_stream_error: %s", exc)
 
     return _wrapper
 

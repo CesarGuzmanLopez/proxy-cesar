@@ -72,11 +72,19 @@ async def lifespan(app: FastAPI):
     app.state.config = config
     print(f"Loaded {len(config.pseudo_models)} pseudo-models")
 
-    # Database
+    # Database — SQLite WAL mode + busy timeout for concurrent access
+    _db_url = settings.database_url
+    if "sqlite" in _db_url:
+        _db_url = _db_url.split("?")[0] + "?timeout=30"
     engine = create_async_engine(
-        settings.database_url,
+        _db_url,
         echo=False,
+        connect_args={"check_same_thread": False} if "sqlite" in _db_url else {},
     )
+    # Enable WAL mode for SQLite
+    if "sqlite" in _db_url:
+        async with engine.begin() as conn:
+            await conn.execute(sa_text("PRAGMA journal_mode=WAL"))
     # Create all tables (SQLite-friendly) + migrate existing DB
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)

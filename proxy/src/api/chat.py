@@ -538,6 +538,7 @@ async def _handle_streaming_with_db(
             )
         ),
         media_type="text/event-stream",
+        headers={"X-Conversation-Id": conversation_id},
     )
     return _streaming_response
 
