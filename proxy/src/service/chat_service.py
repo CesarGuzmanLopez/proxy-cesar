@@ -1052,6 +1052,18 @@ async def _try_physical_model(
     _trace_id: str,
 ) -> Any:
     """Attempt to call a single physical model. Returns response or None if skipped."""
+    # ── Check if provider is disabled via env var ──────────────
+    from src.config.settings import settings as _settings
+
+    disabled = _settings.disabled_providers_set
+    if disabled and phys.provider and phys.provider.lower() in disabled:
+        logger.info(
+            "llm_skip  | trace=%s model=%s provider=%s reason=provider_disabled "
+            "disabled_providers=%s",
+            _trace_id, phys.model, phys.provider, _settings.disabled_providers,
+        )
+        return None
+
     if phys.context_window is not None and _est_input > phys.context_window:
         logger.warning(
             "llm_skip  | trace=%s model=%s context_window=%d "

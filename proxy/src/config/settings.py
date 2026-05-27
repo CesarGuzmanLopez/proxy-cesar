@@ -30,8 +30,19 @@ class Settings(BaseSettings):
     pruna_api_key: str = ""
     opencode_api_key: str = ""
     """API key for OpenCode Go (opencode.ai)."""
+    disabled_providers: str = ""
+    """Comma-separated list of providers to disable (e.g. 'opencode-go,deepseek').
+    Disabled providers are skipped during fallback — the next provider is tried.
+    Set to 'opencode-go' to fall back to deepseek/groq for all pseudo-models."""
     keyclaw_enabled: bool = True
     """Set to false to disable KeyClaw secret-filtering proxy even if installed."""
+
+    @property
+    def disabled_providers_set(self) -> set[str]:
+        """Parse disabled providers into a set (lowercase)."""
+        if not self.disabled_providers:
+            return set()
+        return {p.strip().lower() for p in self.disabled_providers.split(",") if p.strip()}
 
 
 settings = Settings()

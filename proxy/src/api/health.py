@@ -8,6 +8,8 @@ import os
 from fastapi import APIRouter, Request
 from sqlalchemy import text
 
+from src.config.settings import settings
+
 router = APIRouter()
 
 
@@ -34,13 +36,13 @@ async def health(request: Request):
 
     # Check providers (API keys configured)
     providers = {}
-    for provider in [
-        "pruna",
-        "openrouter",
-        "deepseek",
-        "groq",
+    for provider, key_env in [
+        ("pruna", "PRUNA_API_KEY"),
+        ("openrouter", "OPENROUTER_API_KEY"),
+        ("deepseek", "DEEPSEEK_API_KEY"),
+        ("groq", "GROQ_API_KEY"),
+        ("opencode-go", "OPENCODE_API_KEY"),
     ]:
-        key_env = f"{provider.upper()}_API_KEY"
         providers[provider] = "configured" if os.getenv(key_env) else "not configured"
 
     overall = (
@@ -54,5 +56,6 @@ async def health(request: Request):
         "database": db_status,
         "valkey": valkey_status,
         "providers": providers,
+        "disabled_providers": settings.disabled_providers or "none",
         "pseudo_models_loaded": len(config.pseudo_models),
     }
