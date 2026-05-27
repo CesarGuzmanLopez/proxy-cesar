@@ -49,7 +49,7 @@ jobs:
           script: |
             set -euo pipefail
 
-            REPO_DIR="/opt/proxy-cesar"
+            REPO_DIR="$HOME/proxy-cesar"
             BRANCH="main"
 
             echo "=== proxy-cesar deploy ==="
@@ -62,23 +62,14 @@ jobs:
             else
               echo "[deploy] Pulling latest changes..."
               cd "$REPO_DIR"
-              # Git objects may have wrong ownership (e.g. root from sudo).
-              # If fetch fails, clone fresh to a temp dir and swap.
-              if ! git fetch origin "$BRANCH" --depth 1 2>/dev/null; then
+              git fetch origin "$BRANCH" --depth 1 2>/dev/null || {
                 echo "[deploy] Re-cloning (stale permissions)..."
-                NEW_DIR="/opt/proxy-cesar-tmp"
-                rm -rf "$NEW_DIR" 2>/dev/null || true
+                cd "$HOME"
+                rm -rf "$REPO_DIR"
                 git clone --branch "$BRANCH" --depth 1 \
-                  https://github.com/CesarGuzmanLopez/proxy-cesar.git "$NEW_DIR"
-                # Copy .venv and .env from old repo
-                cp -r "$REPO_DIR/proxy/.venv" "$NEW_DIR/proxy/.venv" 2>/dev/null || true
-                cp "$REPO_DIR/proxy/.env" "$NEW_DIR/proxy/.env" 2>/dev/null || true
-                # Swap: move old away, rename new
-                mv "$REPO_DIR" "/opt/proxy-cesar-old" 2>/dev/null || true
-                mv "$NEW_DIR" "$REPO_DIR"
-                rm -rf "/opt/proxy-cesar-old" 2>/dev/null || true
-                cd "$REPO_DIR"
-              fi
+                  https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
+              }
+              cd "$REPO_DIR"
               git reset --hard "origin/$BRANCH"
             fi
 
@@ -115,9 +106,8 @@ jobs:
             # ── 4. Systemd service ────────────────────────────────
             SERVICE_FILE="/etc/systemd/system/proxy-cesar.service"
 
-            if [ ! -f "$SERVICE_FILE" ]; then
-              echo "[deploy] Creating systemd service..."
-              sudo tee "$SERVICE_FILE" > /dev/null <<-SERVICEEOF
+            echo "[deploy] Writing systemd service..."
+            sudo tee "$SERVICE_FILE" > /dev/null <<-SERVICEEOF
             [Unit]
             Description=Proxy Cesar — Deterministic Multi-Model LLM Proxy
             After=network-online.target
@@ -125,7 +115,7 @@ jobs:
 
             [Service]
             Type=simple
-            User=proxy
+            User=${USER}
             WorkingDirectory=${REPO_DIR}/proxy
             ExecStart=${REPO_DIR}/proxy/.venv/bin/python -m src.main
             Restart=always
@@ -135,10 +125,9 @@ jobs:
             WantedBy=multi-user.target
             SERVICEEOF
 
-              sudo systemctl daemon-reload
-              sudo systemctl enable proxy-cesar
-              echo "[deploy] Service created and enabled"
-            fi
+            sudo systemctl daemon-reload
+            sudo systemctl enable proxy-cesar
+            echo "[deploy] Service updated"
 
             # ── 5. Restart service ────────────────────────────────
             echo "[deploy] Restarting service..."
