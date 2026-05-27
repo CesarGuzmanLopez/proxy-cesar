@@ -20,6 +20,7 @@ from src.service.chat_service import (
     process_chat_request,
 )
 from src.service.inline_commands import handle_inline_command
+from src.service.pipeline_trace import PipelineTrace
 
 
 router = APIRouter()
@@ -95,6 +96,14 @@ async def chat_completions(
     # Determine conversation ID
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
+    # Create request trace for observability
+    trace = PipelineTrace.create(conversation_id, request.model)
+    trace.proxy_in(
+        messages_count=len(request.messages),
+        tools_count=len(request.tools) if request.tools else 0,
+        stream=request.stream,
+    )
+
     # Prepare messages as dicts
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
@@ -148,11 +157,12 @@ async def chat_completions(
             tool_choice=request.tool_choice,
             stream_options=request.stream_options,
             thinking=request.thinking,
+            trace=trace,
         )
 
     # Non-streaming path: session lifecycle managed here with try/finally
     try:
-        return await _handle_non_streaming(
+        response = await _handle_non_streaming(
             config=config,
             affinity=affinity,
             db=db,
@@ -161,13 +171,18 @@ async def chat_completions(
             messages=messages,
             valkey=app_state.valkey,
             thinking=request.thinking,
+            trace=trace,
         )
-    except HTTPException:
+        trace.proxy_out(http_status=200, stream=False, details={"response_len": len(response.body)})
+        return response
+    except HTTPException as e:
         await db.rollback()
+        trace.proxy_out(http_status=e.status_code, stream=False)
         raise
     except Exception as e:
         await db.rollback()
         metrics.record_error(502, "PROXY_ERROR")
+        trace.proxy_out(http_status=502, stream=False)
         raise HTTPException(
             status_code=502,
             detail={"error": "PROXY_ERROR", "message": str(e)},
@@ -185,6 +200,7 @@ async def _handle_non_streaming(
     messages: list[dict],
     valkey=None,
     thinking: dict | str | bool | None = None,
+    trace: PipelineTrace | None = None,
 ) -> JSONResponse:
     """Non-streaming request: call LLM, save turn, return JSONResponse with headers."""
     result = await process_chat_request(
@@ -201,6 +217,7 @@ async def _handle_non_streaming(
         tool_choice=request.tool_choice,
         valkey=valkey,
         thinking=thinking,
+        trace=trace,
     )
 
     # Build response with Sprint 2 + Sprint 4 proxy_metadata

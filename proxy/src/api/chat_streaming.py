@@ -35,6 +35,7 @@ from src.service.model_resolver import (
     normalize_model_name,
 )
 from src.service.threshold_guard import check_input_threshold
+from src.service.pipeline_trace import PipelineTrace
 from src.api.chat_stream_persistence import (
     _build_final_metadata_chunk,
     _extract_tokens_from_chunks,
@@ -61,6 +62,7 @@ async def _handle_streaming(
     tool_choice: str | dict | None = None,
     stream_options: dict | None = None,
     thinking: dict | str | bool | None = None,
+    trace: PipelineTrace | None = None,
 ):
     """Streaming request: return SSE StreamingResponse.
 
@@ -87,12 +89,15 @@ async def _handle_streaming(
             tool_choice=tool_choice,
             stream_options=stream_options,
             thinking=thinking,
+            trace=trace,
         )
     except HTTPException:
         try:
             await db.close()
         except Exception:
             pass
+        if trace:
+            trace.proxy_out(http_status=400, stream=True)
         raise
     except Exception as e:
         try:
@@ -100,6 +105,8 @@ async def _handle_streaming(
         except Exception:
             pass
         metrics.record_error(502, "PROXY_ERROR")
+        if trace:
+            trace.proxy_out(http_status=502, stream=True)
         raise HTTPException(
             status_code=502,
             detail={"error": "PROXY_ERROR", "message": str(e)},
@@ -119,6 +126,7 @@ async def _handle_streaming_with_db(
     tool_choice: str | dict | None = None,
     stream_options: dict | None = None,
     thinking: dict | str | bool | None = None,
+    trace: PipelineTrace | None = None,
 ):
     """Pre-stream logic (runs synchronously before SSE starts)."""
     # Resolve model
@@ -379,6 +387,7 @@ async def _handle_streaming_with_db(
                     "stream_options": stream_options,
                     "thinking": thinking,
                 },
+                trace=trace,
             )
         ),
         media_type="text/event-stream",

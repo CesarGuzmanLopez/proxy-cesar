@@ -14,6 +14,7 @@ from src.adapters.db.models import Conversation
 from src.config.pseudo_models import PseudoModelSchema
 from src.domain.capabilities import SessionCapabilities, TurnCapabilities
 from src.service.context_alert import ContextAlert
+from src.service.pipeline_trace import PipelineTrace
 
 
 @dataclass
@@ -62,6 +63,8 @@ class StreamContext:
     """Kwargs to pass when calling the next model for continuation."""
     active_messages: list | None = None
     """Full assembled message list (history + current) for continuation context."""
+    trace: PipelineTrace | None = None
+    """Pipeline trace for observability — logs LLM in/out events."""
 
 
 @dataclass

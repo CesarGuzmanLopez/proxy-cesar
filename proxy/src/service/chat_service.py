@@ -47,6 +47,7 @@ from src.service.router_llm.suggester import evaluate_complexity, is_downgrade
 from src.service.threshold_guard import check_input_threshold
 from src.service.tool_filter import get_eligible_models, is_pinned_model_eligible
 from src.service.tool_detector import replace_base64_with_blob_refs
+from src.service.pipeline_trace import PipelineTrace
 
 # ── Split-module imports ──────────────────────────────────────────────────────
 from src.service.chat_fallback import call_with_fallback, _resolve_api_key
@@ -102,6 +103,7 @@ async def process_chat_request(
     tool_choice: str | dict | None = None,
     valkey=None,
     thinking: dict | str | bool | None = None,
+    trace: PipelineTrace | None = None,
 ) -> ChatResult:
     """Execute the full chat completion flow.
 
@@ -195,7 +197,16 @@ async def process_chat_request(
         config=config,
     )
 
+    # Log: LLM call outbound
+    if trace:
+        trace.llm_out(
+            physical_model=physical_model,
+            provider=provider,
+            estimated_tokens=est_input,
+        )
+
     # Step 13: Call LiteLLM with fallback
+    _t_llm_start = time.monotonic()
     response, fallback_info = await call_with_fallback(
         pseudo_model_schema=pm_schema,
         messages=active_messages,
@@ -207,6 +218,28 @@ async def process_chat_request(
         tool_choice=tool_choice,
         thinking=thinking,
     )
+    _t_llm_elapsed = time.monotonic() - _t_llm_start
+
+    # Log: LLM response inbound
+    try:
+        finish_reason = None
+        input_tokens = 0
+        output_tokens = 0
+        if hasattr(response, "choices") and response.choices:
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if hasattr(response, "usage"):
+            input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
+            output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+        if trace:
+            trace.llm_in(
+                physical_model=physical_model,
+                finish_reason=finish_reason,
+                input_tokens=int(input_tokens),
+                output_tokens=int(output_tokens),
+            )
+    except Exception:
+        # If logging fails, continue anyway
+        pass
 
     # Sprint 11: Update physical_model from actual response when fallback occurred.
     if fallback_info.applied:
