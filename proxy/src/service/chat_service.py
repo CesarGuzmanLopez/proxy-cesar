@@ -161,6 +161,13 @@ async def process_chat_request(
         if desc_in_flight is not None:
             messages_for_llm = desc_in_flight
 
+    # ── Load conversation history from previous turns ────────────
+    # Prepend all previous turn messages + assistant responses so the LLM
+    # has full context across turns. Done after auto-describe so history
+    # is not lost when desc_in_flight replaces messages_for_llm.
+    if not is_new and conv is not None and conv.turns:
+        messages_for_llm = build_conversation_messages(conv, messages_for_llm)
+
     # Step 12: Check input threshold
     est_input = estimate_tokens(messages_for_llm)
     _raise_if_exceeds_threshold(est_input, pm_schema, pseudo_model_name, config)
@@ -439,6 +446,42 @@ def _load_messages_from_turns(conv: Conversation) -> list[dict]:
         if isinstance(turn_msgs, list):
             all_messages.extend(turn_msgs)
     return all_messages
+
+
+def build_conversation_messages(
+    conv: Conversation, current_messages: list[dict]
+) -> list[dict]:
+    """Build full conversation history by interleaving turn messages and assistant responses.
+
+    Each ConversationTurn stores:
+    - ``messages``: the client's request messages (e.g. [{"role": "user", ...}])
+    - ``response``: the full LiteLLM response dict with ``choices[0].message``
+
+    We rebuild the conversation by inserting the assistant response after each turn's messages.
+
+    Returns a new list — does NOT mutate current_messages.
+    """
+    history: list[dict] = []
+    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
+        # Add the turn's request messages
+        if turn.messages:
+            history.extend(turn.messages)
+        # Add the assistant response for this turn
+        if turn.response and isinstance(turn.response, dict):
+            choices = turn.response.get("choices", [])
+            if choices:
+                msg = choices[0].get("message", {})
+                content = msg.get("content")
+                tool_calls = msg.get("tool_calls")
+                if content or tool_calls:
+                    history.append({
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": tool_calls,
+                    })
+    # Append current turn's messages
+    history.extend(current_messages)
+    return history
 
 
 async def handle_auto_describe(

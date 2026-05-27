@@ -26,6 +26,7 @@ from src.service.chat_models import (
 )
 from src.service.context_alert import get_context_alert
 from src.service.chat_service import (
+    build_conversation_messages,
     call_with_fallback,
     evaluate_router_suggestion,
     process_chat_request,
@@ -252,8 +253,8 @@ async def _handle_non_streaming(
         )
     )
 
-    if not request.conversation_id:
-        response_dict["conversation_id"] = result.conversation_id
+    # Always return conversation_id so the client can persist and reuse it
+    response_dict["conversation_id"] = result.conversation_id
 
     return response_dict
 
@@ -451,6 +452,10 @@ async def _handle_streaming_with_db(
     # Messages pass through directly — no auto-describe.
     # validate_incoming_content returns explicit errors for unsupported content.
     messages_for_llm: list[dict] = messages
+
+    # ── Load conversation history for streaming context ──────────
+    if not is_new and conv is not None and conv.turns:
+        messages_for_llm = build_conversation_messages(conv, messages_for_llm)
 
     # No automatic compaction — if threshold is exceeded, error is returned.
     active_messages = messages_for_llm
