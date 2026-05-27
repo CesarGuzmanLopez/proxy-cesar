@@ -22,7 +22,7 @@ src/
 │   ├── chat.py           POST /v1/chat/completions (incl. SSE streaming)
 │   ├── conversations.py  GET/POST /conversations/{id}/* (compact, degrade, normalize, audit)
 │   ├── health.py         GET /health (public, no auth)
-│   ├── metrics.py        GET /metrics (auth required — Sprint 8)
+│   ├── metrics.py        GET /metrics (auth required)
 │   └── models.py         GET /v1/models
 ├── service/          # Business logic orchestration
 │   ├── chat_service.py      Main chat flow orchestrator
@@ -35,16 +35,16 @@ src/
 │   ├── tools_canonical.py   Tool level determination, ID validation
 │   ├── tools_normalizer.py  Parallel tool call serialization
 │   ├── tools_edge_cases.py  Streaming tool assembly, thinking extraction, truncation
-│   ├── context_alert.py     Context usage alerts (60%, 80%, 100%) — Sprint 6
+│   ├── context_alert.py     Context usage alerts (60%, 80%, 100%)
 │   ├── compactor/
 │   │   ├── pre_compactor.py    Pre-request input summarization
 │   │   ├── continuous.py       Continuous compaction + external detection
-│   │   ├── explicit.py         POST /compact — Sprint 6
+│   │   ├── explicit.py         POST /compact
 │   │   └── prompts.py          Compaction prompts
 │   ├── multimedia/
-│   │   └── image_describer.py  Auto-describe images — Sprint 5
+│   │   └── image_describer.py  Auto-describe images
 │   └── router_llm/
-│       └── suggester.py        Task complexity evaluation — Sprint 5
+│       └── suggester.py        Task complexity evaluation
 ├── domain/           # Pure domain types — no infrastructure imports
 │   ├── types.py            Ok[T] / Err[E] Result monad (frozen dataclasses)
 │   ├── errors.py           Domain error types (11 types)
@@ -55,18 +55,18 @@ src/
 │   ├── db/engine.py        Async SQLAlchemy engine
 │   ├── litellm/client.py   LiteLLM adapter (call_litellm)
 │   └── cache/
-│       ├── valkey_affinity.py   Physical model affinity store — Sprint 1
-│       ├── message_ordering.py  Canonical ordering — Sprint 7
-│       └── provider_cache.py    Provider-specific cache — Sprint 7
+│       ├── valkey_affinity.py   Physical model affinity store (Redis/Valkey)
+│       ├── message_ordering.py  Canonical ordering
+│       └── provider_cache.py    Provider-specific cache
 ├── config/           # Configuration
-│   ├── pseudo_models.py    YAML loader + strict Pydantic validation — Sprint 1
+│   ├── pseudo_models.py    YAML loader + strict Pydantic validation
 │   └── settings.py         Environment settings (pydantic-settings)
 ├── middleware/
-│   └── rate_limiter.py     Per-pseudo-model rate limiter (Valkey) — Sprint 8
-├── auth.py                Bearer token auth middleware — Sprint 8
-├── logging_config.py       Structured JSON logging — Sprint 8
+│   └── rate_limiter.py     Per-pseudo-model rate limiter (Redis)
+├── auth.py                Bearer token auth middleware
+├── logging_config.py       Structured JSON logging
 ├── tasks/
-│   └── arq_app.py          Async compaction via arq — Sprint 6
+│   └── arq_app.py          Async compaction via arq
 └── schemas/
     └── tools.py            Pydantic request/response schemas
 ```
@@ -77,9 +77,9 @@ src/
 
 ### Pseudo-Models
 
-Abstract model identities that map to 1+ physical models (actual LiteLLM provider IDs). Example: `normal` maps to `openrouter/qwen3-max` → `deepseek/deepseek-v4-flash` with automatic fallback. 8 pseudo-models are defined in `pseudo_models.yaml`, each validated at startup against strict Pydantic rules.
+Abstract model identities that map to 1+ physical models (actual LiteLLM provider IDs). Example: `normal` maps to `openai/kimi-k2.5` → `deepseek/deepseek-v4-flash` with automatic fallback. **10 pseudo-models** are defined in `pseudo_models.yaml`, each validated at startup against strict Pydantic rules.
 
-**Model aliases** bridge OpenCode model names to pseudo-models (`gpt-4o` → `normal`, `o3` → `pensamiento-profundo-caro`, etc.). Unknown models fall back to the default alias. See `opencode.example.jsonc` for ready-to-use OpenCode configuration.
+**Model aliases** bridge common model names to pseudo-models (`gpt-4o` → `normal`, `o3` → `pensamiento-profundo-caro`, etc.). Unknown models fall back to the default alias.
 
 ### Content Compatibility
 
@@ -106,45 +106,48 @@ Per-turn scanning of messages detects capabilities (images, audio, PDF, video, t
 
 ### Physical Model Affinity
 
-Conversations are pinned to their first physical model via Valkey cache (`conv:{id}:physical_model`, 24h TTL). This ensures consistent behavior across turns — the same model handles the entire conversation unless a capability-based filter forces a change.
+Conversations are pinned to their first physical model via Redis cache (`conv:{id}:physical_model`, 24h TTL). This ensures consistent behavior across turns — the same model handles the entire conversation unless a capability-based filter forces a change.
 
-### Model Aliases (Sprint 7)
+### Model Aliases
 
 Bridges client model names to pseudo-models without modifying clients. Configured in `pseudo_models.yaml`:
-- `gpt-4o` → `normal`
-- `o3` / `o4-mini` → `pensamiento-profundo-caro`
-- `gpt-4o-mini` → `deep-flash`
+- `gpt-4o` / `gpt-4o-mini` → `normal`
+- `gpt-4.1` → `tareas-avanzadas`
+- `o3` → `pensamiento-profundo-caro`
+- `o4-mini` → `pensamiento-rapido`
 - `gemini-2.5-flash` → `vision`
+- `gemini-2.5-pro` / `claude-sonnet-4-20250514` → `codigo-preciso`
+- `claude-haiku-3-5-20241022` → `flash-lowcost`
 - `default: normal` catches unknown model names (client-friendly)
 
-### Provider Cache Optimization (Sprint 7)
+### Provider Cache Optimization
 
 Three-layer strategy maximizes cache hits:
-- **Layer 1 — Valkey affinity**: Every turn uses the same physical model
+- **Layer 1 — Redis affinity**: Every turn uses the same physical model
 - **Layer 2 — Canonical ordering**: Messages as `system → tools(sorted) → history → new query`
-- **Layer 3 — Provider-specific**: Anthropic `cache_control` breakpoints, OpenAI/DeepSeek auto-caching
+- **Layer 3 — Provider-specific**: Anthropic `cache_control` breakpoints, DeepSeek auto-caching
 
 Every response includes `proxy_metadata.cache` with hit/miss info and estimated savings.
 
-### Authentication (Sprint 8)
+### Authentication
 
 Bearer `Authorization: Bearer <PROXY_API_KEY>` on all endpoints except `/health`. Dev mode (no auth) when `PROXY_API_KEY` is empty. 401 errors with descriptive messages.
 
-### Rate Limiting (Sprint 8)
+### Rate Limiting
 
-Per-pseudo-model fixed-window rate limiter in Valkey. `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers on every response. Configurable via `RATE_LIMIT_*` env vars.
+Per-pseudo-model fixed-window rate limiter in Redis. `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` headers on every response. Configurable via `RATE_LIMIT_*` env vars.
 
-### Structured Logging (Sprint 8)
+### Structured Logging
 
 All proxy decisions logged as JSON lines to stdout: conversation creation, affinity, fallbacks, switches, compactions, auth failures, rate limit hits, provider errors.
 
-### Metrics (Sprint 8)
+### Metrics
 
 `GET /metrics` returns aggregated telemetry: requests, tokens (input/output/cached), cache hit rate, compaction savings, fallbacks, active conversations, error breakdown.
 
 ### Fallback
 
-If a physical model returns `503 ServiceUnavailable` or `429 RateLimit`, the proxy automatically falls back to the next physical model in the pseudo-model's list. If all models fail, a `503 ALL_MODELS_FAILED` error is returned with the list of attempted models.
+If a physical model returns `503 ServiceUnavailable` or `429 RateLimit`, the proxy automatically falls back to the next physical model in the pseudo-model's list. If all models fail, a `502 ALL_MODELS_FAILED` error is returned with the list of attempted models.
 
 ### Streaming
 
@@ -156,7 +159,7 @@ If a physical model returns `503 ServiceUnavailable` or `429 RateLimit`, the pro
 
 ```bash
 # Install
-python -m venv .venv && source .venv/bin/activate
+python3.14 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 # Configure
@@ -176,15 +179,15 @@ curl http://localhost:9110/health
 | `PROXY_PORT` | `9110` | HTTP listen port |
 | `PROXY_API_KEY` | — | Bearer token for API access (empty = dev mode) |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./proxy.db` | Database connection string |
-| `VALKEY_URL` | `valkey://localhost:6379` | Cache connection string |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./proxy.db` | SQLite database (PostgreSQL also supported) |
+| `VALKEY_URL` | `valkey://localhost:6380` | Redis/Valkey connection (native, port 6380) |
+| `KEYCLAW_ENABLED` | `false` | KeyClaw MITM proxy (disabled by default) |
 | `LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key |
-| `OPENROUTER_API_KEY` | — | OpenRouter API key |
-| `GOOGLE_API_KEY` | — | Google AI API key |
-| `DEEPSEEK_API_KEY` | — | DeepSeek API key |
-| `GROQ_API_KEY` | — | Groq API key |
-| `ZHIPU_API_KEY` | — | Zhipu API key |
+| `OPENCODE_API_KEY` | — | OpenCode Go API key (primary provider) |
+| `DEEPSEEK_API_KEY` | — | DeepSeek API key (fallbacks) |
+| `GROQ_API_KEY` | — | Groq API key (whisper, vision fallback) |
+| `OPENROUTER_API_KEY` | — | OpenRouter API key (normal-gratis) |
+| `PRUNA_API_KEY` | — | Pruna API key |
 
 Pseudo-models are defined in `pseudo_models.yaml`. See the file for available models and their physical model mappings.
 
@@ -202,14 +205,14 @@ Service health check. Never returns 500.
   "database": "connected",
   "valkey": "connected",
   "providers": {
-    "anthropic": "configured",
-    "openrouter": "configured",
-    "google": "configured",
+    "opencode-go": "configured",
     "deepseek": "configured",
-    "groq": "not configured",
-    "zhipu": "configured"
+    "groq": "configured",
+    "openrouter": "configured",
+    "pruna": "configured"
   },
-  "pseudo_models_loaded": 8
+  "disabled_providers": "none",
+  "pseudo_models_loaded": 10
 }
 ```
 
@@ -233,7 +236,22 @@ OpenAI-compatible chat completion. Supports `stream: true` (SSE) and `stream: fa
 }
 ```
 
-Includes a `proxy_metadata` field in the final streaming chunk (or in a non-streaming response) with compaction, capability, and fallback information.
+**Response (non-streaming):**
+```json
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "model": "openai/kimi-k2.5",
+  "choices": [{"index": 0, "message": {...}, "finish_reason": "stop"}],
+  "usage": {...},
+  "proxy_metadata": {
+    "physical_model": "openai/kimi-k2.5",
+    "pseudo_model": "normal",
+    "fallback_applied": false,
+    ...
+  }
+}
+```
 
 ### `GET /conversations/{id}`
 
@@ -279,7 +297,7 @@ All errors follow the structure:
 | `PDF_NOT_SUPPORTED` | 400 | `validate_incoming_content` | Request contains a PDF but the pseudo-model has no vision-capable physical models | `remediation: list[str]` |
 | `VIDEO_NOT_SUPPORTED` | 400 | `validate_incoming_content` | Request contains video content (not supported in v1) | `remediation: list[str]` |
 | `PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL` | 400 | `validate_incoming_content` | Request has parallel tool calls but the pseudo-model has no models with `parallel_tools: true` | `remediation: list[str]` |
-| `ALL_MODELS_FAILED` | 503 | `call_with_fallback` | All physical models in the pseudo-model failed with `ServiceUnavailableError` or `RateLimitError` | `attempted: list[str]`, `last_error: str` |
+| `ALL_MODELS_FAILED` | 502 | `call_with_fallback` | All physical models in the pseudo-model failed with `ServiceUnavailableError` or `RateLimitError` | `attempted: list[str]`, `last_error: str` |
 | `PROXY_ERROR` | 502 | `chat.py` catch-all | An unexpected exception escaped the chat completion pipeline | `message: str` |
 | `PROXY_STREAM_ERROR` | N/A (SSE) | `_stream_response_generator` | An error occurred during streaming — reported as an SSE chunk with `finish_reason: "error"` followed by `[DONE]` | `physical_model: str`, `pseudo_model: str` |
 
@@ -341,6 +359,21 @@ pytest tests/ -v                # Verbose output
 pytest tests/test_streaming.py  # Streaming-specific tests
 pytest tests/ -k "not streaming"  # All non-streaming tests
 ```
+
+---
+
+## Deploy
+
+The project deploys to `chat.guzman-lopez.com` via GitHub Actions on push to `main`:
+
+- **Runner**: `ubuntu-latest`
+- **Target**: `plata` server (Ubuntu 22.04)
+- **Service user**: `proxy` (hardcoded, not dynamic)
+- **Cache**: Native Redis on port 6380 (not Docker)
+- **Database**: SQLite, preserved between deploys (backup/restore)
+- **Verification**: Health check automatically after restart
+
+Config: [.github/workflows/deploy.yml](../.github/workflows/deploy.yml)
 
 ---
 

@@ -1,19 +1,22 @@
 # Bug Verification Flow — Historias de Usuario + Comandos Online
 
+> **Nota:** Todos los comandos funcionan contra producción (`chat.guzman-lopez.com`) o local (`localhost:9110`).
+> Ajusta la URL según corresponda. Para producción, añade `-H "Authorization: Bearer <token>"`.
+
 ---
 
-## HU-1: Chat normal (DeepSeek V4 Flash)
+## HU-1: Chat normal (kimi-k2.5)
 
 **Como** usuario
 **Quiero** enviar mensajes con el modelo `normal`
-**Para** obtener respuestas de DeepSeek V4 Flash con tools estrictas
+**Para** obtener respuestas de kimi-k2.5 con tools estrictas
 
 **Criterios:**
-- POST `/v1/chat/completions` con `model: "normal"` → 200, respuesta no vacía
-- Usa `deepseek/deepseek-v4-flash` (fallback: `openrouter/google/gemini-3.1-flash-lite`)
+- POST `/v1/chat/completions` con `model: "normal"` → 200
+- Usa `openai/kimi-k2.5` (OpenCode Go, physical model)
+- Fallback: `deepseek/deepseek-v4-flash`
 - Tools strict = true, parallel tools = true
 - Si input supera 500K tokens → error 400 `INPUT_EXCEEDS_THRESHOLD`
-- No hay compactación automática — el usuario debe usar `POST /compact`
 
 **Comando online:**
 ```bash
@@ -33,7 +36,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-2: Pensamiento profundo (DeepSeek V4 Pro)
+## HU-2: Pensamiento profundo (qwen3.7-max)
 
 **Como** usuario
 **Quiero** usar el modelo `pensamiento-profundo-caro`
@@ -41,10 +44,9 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST con `model: "pensamiento-profundo-caro"` → 200
-- Primary: `deepseek/deepseek-v4-pro` (1M ctx)
-- Fallbacks: `openrouter/google/gemini-3.5-flash` (1M ctx, visión+audio)
+- Primary: `anthropic/qwen3.7-max` (Go, Anthropic-compat, 1M ctx)
+- Fallbacks: `deepseek/deepseek-v4-pro`
 - Router LLM activo con `flash-lowcost` como suggester (solo en downgrade)
-- Imágenes: auto_describe en downgrade
 
 **Comando online:**
 ```bash
@@ -54,17 +56,9 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
   | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','');print(c[:200])"
 ```
 
-**Verificar router_llm (suggester flash-lowcost):**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"pensamiento-profundo-caro","messages":[{"role":"user","content":"Qué hora es"}],"stream":false}' \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);md=d.get('proxy_metadata',{});print('router_suggestion:', json.dumps(md.get('router_suggestion'), indent=2))"
-```
-
 ---
 
-## HU-3: Tareas avanzadas (DeepSeek V4 Pro + Flash)
+## HU-3: Tareas avanzadas (kimi-k2.6)
 
 **Como** usuario
 **Quiero** usar el modelo `tareas-avanzadas`
@@ -72,10 +66,9 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST con `model: "tareas-avanzadas"` → 200
-- Primary: `deepseek/deepseek-v4-pro` (1M ctx)
-- Fallback: `deepseek/deepseek-v4-flash` (1M ctx)
+- Primary: `openai/kimi-k2.6` (Go, 128K ctx)
+- Fallback: `deepseek/deepseek-v4-pro` → `deepseek/deepseek-v4-flash`
 - Sin router LLM
-- Imágenes: block en downgrade
 
 **Comando online:**
 ```bash
@@ -87,7 +80,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-4: Visión (Llama 4 Scout via Groq)
+## HU-4: Visión (mimo-v2-omni)
 
 **Como** usuario
 **Quiero** usar el modelo `vision`
@@ -95,9 +88,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST con `model: "vision"` → 200
-- Único físico: `groq/meta-llama/llama-4-scout-17b-16e-instruct` (131K ctx, visión)
-- Sin compactación, sin router LLM
-- Imágenes: auto_describe en downgrade
+- Primary: `openai/mimo-v2-omni` (Go, 128K ctx, visión)
+- Fallback: `groq/meta-llama/llama-4-scout` (131K ctx, visión)
 
 **Comando online (con imagen):**
 ```bash
@@ -115,7 +107,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-5: Normal gratis (OpenRouter)
+## HU-5: Normal gratis (Nemotron OpenRouter)
 
 **Como** usuario
 **Quiero** usar el modelo `normal-gratis`
@@ -125,8 +117,6 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 - POST con `model: "normal-gratis"` → 200
 - Primary: `openrouter/nvidia/nemotron-3-super-120b-a12b:free` (1M ctx)
 - Fallback: `groq/qwen/qwen3-32b` (131K ctx)
-- Sin compactación, sin router LLM
-- Imágenes: auto_describe en downgrade
 
 **Comando online:**
 ```bash
@@ -138,16 +128,16 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-6: Massive Fast (Groq — GPT-OSS 20B)
+## HU-6: Massive Fast (minimax-m2.7)
 
 **Como** usuario
 **Quiero** usar el modelo `massive-fast`
-**Para** texto masivo ultrarrápido vía Groq
+**Para** texto masivo ultrarrápido
 
 **Criterios:**
 - POST con `model: "massive-fast"` → 200
-- Único físico: `groq/openai/gpt-oss-20b` (131K ctx, 1000+ t/s)
-- Sin compactación, sin router LLM
+- Primary: `openai/minimax-m2.7` (Go, 200K ctx)
+- Fallback: `groq/openai/gpt-oss-20b` (131K ctx, 1000+ t/s)
 
 **Comando online:**
 ```bash
@@ -159,7 +149,7 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 ---
 
-## HU-7: Flash Lowcost (DeepSeek V4 Flash)
+## HU-7: Flash Lowcost (qwen3.5-plus)
 
 **Como** usuario
 **Quiero** usar el modelo `flash-lowcost`
@@ -167,8 +157,8 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST con `model: "flash-lowcost"` → 200
-- Único físico: `openrouter/google/gemini-3.1-flash-lite` (1M ctx, $0.00025/$0.0015 por M tok)
-- Sin compactación, sin router LLM
+- Primary: `openai/qwen3.5-plus` (Go, 1M ctx)
+- Fallback: `deepseek/deepseek-v4-flash`
 
 **Comando online:**
 ```bash
@@ -188,13 +178,9 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 
 **Criterios:**
 - POST `/conversations/{id}/compact` en conversación con turns → 200, `status: completed`
-- Historia ≤ 131K tokens → usa `groq/openai/gpt-oss-20b` (primary, 1000+ t/s)
-- Historia > 131K tokens → usa `deepseek/deepseek-v4-flash` (1M ctx)
-- Selección por `by_context_window`
+- Usa `openai/glm-5.1` (primary, 128K ctx)
+- Historia > umbral → fallback a `deepseek/deepseek-v4-flash` (1M ctx)
 - Conversación vacía → 400 `EMPTY_CONVERSATION`
-- Si hay imágenes en el historial → usa modelo con visión para describirlas antes de compactar
-- Si hay audio en el historial → usa Whisper (Groq) para transcribir antes de compactar
-- Compactación múltiple: segundo compact genera nuevo `snapshot_id` y encadena con `superseded_by`
 
 **Comando online — compactar conversación existente:**
 ```bash
@@ -210,14 +196,6 @@ curl -s -X POST "http://localhost:9110/conversations/$CONV_ID/compact" \
   -d '{}' | python3 -m json.tool
 ```
 
-**Comando online — compactar conversación vacía (debe fallar con 400):**
-```bash
-CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-curl -s -w "\nHTTP: %{http_code}" -X POST "http://localhost:9110/conversations/$CONV_ID/compact" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
 ---
 
 ## HU-9: Streaming SSE
@@ -230,7 +208,6 @@ curl -s -w "\nHTTP: %{http_code}" -X POST "http://localhost:9110/conversations/$
 - POST con `stream: true` retorna chunks SSE (`data: ...\n\n`)
 - Termina con `data: [DONE]`
 - El último chunk antes de `[DONE]` contiene `proxy_metadata`
-- Funciona con cualquier pseudo-modelo
 
 **Comando online:**
 ```bash
@@ -238,23 +215,6 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"normal","messages":[{"role":"user","content":"Cuenta hasta 5"}],"stream":true}' \
   | head -15
-```
-
-**Verificar metadata final:**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"normal","messages":[{"role":"user","content":"Hola"}],"stream":true}' \
-  | python3 -c "
-import sys
-for line in sys.stdin:
-    line = line.strip()
-    if line.startswith('data: ') and line != 'data: [DONE]':
-        import json
-        d = json.loads(line[6:])
-        if 'proxy_metadata' in d:
-            print('Metadata found:', list(d['proxy_metadata'].keys()))
-"
 ```
 
 ---
@@ -266,17 +226,19 @@ for line in sys.stdin:
 **Para** migrar desde otros proveedores sin cambiar mi código
 
 **Criterios:**
-- `gpt-4o` → resuelve a `normal`
-- `gpt-4o-mini` → resuelve a `normal`
+- `gpt-4o` / `gpt-4o-mini` → resuelve a `normal`
 - `gpt-4.1` → resuelve a `tareas-avanzadas`
-- `o3`, `o4-mini` → resuelven a `pensamiento-profundo-caro`
+- `o3` → resuelve a `pensamiento-profundo-caro`
+- `o4-mini` → resuelve a `pensamiento-rapido`
 - `gemini-2.5-flash` → resuelve a `vision`
+- `gemini-2.5-pro` → resuelve a `codigo-preciso`
+- `claude-sonnet-4-20250514` → resuelve a `codigo-preciso`
 - `claude-haiku-3-5-20241022` → resuelve a `flash-lowcost`
 - `default` → resuelve a `normal`
 
 **Comando online:**
 ```bash
-for alias in gpt-4o gpt-4o-mini o3 claude-haiku-3-5-20241022 gemini-2.5-flash default; do
+for alias in gpt-4o gpt-4o-mini o3 o4-mini claude-haiku-3-5-20241022 gemini-2.5-flash default; do
   echo -n "$alias → "
   curl -s -X POST http://localhost:9110/v1/chat/completions \
     -H "Content-Type: application/json" \
@@ -293,28 +255,12 @@ done
 **Quiero** que mis API keys sean interceptadas antes de llegar al LLM
 **Para** que el modelo nunca vea mis credenciales
 
-**Criterios:**
-- Enviar mensaje con API key (ej: `sk-...`) → proxy la detecta
-- La key se reemplaza por `[KEYVAULT:hash]` en el mensaje al LLM
-- La key se guarda en Valkey con TTL de 1 hora
-- En la respuesta, el placeholder se reinyecta con el valor real
-- Funciona tanto en streaming como no-streaming
-- Se inyecta system prompt explicando el uso de placeholders
-
 **Comando online — verificar sanitización (no-streaming):**
 ```bash
 curl -s -X POST http://localhost:9110/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"normal","messages":[{"role":"user","content":"Mi key es sk-proj-abc123def456ghi789jkl012"}],"conversation_id":"conv-keyvault","stream":false}' \
   | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','')[:100];print('OK:', bool(c))"
-```
-
-**Comando online — verificar sanitización (streaming):**
-```bash
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"normal","messages":[{"role":"user","content":"Mi key es sk-proj-abc123def456ghi789jkl012"}],"conversation_id":"conv-keyvault-stream","stream":true}' \
-  | tail -5
 ```
 
 ---
@@ -324,14 +270,6 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 **Como** usuario
 **Quiero** enviar una imagen/audio/PDF a un modelo que no lo soporta
 **Para** que el proxy guarde el archivo como blob, genere una descripción y se la pase al modelo
-
-**Criterios:**
-- POST con imagen + modelo sin visión → 200, el modelo recibe una descripción de la imagen
-- El base64 se almacena en Valkey y se reemplaza por `[BLOB:hash:mime | size | descripción]`
-- El modelo puede usar sus tools si quiere procesar el blob (`GET /blobs/{hash}`)
-- POST con imagen + tool + modelo sin visión → mismo comportamiento (el proxy no inspecciona tools)
-- POST con imagen + `imagen` (text-to-image) → 400 error (modelo especializado)
-- POST con imagen + `audio` (whisper) → 400 error (modelo especializado)
 
 **Comando online — imagen a modelo sin visión (se blobifica):**
 ```bash
@@ -348,20 +286,6 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
   }' | python3 -c "import sys,json;d=json.load(sys.stdin);print('OK:', d.get('choices',[{}])[0].get('message',{}).get('content','')[:200] if 'choices' in d else d)"
 ```
 
-**Comando online — recuperar blob (tools):**
-```bash
-# Primero enviar un request que blobifique contenido
-CONV_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-curl -s -X POST http://localhost:9110/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"normal\",\"messages\":[{\"role\":\"user\",\"content\":[
-    {\"type\":\"text\",\"text\":\"hola\"},
-    {\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/QualzQAAAABJRU5ErkJggg==\"}}
-  ]}],\"conversation_id\":\"$CONV_ID\",\"stream\":false}"
-
-# Ver el mensaje que recibió el modelo (tiene blob reference)
-```
-
 ---
 
 ## HU-13: Fallback strategy
@@ -371,10 +295,9 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 **Para** pasar automáticamente al siguiente físico en la lista
 
 **Criterios:**
-- `pensamiento-profundo-caro`: sequential → DeepSeek V4 Pro → Gemini 3.5 Flash
-- `compactador`: by_context_window → elige según tamaño de historia
-- Todos los demás: sequential
-- Si todos los físicos fallan → error 503 `ALL_MODELS_FAILED` (o 413 si todos saltaron por contexto)
+- Todos los pseudo-modelos usan fallback `sequential`
+- El único con `by_context_window` es `compactador`
+- Si todos los físicos fallan → error 502 `ALL_MODELS_FAILED` (o 413 si todos saltaron por contexto)
 
 **Comando online — ver physical model real usado:**
 ```bash
@@ -387,14 +310,6 @@ curl -s -X POST http://localhost:9110/v1/chat/completions \
 ---
 
 ## HU-14: Auditoría (GET audit-log)
-
-**Como** usuario
-**Quiero** ver el log de eventos de una conversación
-**Para** saber qué cambios de modelo, fallbacks y compactaciones ocurrieron
-
-**Criterios:**
-- GET `/conversations/{id}/audit-log` → 200 con array de eventos cronológicos
-- Incluye eventos de creación, cambios de pseudo-model, fallbacks, compactaciones explícitas
 
 **Comando online:**
 ```bash
@@ -410,14 +325,6 @@ curl -s "http://localhost:9110/conversations/$CONV_ID/audit-log" \
 ---
 
 ## HU-15: Health check + Metrics
-
-**Como** operador
-**Quiero** consultar `/health` y `/metrics`
-**Para** saber qué proveedores están configurados y el estado del proxy
-
-**Criterios:**
-- GET `/health` → 200 con proveedores configurados
-- GET `/metrics` → 200 con métricas de uso
 
 **Comando online:**
 ```bash
@@ -438,15 +345,6 @@ print(f'uptime: {d[\"uptime_seconds\"]}s')
 ---
 
 ## HU-16: Threshold exceeded → error explícito
-
-**Como** usuario
-**Quiero** que si mi input supera el umbral del pseudo-modelo
-**Para** recibir un error claro en vez de compactación silenciosa, y decidir si compacto manualmente
-
-**Criterios:**
-- POST con input > `input_token_threshold` → 400 `INPUT_EXCEEDS_THRESHOLD`
-- El error incluye el número de tokens y los modelos sugeridos
-- El usuario debe usar `POST /compact` para reducir el contexto
 
 **Comando online — enviar input masivo para superar umbral:**
 ```bash

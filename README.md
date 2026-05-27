@@ -1,23 +1,36 @@
 # proxy-cesar
 
-**Proxy LLM multi-modelo determinista.** Proxy HTTP transparente entre clientes LLM y múltiples proveedores. Expone **pseudo-modelos** abstractos que mapean a modelos físicos concretos con fallback automático, KeyVault (protección de secrets), Blob Vault (transformación de contenido no soportado), compactación explícita, y métricas estructuradas.
+**Proxy LLM multi-modelo determinista.** Proxy HTTP transparente entre clientes LLM y múltiples proveedores. Expone **10 pseudo-modelos** abstractos que mapean a modelos físicos concretos con fallback automático, KeyVault (protección de secrets), Blob Vault (transformación de contenido no soportado), compactación explícita, y métricas estructuradas.
 
 > **Paquetería 100% libre.** MIT, BSD, Apache 2.0.
 > **El proxy no decide. Valida, informa y ejecuta lo que el usuario ordena.**
 > **Cuando algo no puede continuar, lo dice claramente.**
 > **Cuando algo puede continuar, lo hace sin fricción.**
 > **100% tipado y determinista.**
+> **Sin dependencia de Docker — Redis nativo en puerto 6380, SQLite como DB.**
 
 ---
+
+## Estado en producción
+
+**URL:** `https://chat.guzman-lopez.com`
+
+| Componente | Estado |
+|---|---|
+| Proxy (puerto 9110) | ✅ Activo |
+| 10 pseudo-modelos | ✅ Todos funcionales |
+| Redis nativo (puerto 6380) | ✅ Conectado |
+| SQLite | ✅ Conectado |
+| Deploy | ✅ GitHub Actions automático |
 
 ## Proveedores
 
 | Proveedor | Tipo | Modelos |
 |---|---|---|
 | **[OpenCode Go](https://opencode.ai/docs/es/go)** | Suscripción $10/mes | 8 modelos vía API OpenAI + Anthropic |
-| **DeepSeek** | API directa | v4-pro, v4-flash |
-| **Groq** | API directa | GPT-OSS 20B, llama-4-scout, whisper |
-| **OpenRouter** | API directa | nemotron free, passthrough |
+| **DeepSeek** | API directa | v4-pro, v4-flash (fallbacks) |
+| **Groq** | API directa | whisper (asistente de audio, fallback visión) |
+| **OpenRouter** | API directa | nemotron free (normal-gratis) |
 
 ## Documentación oficial de proveedores
 
@@ -33,14 +46,14 @@
 | # | Pseudo-modelo | Primary | Fallback(s) | Visión | Tools | Límite | Go? |
 |---|---|---|---|---|---|---|---|
 | 1 | `pensamiento-profundo-caro` | qwen3.7-max (Go) | deepseek-v4-pro | No | strict | 120K | ✅ |
-| 2 | `pensamiento-rapido` 🆕 | qwen3.6-plus (Go) | deepseek-v4-flash | No | sí | 120K | ✅ |
+| 2 | `pensamiento-rapido` | qwen3.6-plus (Go) | deepseek-v4-flash | No | sí | 120K | ✅ |
 | 3 | `tareas-avanzadas` | kimi-k2.6 (Go) | v4-pro → v4-flash | No | strict | 200K | ✅ |
-| 4 | `codigo-preciso` 🆕 | mimo-v2-pro (Go) | mimo-v2.5-pro → v4-flash | No | strict | 200K | ✅ |
+| 4 | `codigo-preciso` | mimo-v2-pro (Go) | mimo-v2.5-pro → v4-flash | No | strict | 200K | ✅ |
 | 5 | `vision` | mimo-v2-omni (Go) | llama-4-scout (Groq) | ✅ | sí | 120K | ✅ |
 | 6 | `normal` | kimi-k2.5 (Go) | deepseek-v4-flash | No | strict | 500K | ✅ |
 | 7 | `normal-gratis` | nemotron (OpenRouter) | qwen3-32b (Groq) | No | no | 200K | ❌ |
 | 8 | `massive-fast` | minimax-m2.7 (Go) | gpt-oss-20b (Groq) | No | sí | 131K | ✅ |
-| 9 | `flash-lowcost` 🆕 | qwen3.5-plus (Go) | deepseek-v4-flash | No | sí | 128K | ✅ |
+| 9 | `flash-lowcost` | qwen3.5-plus (Go) | deepseek-v4-flash | No | sí | 128K | ✅ |
 | 10 | `compactador` | glm-5.1 (Go) | gpt-oss-20b → v4-flash | No | sí | ∞ | ✅ |
 
 ### Model Aliases
@@ -62,16 +75,34 @@
 ## Quick Start
 
 ```bash
+# 1. Clonar e instalar
 cd proxy
+python3.14 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+
+# 2. Configurar
 cp .env.example .env   # Editar con API keys
-.venv/bin/python -m src.main  # Puerto 9110
+# Redis nativo en puerto 6380 (VALKEY_URL=valkey://localhost:6380)
+
+# 3. Ejecutar
+python -m src.main  # Puerto 9110
 ```
 
-**Test:**
+**Test local:**
 ```bash
+curl http://localhost:9110/health
 curl http://localhost:9110/v1/models
 curl -X POST http://localhost:9110/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -d '{"model":"normal","messages":[{"role":"user","content":"Hola"}]}'
+```
+
+**Test contra producción:**
+```bash
+curl https://chat.guzman-lopez.com/health
+curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <tu-token>" \
   -d '{"model":"normal","messages":[{"role":"user","content":"Hola"}]}'
 ```
 
@@ -151,7 +182,7 @@ OpenCode Go expone **dos endpoints** según el modelo:
 El middleware KeyVault intercepta `POST /v1/chat/completions`:
 
 1. **Detección**: 22 patrones de secrets (API keys, claves PEM, SSH, wallets crypto, JWT)
-2. **Almacenamiento**: Valkey `keyvault:{conv}:{hash}` con TTL 1h
+2. **Almacenamiento**: Redis `keyvault:{conv}:{hash}` con TTL 1h (en memoria si Redis no disponible)
 3. **Sanitización**: Reemplaza secrets por `[KEYVAULT:abc12345]`
 4. **Reinyección**: Placeholders → valores reales en respuesta (streaming + no-streaming)
 
@@ -170,7 +201,7 @@ Cuando un modelo no soporta el tipo de contenido recibido:
 | PDF | Extrae texto con PyMuPDF → `[BLOB:hash:app/pdf \| 100 KB\ntexto]` | N/A (solo PyMuPDF) |
 | Video | ❌ Bloqueado en `validate_incoming_content` | N/A |
 
-Blobs almacenados en Valkey (24h TTL). El proxy **nunca inspecciona** las tools del usuario.
+Blobs almacenados en Redis (24h TTL). El proxy **nunca inspecciona** las tools del usuario.
 
 ---
 
@@ -208,7 +239,7 @@ CORS → Auth → RateLimit → KeyVault → Handler
 
 1. **CORS** — Orígenes configurados
 2. **Auth** — Bearer token vs `PROXY_API_KEY` (dev mode si no hay key)
-3. **RateLimit** — Ventana fija 1 min por pseudo-modelo vía Valkey
+3. **RateLimit** — Ventana fija 1 min por pseudo-modelo vía Redis
 4. **KeyVault** — Detecta/almacena/sanitiza/reinyecta secrets
 
 ---
@@ -227,6 +258,22 @@ CORS → Auth → RateLimit → KeyVault → Handler
 | `POST` | `/conversations/{id}/compact` | Compactar historial |
 | `GET` | `/conversations/{id}/audit-log` | Log de eventos |
 | `GET` | `/metrics` | Métricas agregadas |
+
+---
+
+## Environment
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `PROXY_PORT` | `9110` | Puerto HTTP |
+| `PROXY_API_KEY` | — | Bearer token (vacío = dev mode) |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./proxy.db` | SQLite local |
+| `VALKEY_URL` | `valkey://localhost:6380` | Redis nativo (no Docker) |
+| `KEYCLAW_ENABLED` | `false` | KeyClaw deshabilitado |
+| `OPENCODE_API_KEY` | — | API key de OpenCode Go |
+| `DEEPSEEK_API_KEY` | — | Fallback DeepSeek |
+| `GROQ_API_KEY` | — | Fallback Groq |
+| `OPENROUTER_API_KEY` | — | OpenRouter (normal-gratis) |
 
 ---
 
@@ -261,7 +308,12 @@ poetry run pytest tests/ -q --tb=short
 GitHub Actions despliega a `chat.guzman-lopez.com` en cada push a `main`:
 
 - Config: [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
-- Secrets requeridos: `PLATA_HOST`, `PLATA_USER`, `PLATA_SSH_KEY`, `OPENCODE_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `PRUNA_API_KEY`
+- Usuario del servicio: `proxy` (fijo, no dinámico)
+- Redis: nativo en puerto 6380
+- DB: SQLite preservada entre deploys (backup/restore automático)
+- Verificación: health check post-deploy
+
+**Secrets requeridos:** `PLATA_HOST`, `PLATA_USER`, `PLATA_SSH_KEY`, `OPENCODE_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `PRUNA_API_KEY`, `PROXY_API_KEY`
 
 ---
 
