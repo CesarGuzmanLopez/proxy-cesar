@@ -62,10 +62,19 @@ jobs:
             else
               echo "[deploy] Pulling latest changes..."
               cd "$REPO_DIR"
-              # Fix git permissions if broken (ci user != deploy user)
-              sudo find .git/objects -type f ! -user "$(whoami)" -exec chown "$(whoami):" {} + 2>/dev/null || true
-              git fetch origin "$BRANCH" --depth 1
-              git reset --hard "origin/$BRANCH"
+              # Git fetch can fail if .git/objects has wrong ownership.
+              # Strategy: try normally, then with sudo, then force-reclone.
+              git fetch origin "$BRANCH" --depth 1 2>/dev/null || \
+                sudo git fetch origin "$BRANCH" --depth 1 2>/dev/null || {
+                  echo "[deploy] Re-cloning repo (permission issue)..."
+                  sudo rm -rf "$REPO_DIR"
+                  git clone --branch "$BRANCH" --depth 1 \
+                    https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
+                  cd "$REPO_DIR"
+                }
+              sudo git reset --hard "origin/$BRANCH" 2>/dev/null || \
+                git reset --hard "origin/$BRANCH"
+              sudo chown -R "$(whoami)": "$REPO_DIR/.git" 2>/dev/null || true
             fi
 
             cd "$REPO_DIR/proxy"
