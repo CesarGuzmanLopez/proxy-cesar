@@ -22,9 +22,16 @@ __all__ = [
 
 
 def _load_messages_from_turns(conv: Conversation) -> list[dict]:
-    """Load all messages from conversation turns in order."""
+    """Load all messages from conversation turns in order.
+
+    FASE D: Filter out degradation_event turns to prevent context contamination
+    from image auto-describe operations that replay full history.
+    """
     all_messages: list[dict] = []
     for turn in sorted(conv.turns, key=lambda t: t.turn_number):
+        # Skip degradation_event turns
+        if turn.turn_type == "degradation_event":
+            continue
         turn_msgs = turn.messages
         if isinstance(turn_msgs, list):
             all_messages.extend(turn_msgs)
@@ -42,6 +49,10 @@ def build_conversation_messages(
 
     We rebuild the conversation by inserting the assistant response after each turn's messages.
 
+    FASE D: Filter out degradation_event turns (created during image auto-describe) to
+    prevent context duplication. These turns replay full history and corrupt the context
+    when re-iterated.
+
     Returns a new list — does NOT mutate current_messages.
 
     NOTE: This function deliberately IGNORES compaction snapshots (ConversationSnapshot).
@@ -52,6 +63,15 @@ def build_conversation_messages(
     """
     history: list[dict] = []
     for turn in sorted(conv.turns, key=lambda t: t.turn_number):
+        # FASE D: Skip degradation_event turns to prevent context contamination
+        if turn.turn_type == "degradation_event":
+            logger.debug(
+                "skip_degradation_event_turn conv=%s turn=%s",
+                conv.id,
+                turn.turn_number,
+            )
+            continue
+
         if turn.messages:
             history.extend(turn.messages)
         if turn.response and isinstance(turn.response, dict):
@@ -72,23 +92,37 @@ def build_conversation_messages(
                 if len(assistant_entry) > 1:
                     history.append(assistant_entry)
 
-    # Deduplicate system prompts from history that middlewares (e.g. KeyVault)
-    # re-inject into current_messages every turn. Preserves user system prompts.
-    current_system_contents = {
-        m["content"]
-        for m in current_messages
-        if m.get("role") == "system" and isinstance(m.get("content"), str)
-    }
+    # FASE D: Improved system prompt deduplication for both string and list content
+    # Extract system prompt contents from current_messages (both string and list forms)
+    current_system_contents: set = set()
+    for m in current_messages:
+        if m.get("role") == "system":
+            content = m.get("content")
+            if isinstance(content, str):
+                current_system_contents.add(("str", content))
+            elif isinstance(content, list):
+                try:
+                    current_system_contents.add(("list", tuple(str(p) for p in content)))
+                except (TypeError, ValueError):
+                    pass
+
+    # Remove matching system messages from history
     if current_system_contents:
-        history = [
-            m
-            for m in history
-            if not (
-                m.get("role") == "system"
-                and isinstance(m.get("content"), str)
-                and m["content"] in current_system_contents
-            )
-        ]
+        filtered_history: list[dict] = []
+        for m in history:
+            if m.get("role") == "system":
+                content = m.get("content")
+                if isinstance(content, str):
+                    if ("str", content) in current_system_contents:
+                        continue
+                elif isinstance(content, list):
+                    try:
+                        if ("list", tuple(str(p) for p in content)) in current_system_contents:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+            filtered_history.append(m)
+        history = filtered_history
 
     history.extend(current_messages)
     return history
