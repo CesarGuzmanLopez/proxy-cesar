@@ -19,6 +19,7 @@ from src.adapters.cache.provider_cache import (
     build_cache_metadata,
 )
 from src.adapters.db.models import Conversation
+from src.domain.types import Result, Ok, Err
 from src.service.chat_models import StreamContext
 from src.service.context_alert import get_context_alert
 from src.service.chat_fallback import _try_physical_model, call_with_fallback
@@ -704,21 +705,69 @@ async def _stream_response_generator(ctx: StreamContext):
                 cache_meta["fallback_cache_destruction"] = destruction
             ctx.cache_metadata = cache_meta
 
-        db, conv, session_caps = await _persist_stream_turn(
+        # Handle Result[..., StreamPersistenceFailed] from _persist_stream_turn
+        persist_result = await _persist_stream_turn(
             ctx, response_dict, input_tokens, output_tokens
         )
 
-        final_chunk = _build_final_metadata_chunk(
-            ctx, conv, session_caps, input_tokens, output_tokens
-        )
-        yield f"data: {json.dumps(final_chunk)}\n\n"
+        # Determine session_caps and conv for final metadata — use defaults if persistence failed
+        session_caps = ctx.session_caps
+        conv = ctx.conv
+        match persist_result:
+            case Ok(value=(db, conv, session_caps)):
+                pass
+            case Err(error=error):
+                logger.error(
+                    "stream_persist_failed conv=%s turn=%s reason=%s",
+                    error.conversation_id,
+                    error.turn_number,
+                    error.reason,
+                )
+
+        # Build and send final metadata chunk with fallback for json.dumps failure
+        try:
+            final_chunk = _build_final_metadata_chunk(
+                ctx, conv, session_caps, input_tokens, output_tokens
+            )
+            final_json = json.dumps(final_chunk)
+            yield f"data: {final_json}\n\n"
+        except Exception as e:
+            logger.error(
+                "stream_final_chunk_error conv=%s error=%s",
+                ctx.conversation_id,
+                str(e),
+            )
+            # Fallback: send empty delta chunk without metadata
+            fallback_chunk = {
+                "id": f"chatcmpl-{ctx.conversation_id[:12]}",
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {}, "finish_reason": "stop"}],
+            }
+            try:
+                yield f"data: {json.dumps(fallback_chunk)}\n\n"
+            except Exception as fallback_err:
+                logger.error(
+                    "stream_fallback_chunk_error conv=%s error=%s",
+                    ctx.conversation_id,
+                    str(fallback_err),
+                )
+
         logger.info(
             "stream_done conv=%s physical=%s",
             ctx.conversation_id[:12],
             ctx.physical_model,
         )
-        yield "data: [DONE]\n\n"
     finally:
+        # Always send [DONE] to signal end of stream, even if metadata failed
+        try:
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.warning(
+                "stream_done_yield_error conv=%s error=%s",
+                ctx.conversation_id,
+                str(e),
+            )
+
         # Ensure DB session is closed even on client disconnect (GeneratorExit)
         if db is not None:
             try:

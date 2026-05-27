@@ -12,6 +12,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationTurn
 from src.domain.capabilities import SessionCapabilities
+from src.domain.errors import StreamPersistenceFailed
+from src.domain.types import Ok, Err, Result
 from src.service.capability_detector import accumulate_capabilities
 from src.service.chat_models import (
     MetadataContext,
@@ -124,8 +126,12 @@ async def _persist_stream_turn(
     response_dict: dict,
     input_tokens: int,
     output_tokens: int,
-) -> tuple[AsyncSession | None, Conversation | None, SessionCapabilities | None]:
-    """Persist turn after successful stream — extracted for cognitive complexity."""
+) -> Result[tuple[AsyncSession, Conversation, SessionCapabilities], StreamPersistenceFailed]:
+    """Persist turn after successful stream — extracted for cognitive complexity.
+
+    Returns Ok[db, conv, updated_caps] on success, or Err[StreamPersistenceFailed] on error.
+    The caller must handle the Result type and close the DB session if needed.
+    """
     db = ctx.db
     conv = ctx.conv
     if not (
@@ -140,7 +146,13 @@ async def _persist_stream_turn(
             db is None,
             conv is None,
         )
-        return db, conv, ctx.session_caps
+        return Err(StreamPersistenceFailed(
+            conversation_id=ctx.conversation_id,
+            turn_number=0,
+            reason="missing_context_for_persistence"
+        ))
+
+    turn_number = 1
     try:
         tool_defs: list[dict] | None = ctx.tools
         _, tools_incomplete, tools_level, thinking_content = _build_turn_tool_metadata(
@@ -151,7 +163,6 @@ async def _persist_stream_turn(
             provider=ctx.provider,
         )
         truncated_messages = _truncate_tool_results(ctx.messages)
-        turn_number = 1
         if conv.turns:
             turn_number = max(t.turn_number for t in conv.turns) + 1
         turn = ConversationTurn(
@@ -185,10 +196,27 @@ async def _persist_stream_turn(
         )
 
         await db.commit()
-        return db, conv, updated_caps
-    except Exception:
-        await db.rollback()
-        return db, conv, ctx.session_caps
+        return Ok((db, conv, updated_caps))
+    except Exception as e:
+        logger.error(
+            "persist_stream_turn_error conv=%s turn_number=%s error=%s",
+            ctx.conversation_id,
+            turn_number,
+            str(e),
+        )
+        try:
+            await db.rollback()
+        except Exception as rollback_err:
+            logger.warning(
+                "persist_stream_turn_rollback_error conv=%s error=%s",
+                ctx.conversation_id,
+                str(rollback_err),
+            )
+        return Err(StreamPersistenceFailed(
+            conversation_id=ctx.conversation_id,
+            turn_number=turn_number,
+            reason=str(e)
+        ))
 
 
 def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
