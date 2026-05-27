@@ -131,8 +131,13 @@ def normalise_stream_chunk(chunk) -> None:
             delta = choice.delta
             if delta is None:
                 continue
+            # Some providers (GLM via OpenRouter, DeepSeek in CoT, qwen3.7-max
+            # with extended thinking) emit content in ``reasoning_content``
+            # instead of ``content``, leaving content as None or empty string.
+            # Copy it so the client sees progress (thinking) in real-time
+            # rather than waiting for the full response.
             if (
-                delta.content is None
+                not delta.content
                 and getattr(delta, "reasoning_content", None) is not None
             ):
                 delta.content = delta.reasoning_content
