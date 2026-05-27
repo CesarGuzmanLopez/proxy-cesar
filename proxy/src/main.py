@@ -34,7 +34,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
 from sqlmodel.ext.asyncio.session import AsyncSession  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
-from sqlalchemy import text as sa_text  # noqa: E402
+from sqlalchemy import inspect as sa_inspect  # noqa: E402
 
 from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter, setup_valkey  # noqa: E402
 from src.adapters.litellm.client import setup_litellm  # noqa: E402
@@ -87,20 +87,27 @@ async def lifespan(app: FastAPI):
     # Enable WAL mode for SQLite
     if "sqlite" in _db_url:
         async with engine.begin() as conn:
-            await conn.execute(sa_text("PRAGMA journal_mode=WAL"))
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
     # Create all tables (SQLite-friendly) + migrate existing DB
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-        # Migrate existing SQLite DB: add columns that may be missing
-        _MIGRATIONS_SQLITE = [
-            "ALTER TABLE conversations ADD COLUMN images_described INTEGER DEFAULT 0",
-            "ALTER TABLE conversations ADD COLUMN images_degraded_manually INTEGER DEFAULT 0",
-        ]
-        for stmt in _MIGRATIONS_SQLITE:
-            try:
-                await conn.execute(sa_text(stmt))
-            except Exception as exc:
-                logger.warning("db_migration_skipped (likely already applied): %s — %s", stmt, exc)
+
+        def _migrate_columns(sync_conn):
+            """Add columns that may be missing on existing SQLite databases.
+            Uses inspector to check column existence first (safe pattern)."""
+            inspector = sa_inspect(sync_conn)
+            if "conversations" not in inspector.get_table_names():
+                return
+            existing_cols = {c["name"] for c in inspector.get_columns("conversations")}
+            for col_name in ("images_described", "images_degraded_manually"):
+                if col_name not in existing_cols:
+                    sync_conn.exec_driver_sql(
+                        f"ALTER TABLE conversations ADD COLUMN {col_name} "
+                        "INTEGER DEFAULT 0"
+                    )
+                    logger.info("db_migration_applied column=%s", col_name)
+
+        await conn.run_sync(_migrate_columns)
     app.state.db_session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )

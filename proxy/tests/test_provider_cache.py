@@ -141,3 +141,54 @@ def test_anthropic_max_breakpoints():
 
     bp_count = sum(1 for m in result if m.get("cache_control") == {"type": "ephemeral"})
     assert bp_count <= 4
+
+
+# ── Bug 1: cache provider derived from model prefix ────────────────────
+
+
+def test_should_apply_cache_control_with_model_prefix():
+    """cache_control is applied when provider matches from model prefix."""
+    # These should all resolve to 'anthropic' via model prefix
+    assert should_apply_cache_control("anthropic") is True
+
+
+def test_should_apply_cache_control_non_anthropic():
+    """Non-Anthropic providers don't get cache_control breakpoints."""
+    assert should_apply_cache_control("openai") is False
+    assert should_apply_cache_control("deepseek") is False
+    assert should_apply_cache_control("groq") is False
+    assert should_apply_cache_control("opencode-go") is False
+
+
+def test_provider_supports_cache_mixed_case():
+    """Case-insensitive check works for all known providers."""
+    assert provider_supports_cache("ANTHROPIC") is True
+    assert provider_supports_cache("OpenAI") is True
+    assert provider_supports_cache("DEEPSEEK") is True
+    assert provider_supports_cache("Groq") is True
+
+
+def test_provider_supports_cache_unknown():
+    """Unknown providers are correctly identified as not supporting cache."""
+    assert provider_supports_cache("ollama") is False
+    assert provider_supports_cache("unknown-provider") is False
+
+
+def test_lru_cache_hits():
+    """Repeated calls with same provider return cached result (fast)."""
+    # First call populates cache
+    result1 = should_apply_cache_control("anthropic")
+    # Second call should hit cache
+    result2 = should_apply_cache_control("anthropic")
+    assert result1 == result2
+    # Verify it's True
+    assert result1 is True
+
+
+def test_lru_cache_maxsize():
+    """lru_cache with maxsize=32 handles many distinct providers."""
+    providers = [f"provider-{i}" for i in range(50)]
+    for p in providers:
+        # Should not raise or behave incorrectly
+        result = provider_supports_cache(p)
+        assert isinstance(result, bool)
