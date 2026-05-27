@@ -696,6 +696,16 @@ async def call_with_fallback(
 
     # Sprint 7: track cache optimization — handled inside _try_physical_model
 
+    # Sprint 10: inject default_thinking from pseudo-model config when the
+    # client does not supply an explicit ``thinking`` value.
+    if "thinking" not in kwargs and pseudo_model_schema.default_thinking is not None:
+        kwargs["thinking"] = pseudo_model_schema.default_thinking
+        logger.debug(
+            "thinking_default | pseudo=%s thinking=%s",
+            getattr(pseudo_model_schema, "display_name", "?"),
+            pseudo_model_schema.default_thinking,
+        )
+
     # Estimate input tokens once (caller may have pre-computed)
     _est_input = (
         estimated_input if estimated_input is not None else estimate_tokens(messages)
@@ -1056,22 +1066,40 @@ def _normalise_thinking_param(thinking: dict | str | bool | None) -> dict | None
     Accepts:
       - ``{"type": "enabled", "budget_tokens": 16000}`` → as-is
       - ``{"type": "disabled"}`` → as-is
-      - ``True`` → ``{"type": "enabled"}``
-      - ``False`` → ``{"type": "disabled"}``
-      - ``"enabled"`` → ``{"type": "enabled"}``
-      - ``"disabled"`` → ``{"type": "disabled"}``
+      - ``True`` / ``"enabled"`` → ``{"type": "enabled"}``  (provider default budget)
+      - ``False`` / ``"disabled"`` → ``{"type": "disabled"}``
+      - ``"low"`` → ``{"type": "enabled", "budget_tokens": 2048}``
+      - ``"medium"`` → ``{"type": "enabled", "budget_tokens": 8192}``
+      - ``"high"`` → ``{"type": "enabled", "budget_tokens": 16000}``
+      - ``"xhigh"`` → ``{"type": "enabled", "budget_tokens": 32000}``
+      - ``"max"`` → ``{"type": "enabled", "budget_tokens": 64000}``
       - ``None`` → ``None``  (leave unset, provider default applies)
 
-    The result is passed to ``litellm.acompletion()`` which translates it to the
-    provider-native format (Anthropic ``thinking``, OpenAI ``reasoning_effort``,
-    etc.).
+    Effort strings (low→max) map to ``budget_tokens`` values compatible with
+    Anthropic's extended-thinking budget model.  The result is passed to
+    ``litellm.acompletion()`` which forwards it to the provider.
     """
+    _EFFORT_TO_BUDGET = {
+        "low": 2048,
+        "medium": 8192,
+        "high": 16000,
+        "xhigh": 32000,
+        "max": 64000,
+    }
+
     if thinking is None:
         return None
     if isinstance(thinking, bool):
         return {"type": "enabled" if thinking else "disabled"}
     if isinstance(thinking, str):
-        return {"type": thinking.lower()}
+        tl = thinking.lower()
+        if tl in ("enabled", "disabled"):
+            return {"type": tl}
+        budget = _EFFORT_TO_BUDGET.get(tl)
+        if budget is not None:
+            return {"type": "enabled", "budget_tokens": budget}
+        # Unrecognised string — default to enabled
+        return {"type": "enabled"}
     # Already a dict — pass through (Anthropic format)
     return thinking
 

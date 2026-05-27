@@ -65,6 +65,12 @@ class PseudoModelSchema(BaseModel, extra="forbid"):
     image_handling: ImageHandlingConfig = Field(default_factory=ImageHandlingConfig)
     physical_models: list[PhysicalModelSchema]
     fallback_strategy: str = "sequential"
+    default_thinking: dict | str | bool | None = None
+    """Default thinking configuration when the client doesn't specify one.
+    Accepts the same formats as the top-level ``thinking`` parameter:
+    ``{"type": "enabled", "budget_tokens": 16000}``, ``{"type": "disabled"}``,
+    ``True``, ``False``, ``"enabled"``, ``"disabled"``.
+    Only applies when ``thinking`` is absent from the client request."""
 
     @field_validator("display_name")
     @classmethod
