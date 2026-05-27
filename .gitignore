@@ -40,3 +40,4 @@ proxy/coverage.xml
 *.db-wal
 coverage.xml
 .test_env
+testeo/
