@@ -316,8 +316,8 @@ async def _store_blob_if_missing(valkey, key: str, raw: str) -> None:
         exists = await valkey.exists(key)
         if not exists:
             await valkey.set(key, raw, ex=BLOB_TTL)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("blob_store_error key=%s err=%s", key, exc)
 
 
 async def _store_desc(valkey, key: str, desc: str) -> None:
@@ -325,8 +325,8 @@ async def _store_desc(valkey, key: str, desc: str) -> None:
     try:
         await valkey.setnx(key, desc)
         await valkey.expire(key, BLOB_TTL)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("blob_desc_store_error key=%s err=%s", key, exc)
 
 
 async def _describe_audio(valkey, desc_key: str, raw: str, config) -> str:
@@ -335,8 +335,8 @@ async def _describe_audio(valkey, desc_key: str, raw: str, config) -> str:
         cached = await valkey.get(desc_key)
         if cached:
             return cached
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("blob_audio_cache_error key=%s err=%s", desc_key, exc)
     desc = await _transcribe_audio(raw, config)
     if desc:
         await _store_desc(valkey, desc_key, desc)
@@ -349,8 +349,8 @@ async def _describe_pdf(valkey, desc_key: str, raw: str) -> str:
         cached = await valkey.get(desc_key)
         if cached:
             return cached
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("blob_pdf_cache_error key=%s err=%s", desc_key, exc)
     desc = await _try_extract_pdf_text(raw)
     if desc:
         await _store_desc(valkey, desc_key, desc)

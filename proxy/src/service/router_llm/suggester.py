@@ -47,12 +47,18 @@ MAX_TASK_CHARS: int = 2000
 """Truncate task content to this many characters before evaluation."""
 
 ALLOWED_SUGGESTIONS: set[str] = {
-    "flash-lowcost",
     "normal",
-    "tareas-avanzadas",
     "pensamiento-profundo-caro",
+    "tareas-avanzadas",
+    "codigo-preciso",
+    "vision",
+    "pensamiento-rapido",
+    "normal-gratis",
+    "massive-fast",
+    "flash-lowcost",
+    "compactador",
 }
-"""Only these pseudo-models can be suggested by the router."""
+"""All 10 pseudo-models can be suggested by the router."""
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -120,7 +126,8 @@ async def evaluate_complexity(
             "reason": result.get("reason", ""),
             "source": "llm",
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning("router_llm_evaluation_error: %s", exc)
         return None
 
 

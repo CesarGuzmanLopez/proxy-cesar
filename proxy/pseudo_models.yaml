@@ -4,7 +4,7 @@ pseudo_models:
     display_name: Pensamiento Profundo
     description: "Razonamiento de máximo nivel. Límite 120K tokens — si lo superas usa compactalo para continuar."
     input_token_threshold: 120000
-    context_window: 120000
+    context_window: 1000000
     router_llm:
       enabled: true
       suggester: pensamiento-rapido
@@ -37,7 +37,7 @@ pseudo_models:
     display_name: Pensamiento Rápido
     description: "Razonamiento ligero. Debug, code review, análisis rápidos. Límite 120K — usa compactalo si lo superas."
     input_token_threshold: 120000
-    context_window: 120000
+    context_window: 1000000
     router_llm:
       enabled: false
     image_handling:
@@ -68,7 +68,7 @@ pseudo_models:
     display_name: Tareas Avanzadas
     description: "Desarrollo profundo y sostenido. Límite 200K tokens — usa compactalo si lo superas."
     input_token_threshold: 200000
-    context_window: 200000
+    context_window: 128000
     router_llm:
       enabled: false
     image_handling:
@@ -107,7 +107,7 @@ pseudo_models:
     display_name: Código Preciso
     description: "Generación de código puro. Refactors, tests, parches. Límite 200K — usa compactalo si lo superas."
     input_token_threshold: 200000
-    context_window: 200000
+    context_window: 128000
     router_llm:
       enabled: false
     image_handling:
@@ -148,7 +148,7 @@ pseudo_models:
     display_name: Visión
     description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 120K tokens — usa compactalo si superas."
     input_token_threshold: 120000
-    context_window: 120000
+    context_window: 128000
     router_llm:
       enabled: false
     image_handling:

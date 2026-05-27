@@ -7,6 +7,7 @@ The proxy applies the appropriate strategy based on the physical model's provide
 - Ollama: no caching
 """
 
+import functools
 import logging
 from copy import deepcopy
 
@@ -107,11 +108,13 @@ def apply_anthropic_cache_control(messages: list[dict]) -> list[dict]:
     return modified
 
 
+@functools.lru_cache(maxsize=32)
 def should_apply_cache_control(provider: str) -> bool:
     """Check if cache_control breakpoints should be applied for this provider."""
     return provider.lower() in _PROVIDERS_WITH_CACHE_CONTROL
 
 
+@functools.lru_cache(maxsize=32)
 def provider_supports_cache(provider: str) -> bool:
     """Check if provider has any caching support."""
     return provider.lower() in _PROVIDERS_WITH_CACHE

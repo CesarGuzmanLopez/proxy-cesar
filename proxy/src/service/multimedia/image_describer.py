@@ -174,7 +174,7 @@ async def auto_describe_images(
     refs = find_image_refs(messages)
 
     if not refs:
-        return deepcopy(messages), {
+        return messages, {
             "ok": True,
             "images_described": 0,
             "reason": "no_images_found",

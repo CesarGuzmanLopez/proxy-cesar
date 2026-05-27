@@ -4,8 +4,11 @@ sprint §12 — Lifespan manages startup/shutdown of all services.
 Sprint 8 — Auth, CORS, rate limiting, structured logging, metrics.
 """
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ── SSL_CERT_FILE must be set *before* any module imports httpx/litellm ────
 # Check KeyClaw combined CA first, then system CA
@@ -96,8 +99,8 @@ async def lifespan(app: FastAPI):
         for stmt in _MIGRATIONS_SQLITE:
             try:
                 await conn.execute(sa_text(stmt))
-            except Exception:
-                pass  # column already exists — ignore
+            except Exception as exc:
+                logger.warning("db_migration_skipped (likely already applied): %s — %s", stmt, exc)
     app.state.db_session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )

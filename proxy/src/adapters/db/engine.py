@@ -1,28 +1,20 @@
-"""Async SQLModel engine and session factory.
+"""Database engine and session factory.
 
-python.md §7: async-first with AsyncSession.
-Uses SQLModel (python.md §6.2) which combines SQLAlchemy + Pydantic.
+IMPORTANT: The engine is created in main.py during lifespan startup.
+This module only provides the session factory type and a helper.
 """
 
 from collections.abc import AsyncGenerator
 
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
-from src.config.settings import settings
-
-engine = create_async_engine(
-    settings.database_url, echo=False, pool_size=5, max_overflow=10
-)
-session_factory = async_sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False
-)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession]:
-    """FastAPI dependency: yields an async session, closes on completion."""
-    async with session_factory() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+    """FastAPI dependency: yields an async session, closes on completion.
+
+    Requires db_session_factory to be set on app.state first.
+    This is a placeholder — the actual factory is created in main.py.
+    """
+    raise RuntimeError(
+        "get_session() is not used directly. Use request.app.state.db_session_factory() instead."
+    )

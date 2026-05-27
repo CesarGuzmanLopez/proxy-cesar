@@ -7,6 +7,7 @@ python.md §4: pure functions, immutable data, declarative style.
 Sprint 3: tiktoken-based token counting replaces 4-char heuristic.
 """
 
+import functools
 import uuid
 
 import tiktoken
@@ -21,6 +22,7 @@ from src.domain.capabilities import SessionCapabilities, TurnCapabilities
 _TIKTOKEN_ENCODING = "o200k_base"
 
 
+@functools.lru_cache(maxsize=1)
 def _get_encoding():
     """Get the tiktoken encoding, with fallback to cl100k_base."""
     try:

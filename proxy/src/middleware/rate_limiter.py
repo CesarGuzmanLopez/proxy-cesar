@@ -136,7 +136,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={"Retry-After": str(retry_after)},
                 )
-        except Exception:
+        except Exception as exc:
+            logger.error("rate_limit_error: %s", exc)
             return await call_next(request)
 
         response = await call_next(request)

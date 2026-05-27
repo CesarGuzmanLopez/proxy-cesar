@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import re
+import uuid
 from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -183,8 +184,8 @@ async def _store_secrets(valkey, conversation_id: str, secrets: dict[str, str]) 
             logger.debug(
                 "keyvault_store conv=%s hash=%s", conversation_id[:12], secret_hash
             )
-        except Exception:
-            continue
+        except Exception as exc:
+            logger.error("keyvault_store_error conv=%s hash=%s err=%s", conversation_id[:12], secret_hash, exc)
 
 
 # ── Response helpers ─────────────────────────────────────────────────────────
@@ -204,9 +205,8 @@ def _re_inject_recursive(obj: Any, secrets: dict[str, str]) -> Any:
 async def _re_inject_non_streaming(response, secrets: dict[str, str]) -> JSONResponse:
     """Re-inject secrets into a non-streaming JSON response."""
     try:
-        body_bytes = b""
-        async for chunk in response.body_iterator:
-            body_bytes += chunk
+        chunks: list[bytes] = [chunk async for chunk in response.body_iterator]
+        body_bytes = b"".join(chunks)
 
         resp_json = json.loads(body_bytes)
         resp_json = _re_inject_recursive(resp_json, secrets)
@@ -218,7 +218,8 @@ async def _re_inject_non_streaming(response, secrets: dict[str, str]) -> JSONRes
             status_code=response.status_code,
             headers=headers,
         )
-    except Exception:
+    except Exception as exc:
+        logger.error("keyvault_re_inject_error: %s", exc)
         return response
 
 
@@ -264,7 +265,11 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # ── Detect + mask secrets (always, in-memory) ─────────────────────
-        conversation_id = body.get("conversation_id") or "anon"
+        raw_cid = body.get("conversation_id")
+        if raw_cid:
+            conversation_id = raw_cid
+        else:
+            conversation_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(body, sort_keys=True)))
         secrets: dict[str, str] = {}
 
         _mask_messages(body, secrets)
@@ -280,9 +285,17 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             asyncio.create_task(_store_secrets(valkey, conversation_id, secrets))
 
         # ── Inject system prompt so LLM knows about placeholders ──────────
-        body.setdefault("messages", []).insert(
-            0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT}
-        )
+        # Bug 8 fix: insert AFTER any existing system messages to preserve
+        # canonical order (system messages first, in order). Placing at
+        # position 0 would put our prompt before the original system prompt,
+        # potentially confusing the model.
+        msgs = body.setdefault("messages", [])
+        insert_pos = 0
+        for i, m in enumerate(msgs):
+            if m.get("role") != "system":
+                break
+            insert_pos = i + 1
+        msgs.insert(insert_pos, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
         logger.info(
             "keyvault_active conv=%s secrets=%d valkey=%s",
             conversation_id[:12], len(secrets), "yes" if valkey else "no",

@@ -84,7 +84,9 @@ def canonicalize_message_order(messages: list[dict]) -> list[dict]:
 
     Canonical order:
       1. System message(s) — always first (static per pseudo-model)
-      2. Remaining messages — in their original order (oldest → newest)
+      2. Remaining messages — in their original order, with tool results
+         positioned immediately after the assistant message that contains
+         the matching tool_calls.
 
     The purpose is to ensure the system prompt is always at position 0,
     making the cacheable prefix (system + early history) identical across
@@ -98,9 +100,28 @@ def canonicalize_message_order(messages: list[dict]) -> list[dict]:
         messages: Flat list of OpenAI-format message dicts.
 
     Returns:
-        New list with system messages moved to the front, preserving
-        relative order among system and non-system messages respectively.
+        New list with system messages moved to the front, and tool results
+        reordered to follow their corresponding tool_call messages.
     """
     system_msgs = [m for m in messages if m.get("role") == "system"]
     other_msgs = [m for m in messages if m.get("role") != "system"]
-    return system_msgs + other_msgs
+
+    # Bug 9 fix: ensure tool results follow their corresponding tool_call
+    # messages. Without this, interleaved tool results break the provider's
+    # cache prefix on re-ordered message lists.
+    reordered: list[dict] = []
+    pending_tool_ids: set[str] = set()
+    for msg in other_msgs:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            reordered.append(msg)
+            tool_ids = {
+                tc.get("id", "") for tc in msg["tool_calls"]
+                if isinstance(tc, dict) and tc.get("id")
+            }
+            pending_tool_ids.update(tool_ids)
+        elif msg.get("role") == "tool" and msg.get("tool_call_id") in pending_tool_ids:
+            reordered.append(msg)
+            pending_tool_ids.discard(msg["tool_call_id"])
+        else:
+            reordered.append(msg)
+    return system_msgs + reordered

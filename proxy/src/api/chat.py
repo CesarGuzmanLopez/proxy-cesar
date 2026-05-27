@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
@@ -31,6 +31,7 @@ from src.service.chat_service import (
     call_with_fallback,
     canonicalize_message_order,
     evaluate_router_suggestion,
+    handle_auto_describe,
     process_chat_request,
 )
 from src.service.inline_commands import handle_inline_command
@@ -221,8 +222,8 @@ async def _handle_non_streaming(
     messages: list[dict],
     valkey=None,
     thinking: dict | str | bool | None = None,
-) -> dict:
-    """Non-streaming request: call LLM, save turn, return response."""
+) -> JSONResponse:
+    """Non-streaming request: call LLM, save turn, return JSONResponse with headers."""
     result = await process_chat_request(
         model=request.model,
         messages=messages,
@@ -267,7 +268,17 @@ async def _handle_non_streaming(
     # Always return conversation_id so the client can persist and reuse it
     response_dict["conversation_id"] = result.conversation_id
 
-    return response_dict
+    # Bug 4 fix: forward provider response headers to HTTP response
+    headers: dict[str, str] = {"X-Conversation-Id": conversation_id}
+    provider_headers = response_dict.get("provider_headers")
+    if provider_headers and isinstance(provider_headers, dict):
+        for h in ("x-ratelimit-limit-requests", "x-ratelimit-remaining-requests",
+                   "x-ratelimit-limit-tokens", "x-ratelimit-remaining-tokens",
+                   "x-request-id", "x-cache"):
+            if h in provider_headers:
+                headers[h] = str(provider_headers[h])
+
+    return JSONResponse(content=response_dict, headers=headers)
 
 
 async def _handle_streaming(
@@ -461,11 +472,21 @@ async def _handle_streaming_with_db(
         db.add(conv)
         await db.flush()
 
-    await affinity.set(conversation_id, physical_model)
-
-    # Messages pass through directly — no auto-describe.
-    # validate_incoming_content returns explicit errors for unsupported content.
+    # Sprint 5: Auto-describe images on pseudo-model switch (Bug 6 fix)
+    auto_describe_meta: dict | None = None
     messages_for_llm: list[dict] = messages
+    if conv is not None and not is_new and resolved_model != conv.pseudo_model:
+        desc_in_flight, auto_describe_meta = await handle_auto_describe(
+            conv=conv,
+            current_pseudo_name=conv.pseudo_model,
+            new_pm_schema=pm_schema,
+            config=config,
+            db=db,
+            pinned_physical_model=physical_model,
+            in_flight_messages=messages,
+        )
+        if desc_in_flight is not None:
+            messages_for_llm = desc_in_flight
 
     # ── Load conversation history for streaming context ──────────
     if not is_new and conv is not None and conv.turns:
@@ -532,9 +553,14 @@ async def _handle_streaming_with_db(
             physical_model = litellm_response.model
             provider = physical_model.split("/")[0] if "/" in physical_model else provider
 
-    # No auto-describe — images pass through or error explicitly
+    # Bug 5 fix: update affinity AFTER successful LLM call
+    await affinity.set(conversation_id, physical_model)
+
     images_described: int = 0
     images_described_by: str | None = None
+    if auto_describe_meta:
+        images_described = auto_describe_meta.get("images_described", 0)
+        images_described_by = auto_describe_meta.get("described_by")
 
     # Extract provider response headers (cache, rate-limit, request-id, etc.)
     # and include them in the SSE response so the client can observe
@@ -969,4 +995,10 @@ def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
         return False
     from src.adapters.cache.provider_cache import should_apply_cache_control
 
-    return should_apply_cache_control(ctx.provider)
+    # Bug 1 fix: derive cache provider from physical model prefix
+    cache_provider = ctx.provider
+    if ctx.physical_model and "/" in ctx.physical_model:
+        model_prefix = ctx.physical_model.split("/")[0].lower()
+        if model_prefix in ("anthropic",):
+            cache_provider = model_prefix
+    return should_apply_cache_control(cache_provider)

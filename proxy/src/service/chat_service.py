@@ -72,6 +72,8 @@ from src.service.tools_edge_cases import (
     extract_thinking_content,
     truncate_tool_result,
 )
+from src.service.tool_detector import replace_base64_with_blob_refs
+from src.config.settings import settings as _global_settings
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +146,6 @@ async def process_chat_request(
         pm_schema,
         config,
     )
-    await affinity.set(conv_id, physical_model)
-
     # Sprint 5: Auto-describe images on pseudo-model switch
     auto_describe_meta: dict | None = None
     messages_for_llm: list[dict] = messages  # May be replaced by described version
@@ -236,6 +236,10 @@ async def process_chat_request(
                 )
                 physical_model = last_model
                 provider = physical_model.split("/")[0] if "/" in physical_model else provider
+
+    # Bug 5 fix: update affinity AFTER successful LLM call so the stored
+    # affinity reflects the model that actually handled the request.
+    await affinity.set(conv_id, physical_model)
 
     _elapsed = time.monotonic() - _t0
     logger.info(
@@ -498,19 +502,20 @@ def build_conversation_messages(
         # Add the turn's request messages
         if turn.messages:
             history.extend(turn.messages)
-        # Add the assistant response for this turn
+        # Add the assistant response for this turn — preserve ALL fields
+        # (content, tool_calls, reasoning_content, thinking_blocks, name, etc.)
         if turn.response and isinstance(turn.response, dict):
             choices = turn.response.get("choices", [])
             if choices:
                 msg = choices[0].get("message", {})
-                content = msg.get("content")
-                tool_calls = msg.get("tool_calls")
-                if content or tool_calls:
-                    history.append({
-                        "role": "assistant",
-                        "content": content,
-                        "tool_calls": tool_calls,
-                    })
+                assistant_entry: dict = {"role": "assistant"}
+                for field in ("content", "tool_calls", "reasoning_content",
+                              "name", "thinking_blocks"):
+                    val = msg.get(field)
+                    if val is not None:
+                        assistant_entry[field] = val
+                if len(assistant_entry) > 1:
+                    history.append(assistant_entry)
     # Append current turn's messages
     history.extend(current_messages)
     return history
@@ -1156,8 +1161,6 @@ async def _apply_content_delegation(
     if not delegation:
         return messages
 
-    from src.service.tool_detector import replace_base64_with_blob_refs
-
     return await replace_base64_with_blob_refs(
         messages,
         conversation_id,
@@ -1267,14 +1270,12 @@ async def _try_physical_model(
     skip_reason is one of ``"provider_disabled"`` or ``"context_too_large"``.
     """
     # ── Check if provider is disabled via env var ──────────────
-    from src.config.settings import settings as _settings
-
-    disabled = _settings.disabled_providers_set
+    disabled = _global_settings.disabled_providers_set
     if disabled and phys.provider and phys.provider.lower() in disabled:
         logger.info(
             "llm_skip  | trace=%s model=%s provider=%s reason=provider_disabled "
             "disabled_providers=%s",
-            _trace_id, phys.model, phys.provider, _settings.disabled_providers,
+            _trace_id, phys.model, phys.provider, _global_settings.disabled_providers,
         )
         return None, "provider_disabled"
 
@@ -1293,30 +1294,42 @@ async def _try_physical_model(
 
     call_messages = ordered_messages
     provider = phys.provider.lower()
+    # Bug 1 fix: derive the actual provider from the model prefix (e.g.
+    # "anthropic/claude-..." → "anthropic") because the YAML provider field
+    # may be "opencode-go" for models served through the Go gateway.
+    model_prefix = phys.model.split("/")[0].lower() if "/" in phys.model else provider
+    cache_provider = model_prefix if model_prefix in ("anthropic",) else provider
     cache_applied = False
-    if should_apply_cache_control(provider):
+    if should_apply_cache_control(cache_provider):
         call_messages = apply_anthropic_cache_control(ordered_messages)
         cache_applied = True
         logger.debug(
-            "cache_control applied provider=%s messages=%d",
-            provider, len(call_messages),
+            "cache_control applied provider=%s model=%s messages=%d",
+            cache_provider, phys.model, len(call_messages),
         )
 
     # Resolve custom api_base/api_key for models with api_key_env (e.g. OpenCode Go)
     api_base = phys.api_base or None
     api_key = _resolve_api_key(phys)
 
-    # Normalise thinking parameter (client shorthands → Anthropic dict)
-    raw_thinking = kwargs.pop("thinking", None)
+    # Bug 3 fix: use get() instead of pop() — must NOT mutate shared kwargs
+    # across fallback iterations.
+    raw_thinking = kwargs.get("thinking", None)
     thinking = _normalise_thinking_param(raw_thinking)
+    # Bug 7 fix: only pass thinking to providers that support it (Anthropic).
+    # Non-Anthropic models will reject the 'thinking' parameter.
+    supports_thinking = model_prefix == "anthropic" or provider == "anthropic"
     if thinking is not None:
         logger.debug(
-            "thinking    | trace=%s model=%s thinking=%s",
-            _trace_id, phys.model, thinking,
+            "thinking    | trace=%s model=%s thinking=%s supports=%s",
+            _trace_id, phys.model, thinking, supports_thinking,
         )
 
     call_kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    if thinking is not None:
+    # Remove thinking from call_kwargs for non-Anthropic providers
+    if not supports_thinking:
+        call_kwargs.pop("thinking", None)
+    elif thinking is not None:
         call_kwargs["thinking"] = thinking
 
     response = await call_litellm(

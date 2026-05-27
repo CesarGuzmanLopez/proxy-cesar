@@ -101,7 +101,7 @@ async def get_metrics(request: Request):
                     await db.scalar(
                         select(func.count(Conversation.id)).where(
                             Conversation.updated_at
-                            > func.now() - text("INTERVAL '24 hours'")
+                            > func.now() - text("1 day")
                         )
                     )
                     or 0

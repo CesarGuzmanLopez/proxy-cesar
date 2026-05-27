@@ -123,23 +123,27 @@ async def _run_compaction_sync(
     conv: Conversation | None = None,
     api_base: str | None = None,
     api_key: str | None = None,
+    *,
+    turn_count: int = 0,
 ) -> dict:
     """Run compaction synchronously and store the snapshot.
 
     All DB operations happen *before* the compactor API call to avoid
     losing the SQLAlchemy greenlet context (known issue when calling
     async HTTP clients and then re-entering the async session).
+
+    If turn_count is passed (pre-computed), skips re-querying turns.
     """
     conv_uuid = _parse_uuid(conversation_id)
     compaction_prompt = build_explicit_compaction_prompt()
 
     # ── DB operations BEFORE the API call ──────────────────────────────
-    # Count turns
-    result = await db.execute(
-        select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)
-    )
-    all_turns = result.scalars().all()
-    turn_count = len(all_turns)
+    if turn_count == 0:
+        result = await db.execute(
+            select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)
+        )
+        all_turns = result.scalars().all()
+        turn_count = len(all_turns)
 
     # Load conversation if not passed in
     if conv is None:
@@ -341,6 +345,7 @@ async def compact_conversation(
         db=db,
         config=config,
         conv=conv,
+        turn_count=len(turns),
     )
 
 
@@ -400,6 +405,7 @@ async def _compact_async(
             conv=conv,
             api_base=api_base,
             api_key=api_key,
+            turn_count=len(turns),
         )
     finally:
         await db.close()
