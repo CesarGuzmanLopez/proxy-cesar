@@ -829,7 +829,11 @@ async def _stream_response_generator(ctx: StreamContext):
                     except (AttributeError, IndexError):
                         fr = None
 
-                    if fr == "length" and current_idx < len(phys_models) - 1:
+                    if (
+                        fr == "length"
+                        and current_idx < len(phys_models) - 1
+                        and getattr(ctx.pm_schema, "continue_on_length", False)
+                    ):
                         # Suppress "length" — set to null so client continues
                         chunk_dict = json.loads(chunk.model_dump_json())
                         if chunk_dict.get("choices"):

@@ -71,6 +71,13 @@ class PseudoModelSchema(BaseModel, extra="forbid"):
     ``{"type": "enabled", "budget_tokens": 16000}``, ``{"type": "disabled"}``,
     ``True``, ``False``, ``"enabled"``, ``"disabled"``.
     Only applies when ``thinking`` is absent from the client request."""
+    continue_on_length: bool = False
+    """If ``True`` and a non-streaming model finishes with ``finish_reason="length"``
+    while more physical models are available, the partial response is appended as
+    an assistant message and the next model is called to continue (composite
+    response). Streaming does the same seamlessly.
+
+    Default ``False`` — ``length`` is treated as a normal completion."""
 
     @field_validator("display_name")
     @classmethod

@@ -791,8 +791,13 @@ async def call_with_fallback(
             fallback_info.attempted_models.append(phys.model)
 
             # ── Token-limit fallback (non-streaming only) ────────
+            # Only activate when continue_on_length is True for the pseudo-model
             last_model = idx >= len(pseudo_model_schema.physical_models) - 1
-            if not stream and not last_model:
+            if (
+                not stream
+                and not last_model
+                and getattr(pseudo_model_schema, "continue_on_length", False)
+            ):
                 try:
                     finish_reason = response.choices[0].finish_reason
                     if finish_reason == "length":
@@ -1336,7 +1341,11 @@ async def _try_physical_model(
 def _log_model_call_result(
     response, phys, stream: bool, _trace_id: str, elapsed: float
 ) -> None:
-    """Log LLM call result."""
+    """Log LLM call result.
+
+    Handles both LiteLLM ``ModelResponse`` objects and plain ``dict``
+    responses (e.g. composite responses from token-limit fallback).
+    """
     if stream:
         logger.info(
             "llm_ok    | trace=%s model=%s elapsed=%.1fs (streaming)",
@@ -1344,14 +1353,19 @@ def _log_model_call_result(
         )
         return
     try:
-        c = response.choices[0].message.content or ""
+        if isinstance(response, dict):
+            c = (response.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+            fr = (response.get("choices") or [{}])[0].get("finish_reason", "?")
+        else:
+            c = response.choices[0].message.content or ""
+            fr = response.choices[0].finish_reason
         logger.info(
             "llm_ok    | trace=%s model=%s elapsed=%.1fs "
             "content_len=%d finish=%s",
             _trace_id, phys.model, elapsed,
-            len(c), response.choices[0].finish_reason,
+            len(c), fr,
         )
-    except (AttributeError, IndexError):
+    except (AttributeError, IndexError, KeyError, TypeError):
         logger.warning(
             "llm_ok    | trace=%s model=%s (unexpected format)",
             _trace_id, phys.model,
