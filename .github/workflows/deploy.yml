@@ -11,6 +11,7 @@
 #   OPENROUTER_API_KEY
 #   OPENCODE_API_KEY  — OpenCode Go API key
 #   PRUNA_API_KEY
+#   VALKEY_URL        — Redis/Valkey URL (default: valkey://localhost:6380)
 
 name: Deploy to plata
 
@@ -32,6 +33,7 @@ jobs:
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
       PRUNA_API_KEY: ${{ secrets.PRUNA_API_KEY }}
       DISABLED_PROVIDERS: ${{ vars.DISABLED_PROVIDERS || '' }}
+      VALKEY_URL: ${{ secrets.VALKEY_URL || 'valkey://localhost:6380' }}
 
     steps:
       - name: Checkout
@@ -47,24 +49,54 @@ jobs:
           envs: >-
             PROXY_API_KEY,DEEPSEEK_API_KEY,GROQ_API_KEY,
             OPENROUTER_API_KEY,OPENCODE_API_KEY,PRUNA_API_KEY,
-            DISABLED_PROVIDERS
+            DISABLED_PROVIDERS,VALKEY_URL
           script: |
             set -euo pipefail
 
             VENV_DIR="/tmp/proxy-cesar-venv"
             REPO_DIR="/tmp/proxy-cesar"
             BRANCH="main"
+            PROXY_USER="proxy"
 
             echo "=== proxy-cesar deploy ==="
+            echo "[deploy] Target: ${REPO_DIR}"
 
-            # ── 1. Clean clone to /tmp (always fresh, always writable) ─
-            echo "[deploy] Cloning fresh repository..."
+            # ── 1. Preserve database across deploys ───────────────
+            DB_PATH="${REPO_DIR}/proxy/proxy.db"
+            DB_BAK="/tmp/proxy-cesar-db.bak"
+            if [ -f "$DB_PATH" ]; then
+              echo "[deploy] Backing up database..."
+              cp "$DB_PATH" "$DB_BAK"
+            fi
+
+            # ── 2. Clean clone (always fresh, always writable) ────
+            echo "[deploy] Cloning repository..."
             rm -rf "$REPO_DIR"
             git clone --branch "$BRANCH" --depth 1 \
               https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
+
+            # Verify clone succeeded
+            if [ ! -f "${REPO_DIR}/proxy/src/main.py" ]; then
+              echo "[deploy] FATAL: Clone incomplete — missing src/main.py"
+              exit 1
+            fi
+            echo "[deploy] Clone OK"
+
+            # Restore database
+            if [ -f "$DB_BAK" ]; then
+              mkdir -p "${REPO_DIR}/proxy"
+              mv "$DB_BAK" "${REPO_DIR}/proxy/proxy.db"
+              echo "[deploy] Database restored from backup"
+            fi
+
+            # ── 3. Fix ownership ──────────────────────────────────
+            echo "[deploy] Fixing permissions for user ${PROXY_USER}..."
+            sudo chown -R "${PROXY_USER}:${PROXY_USER}" "$REPO_DIR"
+            sudo chmod 755 "$REPO_DIR" "$REPO_DIR/proxy"
+
             cd "$REPO_DIR/proxy"
 
-            # ── 2. Python virtual environment (cached in /tmp) ────
+            # ── 4. Python virtual environment (cached in /tmp) ────
             if [ ! -d "$VENV_DIR" ]; then
               echo "[deploy] Creating virtual environment..."
               python3.14 -m venv "$VENV_DIR"
@@ -75,24 +107,26 @@ jobs:
             pip install --quiet --upgrade pip setuptools wheel
             pip install --quiet --no-cache-dir ".[dev]"
 
-            # ── 3. Write .env ─────────────────────────────────────
+            # ── 5. Write .env (owned by proxy) ────────────────────
             echo "[deploy] Writing .env..."
-            cat > .env <<-EOF
+            sudo tee .env > /dev/null <<-EOF
             PROXY_PORT=9110
             PROXY_API_KEY=${PROXY_API_KEY}
             DATABASE_URL=sqlite+aiosqlite:///./proxy.db
-            VALKEY_URL=valkey://localhost:6379
+            VALKEY_URL=${VALKEY_URL}
             DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
             GROQ_API_KEY=${GROQ_API_KEY}
             OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
             OPENCODE_API_KEY=${OPENCODE_API_KEY}
             PRUNA_API_KEY=${PRUNA_API_KEY}
+            KEYCLAW_ENABLED=false
             DISABLED_PROVIDERS=${DISABLED_PROVIDERS}
             EOF
 
-            chmod 600 .env
+            sudo chmod 600 .env
+            sudo chown "${PROXY_USER}:${PROXY_USER}" .env
 
-            # ── 4. Systemd service ────────────────────────────────
+            # ── 6. Systemd service (always runs as proxy) ─────────
             SERVICE_FILE="/etc/systemd/system/proxy-cesar.service"
 
             echo "[deploy] Writing systemd service..."
@@ -104,7 +138,7 @@ jobs:
 
             [Service]
             Type=simple
-            User=${USER}
+            User=${PROXY_USER}
             WorkingDirectory=${REPO_DIR}/proxy
             ExecStart=${VENV_DIR}/bin/python -m src.main
             Restart=always
@@ -118,7 +152,15 @@ jobs:
             sudo systemctl enable proxy-cesar
             echo "[deploy] Service updated"
 
-            # ── 5. Restart service ────────────────────────────────
+            # ── 7. Restart service ────────────────────────────────
             echo "[deploy] Restarting service..."
             sudo systemctl restart proxy-cesar
-            echo "[deploy] Done — $(sudo systemctl is-active proxy-cesar)"
+            sleep 2
+            SERVICE_STATUS=$(sudo systemctl is-active proxy-cesar)
+            echo "[deploy] Service status: ${SERVICE_STATUS}"
+
+            # ── 8. Quick health check ─────────────────────────────
+            echo "[deploy] Running health check..."
+            HEALTH=$(curl -s http://127.0.0.1:9110/health 2>/dev/null || echo '{"status":"unreachable"}')
+            echo "[deploy] Health: ${HEALTH}"
+            echo "[deploy] Done"
