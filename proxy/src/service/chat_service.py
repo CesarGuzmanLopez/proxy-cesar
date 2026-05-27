@@ -30,6 +30,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.adapters.cache.message_ordering import (
     canonicalize_message_order,
     sort_tool_definitions,
+    stable_message_hash,
 )
 from src.adapters.cache.provider_cache import (
     apply_anthropic_cache_control,
@@ -759,6 +760,14 @@ async def call_with_fallback(
     # Sprint 7: canonical ordering + tool sorting — compute ONCE before the loop
     ordered_messages = canonicalize_message_order(messages)
     raw_tools = kwargs.get("tools")
+    # Internal validation: log message content hash for integrity tracking
+    _msg_hash = stable_message_hash(ordered_messages)
+    logger.debug(
+        "message_integrity | trace=%s hash=%s system=%s tools=%s msgs=%d",
+        _trace_id, _msg_hash,
+        any(m.get("role") == "system" for m in ordered_messages),
+        bool(raw_tools), len(ordered_messages),
+    )
     if raw_tools:
         sorted_tools = sort_tool_definitions(raw_tools)
         kwargs["tools"] = sorted_tools

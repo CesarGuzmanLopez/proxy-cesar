@@ -10,8 +10,25 @@ Order:
   4. New user/assistant/tool messages (appended at the end)
 """
 
+import hashlib
 import json
 from copy import deepcopy
+
+
+def stable_message_hash(messages: list[dict]) -> str:
+    """Compute a deterministic SHA-256 hash of the message list.
+
+    Uses stable_json_dumps so the same logical messages always produce the
+    same hash, regardless of dict key ordering or cosmetic differences.
+
+    Useful for:
+    - Verifying message integrity between call_with_fallback and _save_and_return
+    - Tracking whether cacheable prefixes changed between turns
+    - Debugging context corruption
+    """
+    return hashlib.sha256(
+        stable_json_dumps_bytes(messages)
+    ).hexdigest()[:16]
 
 
 def assemble_canonical_messages(

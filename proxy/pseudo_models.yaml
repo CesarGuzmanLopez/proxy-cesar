@@ -1,10 +1,18 @@
+# pseudo_models.yaml — Proxy pseudo-model configuration
+#
+# context_window en pseudo-modelos es intencionalmente menor que el
+# context_window de los physical models. Esto obliga al cliente a compactar
+# antes de alcanzar el límite real del proveedor, mejorando la experiencia.
+# El physical model tiene su propio context_window que es el real.
+# NO es un bug — es diseño deliberado.
+
 pseudo_models:
   # ── Razonamiento premium ──────────────────────────────────────────────────
   pensamiento-profundo-caro:
     display_name: Pensamiento Profundo
     description: "Razonamiento de máximo nivel. Límite 120K tokens — si lo superas usa compactalo para continuar."
     input_token_threshold: 120000
-    context_window: 1000000
+    context_window: 120000
     router_llm:
       enabled: true
       suggester: pensamiento-rapido
@@ -37,7 +45,7 @@ pseudo_models:
     display_name: Pensamiento Rápido
     description: "Razonamiento ligero. Debug, code review, análisis rápidos. Límite 120K — usa compactalo si lo superas."
     input_token_threshold: 120000
-    context_window: 1000000
+    context_window: 120000
     router_llm:
       enabled: false
     image_handling:
@@ -68,7 +76,7 @@ pseudo_models:
     display_name: Tareas Avanzadas
     description: "Desarrollo profundo y sostenido. Límite 200K tokens — usa compactalo si lo superas."
     input_token_threshold: 200000
-    context_window: 128000
+    context_window: 200000
     router_llm:
       enabled: false
     image_handling:
@@ -107,7 +115,7 @@ pseudo_models:
     display_name: Código Preciso
     description: "Generación de código puro. Refactors, tests, parches. Límite 200K — usa compactalo si lo superas."
     input_token_threshold: 200000
-    context_window: 128000
+    context_window: 200000
     router_llm:
       enabled: false
     image_handling:
@@ -148,7 +156,7 @@ pseudo_models:
     display_name: Visión
     description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 120K tokens — usa compactalo si superas."
     input_token_threshold: 120000
-    context_window: 128000
+    context_window: 120000
     router_llm:
       enabled: false
     image_handling:
@@ -179,7 +187,7 @@ pseudo_models:
     display_name: Normal
     description: "Punto de entrada recomendado. Coding extenso. Límite 500K tokens — usa /compact si lo superas."
     input_token_threshold: 500000
-    context_window: 128000
+    context_window: 500000
     router_llm:
       enabled: false
     image_handling:
@@ -210,7 +218,7 @@ pseudo_models:
     display_name: Normal Gratis
     description: "Modelos gratuitos y de bajo costo. Límite 200K tokens — usa /compact si lo superas."
     input_token_threshold: 200000
-    context_window: 131072
+    context_window: 200000
     router_llm:
       enabled: false
     image_handling:
@@ -270,7 +278,7 @@ pseudo_models:
     display_name: Flash Lowcost
     description: "Sub-agentes baratos. Clasificación, extracción, parsing. Límite 128K."
     input_token_threshold: 128000
-    context_window: 1000000
+    context_window: 128000
     router_llm:
       enabled: false
     image_handling:
@@ -301,7 +309,7 @@ pseudo_models:
     display_name: Compactador
     description: "Compactación de contexto con delegación de modelos. GLM-5.1 Go, fallback a GPT-OSS Groq (131K), DeepSeek Flash (1M) para historias masivas."
     input_token_threshold: 3000000
-    context_window: 128000
+    context_window: 3000000
     router_llm:
       enabled: false
     image_handling:

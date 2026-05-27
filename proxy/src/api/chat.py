@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 # ── Request/Response schemas ────────────────────────────────────────────────
 
 
-class Message(BaseModel, extra="forbid"):
+class Message(BaseModel, extra="ignore"):
     role: str
     content: str | list[dict] | None = None
     name: str | None = None
@@ -75,7 +75,7 @@ class Message(BaseModel, extra="forbid"):
     tool_call_id: str | None = None
 
 
-class ChatRequest(BaseModel, extra="forbid"):
+class ChatRequest(BaseModel, extra="ignore"):
     model: str
     messages: list[Message]
     conversation_id: str | None = None
