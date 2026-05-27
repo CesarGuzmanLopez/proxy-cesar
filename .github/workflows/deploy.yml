@@ -49,39 +49,25 @@ jobs:
           script: |
             set -euo pipefail
 
-            REPO_DIR="$HOME/proxy-cesar"
+            VENV_DIR="/tmp/proxy-cesar-venv"
+            REPO_DIR="/tmp/proxy-cesar"
             BRANCH="main"
 
             echo "=== proxy-cesar deploy ==="
 
-            # ── 1. Clone or pull ──────────────────────────────────
-            if [ ! -d "$REPO_DIR" ]; then
-              echo "[deploy] First run — cloning repository..."
-              git clone --branch "$BRANCH" --depth 1 \
-                https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
-            else
-              echo "[deploy] Pulling latest changes..."
-              cd "$REPO_DIR"
-              git fetch origin "$BRANCH" --depth 1 2>/dev/null || {
-                echo "[deploy] Re-cloning (stale permissions)..."
-                cd "$HOME"
-                rm -rf "$REPO_DIR"
-                git clone --branch "$BRANCH" --depth 1 \
-                  https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
-              }
-              cd "$REPO_DIR"
-              git reset --hard "origin/$BRANCH"
-            fi
-
+            # ── 1. Clean clone to /tmp (always fresh, always writable) ─
+            echo "[deploy] Cloning fresh repository..."
+            rm -rf "$REPO_DIR"
+            git clone --branch "$BRANCH" --depth 1 \
+              https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
             cd "$REPO_DIR/proxy"
 
-            # ── 2. Python virtual environment ─────────────────────
-            if [ ! -d ".venv" ]; then
+            # ── 2. Python virtual environment (cached in /tmp) ────
+            if [ ! -d "$VENV_DIR" ]; then
               echo "[deploy] Creating virtual environment..."
-              python3.14 -m venv .venv
+              python3.14 -m venv "$VENV_DIR"
             fi
-
-            source .venv/bin/activate
+            source "$VENV_DIR/bin/activate"
 
             echo "[deploy] Installing/updating dependencies..."
             pip install --quiet --upgrade pip setuptools wheel
@@ -117,7 +103,7 @@ jobs:
             Type=simple
             User=${USER}
             WorkingDirectory=${REPO_DIR}/proxy
-            ExecStart=${REPO_DIR}/proxy/.venv/bin/python -m src.main
+            ExecStart=${VENV_DIR}/bin/python -m src.main
             Restart=always
             RestartSec=5
 
