@@ -3,7 +3,10 @@
 Reads from .env file. Exact schema from sprint §5.
 """
 
+import logging
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -46,5 +49,32 @@ class Settings(BaseSettings):
             p.strip().lower() for p in self.disabled_providers.split(",") if p.strip()
         }
 
+    def validate_required_keys(self) -> None:
+        """Ensure at least one provider API key is configured.
+
+        Called on startup to fail fast if no providers are available.
+        Raises ValueError if all provider keys are empty.
+        """
+        provider_keys = [
+            ("opencode_api_key", self.opencode_api_key),
+            ("deepseek_api_key", self.deepseek_api_key),
+            ("groq_api_key", self.groq_api_key),
+            ("openrouter_api_key", self.openrouter_api_key),
+            ("pruna_api_key", self.pruna_api_key),
+        ]
+        available_keys = [name for name, value in provider_keys if value]
+        if not available_keys:
+            missing = ", ".join(name for name, _ in provider_keys)
+            raise ValueError(
+                f"No provider API keys configured. Set at least one of: {missing}"
+            )
+        logger.info("startup validated api_keys configured=%s", available_keys)
+
 
 settings = Settings()
+# Validate on module import
+try:
+    settings.validate_required_keys()
+except ValueError as e:
+    logger.error("settings_validation_failed error=%s", str(e))
+    raise

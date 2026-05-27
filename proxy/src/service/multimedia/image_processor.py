@@ -12,14 +12,16 @@ import re
 
 from PIL import Image
 
+from src.config.constants import (
+    MAX_IMAGE_DIMENSION,
+    IMAGE_JPEG_QUALITY,
+    VISION_TOKENS_PER_TILE,
+    VISION_LOW_DETAIL_TOKENS,
+)
+
 logger = logging.getLogger(__name__)
 
-# Maximum dimension for image degradation (maintains aspect ratio)
-_MAX_DIMENSION = 840
-# JPEG quality after degradation (85 = good balance size/quality)
-_JPEG_QUALITY = 85
-# Rough tokens per 512px tile at standard detail
-_TOKENS_PER_TILE = 170
+# Local overrides (currently same as config/constants, but can be tuned separately)
 # Max safe ratio of context window to use for images
 _MAX_IMAGE_TOKENS_RATIO = 0.7
 # Max images per batch (safety limit even if context would fit more)
@@ -49,8 +51,8 @@ def _encode_data_url(raw: bytes, mime: str = "image/jpeg") -> str:
 def degrade_image(data_url: str) -> str:
     """Downscale and compress an image to reduce token consumption.
 
-    - Resizes to max _MAX_DIMENSION px on the longest side (maintains ratio)
-    - Converts to JPEG at _JPEG_QUALITY quality
+    - Resizes to max MAX_IMAGE_DIMENSION px on the longest side (maintains ratio)
+    - Converts to JPEG at IMAGE_JPEG_QUALITY quality
     - Returns a new data URL
 
     Args:
@@ -72,20 +74,20 @@ def degrade_image(data_url: str) -> str:
 
         # Resize if larger than max dimension
         w, h = img.size
-        if w > _MAX_DIMENSION or h > _MAX_DIMENSION:
-            ratio = min(_MAX_DIMENSION / w, _MAX_DIMENSION / h)
+        if w > MAX_IMAGE_DIMENSION or h > MAX_IMAGE_DIMENSION:
+            ratio = min(MAX_IMAGE_DIMENSION / w, MAX_IMAGE_DIMENSION / h)
             new_w = int(w * ratio)
             new_h = int(h * ratio)
             img = img.resize((new_w, new_h), Image.LANCZOS)
 
         # Save as JPEG with quality compression
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=_JPEG_QUALITY)
+        img.save(buf, format="JPEG", quality=IMAGE_JPEG_QUALITY)
         raw = buf.getvalue()
 
         return _encode_data_url(raw, "image/jpeg")
-    except Exception as exc:
-        logger.warning("image_degrade_failed: %s", exc)
+    except Exception as e:
+        logger.warning("image_processing_error error=%s", str(e))
         return data_url
 
 
@@ -93,8 +95,8 @@ def estimate_image_tokens(data_url: str, detail: str = "auto") -> int:
     """Estimate the token cost of an image for a vision model.
 
     Based on OpenAI's token calculation heuristic:
-    - Low detail: 85 tokens
-    - Auto/High detail: tiles = ceil(w/512) * ceil(h/512), tokens = 170 * tiles + 85
+    - Low detail: VISION_LOW_DETAIL_TOKENS tokens
+    - Auto/High detail: tiles = ceil(w/512) * ceil(h/512), tokens = VISION_TOKENS_PER_TILE * tiles + VISION_LOW_DETAIL_TOKENS
 
     Args:
         data_url: Image data URL.
@@ -107,7 +109,7 @@ def estimate_image_tokens(data_url: str, detail: str = "auto") -> int:
         return 0
 
     if detail == "low":
-        return 85
+        return VISION_LOW_DETAIL_TOKENS
 
     try:
         raw, _mime = _decode_data_url(data_url)
@@ -117,16 +119,16 @@ def estimate_image_tokens(data_url: str, detail: str = "auto") -> int:
         if detail == "auto":
             # Auto: if both dimensions < 512, treat as low detail
             if w < 512 and h < 512:
-                return 85
+                return VISION_LOW_DETAIL_TOKENS
             # Otherwise, use high detail calculation
             tiles_x = (w + 511) // 512
             tiles_y = (h + 511) // 512
-            return 170 * tiles_x * tiles_y + 85
+            return VISION_TOKENS_PER_TILE * tiles_x * tiles_y + VISION_LOW_DETAIL_TOKENS
         else:
             # High detail
             tiles_x = (w + 511) // 512
             tiles_y = (h + 511) // 512
-            return 170 * tiles_x * tiles_y + 85
+            return VISION_TOKENS_PER_TILE * tiles_x * tiles_y + VISION_LOW_DETAIL_TOKENS
     except Exception:
         # Conservative default for unparseable images
         return 1000

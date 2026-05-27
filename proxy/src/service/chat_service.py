@@ -29,7 +29,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from src.adapters.db.models import Conversation
 from src.domain.affinity import AffinityPort
 from src.api.metrics import metrics
-from src.config.pseudo_models import ProxyConfigSchema
+from src.config.pseudo_models import ProxyConfigSchema, PseudoModelSchema
 from src.domain.capabilities import SessionCapabilities
 from src.service.capability_detector import (
     detect_turn_capabilities,
@@ -371,7 +371,7 @@ async def _resolve_session_conv_and_models(
     conv_id: str,
     conv_uuid: uuid.UUID,
     pseudo_model_name: str,
-    pm_schema: object,
+    pm_schema: PseudoModelSchema,
     config: ProxyConfigSchema,
 ) -> tuple:
     """Steps 4-11: Load/create conversation, session, check switch, resolve physical model.
@@ -438,7 +438,7 @@ async def _resolve_session_conv_and_models(
 
 def _raise_if_exceeds_threshold(
     estimated_input: int,
-    pm_schema: object,
+    pm_schema: PseudoModelSchema,
     pseudo_model_name: str,
     config: ProxyConfigSchema,
 ) -> None:

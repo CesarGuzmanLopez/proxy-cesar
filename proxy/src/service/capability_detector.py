@@ -8,6 +8,7 @@ Sprint 3: tiktoken-based token counting replaces 4-char heuristic.
 """
 
 import functools
+import logging
 import uuid
 
 import tiktoken
@@ -16,6 +17,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation
 from src.domain.capabilities import SessionCapabilities, TurnCapabilities
+
+logger = logging.getLogger(__name__)
 
 # Default encoding for token counting.
 # Uses o200k_base (GPT-4o) as a general-purpose encoding for all providers.
@@ -27,7 +30,8 @@ def _get_encoding():
     """Get the tiktoken encoding, with fallback to cl100k_base."""
     try:
         return tiktoken.get_encoding(_TIKTOKEN_ENCODING)
-    except Exception:
+    except Exception as e:
+        logger.warning("tiktoken_encoding_fallback from=%s to=cl100k_base error=%s", _TIKTOKEN_ENCODING, str(e))
         return tiktoken.get_encoding("cl100k_base")
 
 
@@ -245,5 +249,6 @@ def estimate_tokens(messages: list[dict]) -> int:
     try:
         encoding = _get_encoding()
         return _tiktoken_count(encoding, messages)
-    except Exception:
+    except Exception as e:
+        logger.warning("token_count_error fallback_to_char error=%s", str(e))
         return _char_fallback_count(messages)

@@ -106,12 +106,14 @@ def normalize_history(
     parallel_call_ids = _build_parallel_call_ids(messages)
     skip_tool_results: set[str] = set()
 
-    for i, msg in enumerate(copy.deepcopy(messages)):
+    for i, msg in enumerate(messages):
         tool_calls = msg.get("tool_calls", [])
+        # Only deep copy if this is an assistant msg with multiple tool calls
+        msg_to_process = copy.deepcopy(msg) if (msg.get("role") == "assistant" and len(tool_calls) > 1) else msg
 
         if msg.get("role") == "assistant" and len(tool_calls) > 1:
             _serialize_parallel_turn(
-                msg=msg,
+                msg=msg_to_process,
                 tool_calls=tool_calls,
                 turn_number=i + 1,
                 messages=messages,

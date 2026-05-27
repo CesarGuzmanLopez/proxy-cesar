@@ -258,8 +258,8 @@ async def _try_physical_model(
         try:
             response._proxy_provider = provider
             response._proxy_cache_optimization_applied = cache_applied
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.warning("response_parsing_error error=%s", str(e))
 
     return response, None
 
@@ -502,8 +502,8 @@ async def call_with_fallback(
                             len(pseudo_model_schema.physical_models) - idx - 1,
                         )
                         continue
-                except (AttributeError, IndexError):
-                    pass
+                except (AttributeError, IndexError) as e:
+                    logger.warning("tool_call_extraction_error error=%s", str(e))
 
             if accumulated_parts:
                 try:

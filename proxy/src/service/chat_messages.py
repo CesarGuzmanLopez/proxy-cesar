@@ -9,6 +9,7 @@ import logging
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationTurn
+from src.config.pseudo_models import PseudoModelSchema, ProxyConfigSchema
 from src.service.multimedia.image_describer import auto_describe_images
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,10 @@ def build_conversation_messages(
     FASE D: Filter out degradation_event turns (created during image auto-describe) to
     prevent context duplication. These turns replay full history and corrupt the context
     when re-iterated.
+
+    IMPORTANT: Conversation MUST be loaded with eager-loaded turns using:
+    ``db.get(Conversation, conv_id, options=[selectinload(Conversation.turns)])``
+    Otherwise accessing conv.turns triggers N+1 queries.
 
     Returns a new list — does NOT mutate current_messages.
 
@@ -129,9 +134,9 @@ def build_conversation_messages(
 
 
 def _resolve_auto_describe_params(
-    config,
+    config: ProxyConfigSchema,
     current_pseudo_name: str,
-    new_pm_schema,
+    new_pm_schema: PseudoModelSchema,
     pinned_physical_model: str,
 ) -> tuple[str | None, str | None, str | None, str | None, str | None]:
     """Resolve vision model for auto-describe.
@@ -185,8 +190,8 @@ def _resolve_auto_describe_params(
 async def handle_auto_describe(
     conv: Conversation,
     current_pseudo_name: str,
-    new_pm_schema: object,
-    config,
+    new_pm_schema: PseudoModelSchema,
+    config: ProxyConfigSchema,
     db: AsyncSession,
     pinned_physical_model: str,
     in_flight_messages: list[dict] | None = None,

@@ -12,9 +12,13 @@ python.md §4: Pure functions, immutable data (deepcopy), declarative style.
 python.md §5.2: Adapter pattern — uses LiteLLM adapter, not raw calls.
 """
 
+import logging
 from copy import deepcopy
 
 from src.adapters.litellm import call_litellm
+from src.config.constants import BLOB_STORAGE_TTL_SECONDS
+
+logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -196,8 +200,8 @@ async def auto_describe_images(
         if valkey is not None:
             try:
                 cached_desc = await valkey.get(f"blob:desc:generic:{url_hash}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("image_cache_retrieval_error error=%s", str(e))
         if cached_desc:
             url_cache[ref["url"]] = cached_desc
             total_tokens += len(cached_desc) // 4  # rough token estimate
@@ -241,8 +245,8 @@ async def auto_describe_images(
                     batch_tokens = getattr(response.usage, "completion_tokens", 0) or 0
                 elif isinstance(response, dict):
                     batch_tokens = (response.get("usage") or {}).get("completion_tokens", 0) or 0
-            except (AttributeError, TypeError, KeyError):
-                pass
+            except (AttributeError, TypeError, KeyError) as e:
+                logger.warning("image_metadata_extraction_failed error=%s", str(e))
 
             # Extract text from response (handles ModelResponse, dict, and MagicMock)
             text = ""
@@ -253,8 +257,8 @@ async def auto_describe_images(
                         text = choice.message.content or ""
                 elif isinstance(response, dict):
                     text = (response.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
-            except (AttributeError, IndexError, TypeError, KeyError):
-                pass
+            except (AttributeError, IndexError, TypeError, KeyError) as e:
+                logger.warning("image_description_parsing_failed error=%s", str(e))
             if text and isinstance(text, str):
                 text = text.strip()
                 if text.startswith("```"):
@@ -272,10 +276,10 @@ async def auto_describe_images(
                                     await valkey.set(
                                         f"blob:desc:generic:{ref['url_hash']}",
                                         desc,
-                                        ex=86400,
+                                        ex=BLOB_STORAGE_TTL_SECONDS,
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.warning("blob_storage_error error=%s", str(e))
                 except (json_mod.JSONDecodeError, IndexError, TypeError):
                     pass
 
@@ -296,8 +300,13 @@ async def auto_describe_images(
                 url_cache[ref["url"]] = desc
                 total_tokens += tokens
 
-    # Build modified message list
-    modified: list[dict] = deepcopy(messages)
+    # Build modified message list (shallow copy list, deep copy only modified msgs)
+    # Optimization: avoid deepcopy of entire list if only a few messages change
+    modified_indices: set[int] = {ref["msg_idx"] for ref in refs if url_cache.get(ref["url"])}
+    modified: list[dict] = [
+        deepcopy(msg) if i in modified_indices else msg
+        for i, msg in enumerate(messages)
+    ]
     described_count: int = 0
 
     for ref in refs:

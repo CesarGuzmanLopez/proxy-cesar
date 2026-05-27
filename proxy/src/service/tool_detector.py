@@ -18,10 +18,12 @@ from typing import Any
 
 import fitz  # PyMuPDF — mandatory for PDF text extraction
 
+from src.config.constants import BLOB_STORAGE_TTL_SECONDS
+
 logger = logging.getLogger(__name__)
 
 BLOB_PREFIX = "BLOB"
-BLOB_TTL = 86400  # 24 hours
+BLOB_TTL = BLOB_STORAGE_TTL_SECONDS  # Configurable in src/config/constants.py
 _MAX_BLOB_SIZE = 10 * 1024 * 1024  # 10 MB
 _CONTENT_PREVIEW_MAX = 500
 
