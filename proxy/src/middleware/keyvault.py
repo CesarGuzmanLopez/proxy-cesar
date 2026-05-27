@@ -24,62 +24,49 @@ KEYVAULT_TTL = 3600
 PLACEHOLDER_PREFIX = "KEYVAULT"
 
 _SECRET_PATTERNS: list[tuple[str, str]] = [
-    # API keys
-    (r"\b(sk-(?:proj-)?[A-Za-z0-9-_]{20,})\b", "openai"),
-    (r"\b(sk-ant-[A-Za-z0-9-_]{20,})\b", "anthropic"),
-    (r"\b(ghp_[A-Za-z0-9]{36})\b", "github"),
-    (r"\b(github_pat_[A-Za-z0-9-_]{20,})\b", "github_pat"),
+    # ── API keys (prefixed — highly specific, low false positive) ──────────
+    # OpenAI / DeepSeek / generic sk-
+    (r"\b(sk-(?:proj-|ant-|or-v1-)?[A-Za-z0-9-_]{10,})\b", "sk_key"),
+    # GitHub
+    (r"\b(ghp_[A-Za-z0-9]{36})\b", "github_classic"),
+    (r"\b(github_pat_[A-Za-z0-9-_]{10,})\b", "github_pat"),
+    # GitLab
+    (r"\b(glpat-[A-Za-z0-9-_]{10,})\b", "gitlab"),
+    # HuggingFace
+    (r"\b(hf_[A-Za-z0-9]{10,})\b", "huggingface"),
+    # Groq
+    (r"\b(gsk_[A-Za-z0-9]{10,})\b", "groq_key"),
+    # Google AI
+    (r"\b(AIza[0-9A-Za-z_-]{35})\b", "google_ai"),
+    # AWS
     (r"\b(AKIA[0-9A-Z]{16})\b", "aws_access"),
-    (r"\b(glpat-[A-Za-z0-9-_]{20,})\b", "gitlab"),
-    (r"\b(xox[bps]-[A-Za-z0-9-]+)\b", "slack"),
-    # Environment variable assignments
-    (r'\b(DEEPSEEK_API_KEY\s*=\s*["\']?)([A-Za-z0-9]{20,})(["\']?)', "deepseek_env"),
-    (
-        r'\b(OPENROUTER_API_KEY\s*=\s*["\']?)([A-Za-z0-9]{20,})(["\']?)',
-        "openrouter_env",
-    ),
-    (r'\b(GROQ_API_KEY\s*=\s*["\']?)([A-Za-z0-9]{20,})(["\']?)', "groq_env"),
-    (r'\b(PROXY_API_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "proxy_env"),
-    # Private keys (PEM format, single or multi-line)
-    (
-        r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----\s*[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)",
-        "private_key_pem",
-    ),
-    (
-        r"(-----BEGIN PGP PRIVATE KEY BLOCK-----\s*[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----)",
-        "pgp_private_key",
-    ),
-    (
-        r"(-----BEGIN ENCRYPTED PRIVATE KEY-----\s*[\s\S]*?-----END ENCRYPTED PRIVATE KEY-----)",
-        "encrypted_private_key",
-    ),
-    # Public keys
-    (
-        r"(ssh-(?:rsa|ed25519|dss|ecdsa-[a-z0-9-]+)\s+AAAA[A-Za-z0-9+/]+={0,2}\s*[^\n]*)",
-        "ssh_public_key",
-    ),
-    (
-        r"(-----BEGIN PUBLIC KEY-----\s*[\s\S]*?-----END PUBLIC KEY-----)",
-        "public_key_pem",
-    ),
-    (
-        r"(-----BEGIN PGP PUBLIC KEY BLOCK-----\s*[\s\S]*?-----END PGP PUBLIC KEY BLOCK-----)",
-        "pgp_public_key",
-    ),
-    (
-        r"(-----BEGIN CERTIFICATE-----\s*[\s\S]*?-----END CERTIFICATE-----)",
-        "tls_certificate",
-    ),
-    # Crypto wallets
+    (r"\b([A-Za-z0-9+/]{40})[?&](\S{6,})?\b", "aws_secret"),
+    # Slack
+    (r"\b(xox[bpsar]-(?:[0-9]+-){0,3}[A-Za-z0-9-]{10,})\b", "slack"),
+    # Stripe
+    (r"\b(sk_live_[0-9a-zA-Z]{24,})\b", "stripe_live"),
+    (r"\b(rk_live_[0-9a-zA-Z]{24,})\b", "stripe_restricted"),
+    # Twilio
+    (r"\b(SK[0-9a-fA-F]{32})\b", "twilio"),
+    # Generic API key in env assignment
+    (r'\b([A-Z_]{3,30}_API_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "env_api_key"),
+    # Generic API key in env (KEY=value)
+    (r'\b([A-Z_]{3,30}_TOKEN\s*=\s*["\']?)([A-Za-z0-9._-]{10,})(["\']?)', "env_token"),
+    # ── Private keys ──────────────────────────────────────────────────────
+    (r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----\s*[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)", "private_key_pem"),
+    (r"(-----BEGIN PGP PRIVATE KEY BLOCK-----\s*[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----)", "pgp_private_key"),
+    (r"(-----BEGIN ENCRYPTED PRIVATE KEY-----\s*[\s\S]*?-----END ENCRYPTED PRIVATE KEY-----)", "encrypted_private_key"),
+    # ── Public keys / certificates ────────────────────────────────────────
+    (r"(ssh-(?:rsa|ed25519|dss|ecdsa-[a-z0-9-]+)\s+AAAA[A-Za-z0-9+/]+={0,2}\s*[^\n]*)", "ssh_public_key"),
+    (r"(-----BEGIN PUBLIC KEY-----\s*[\s\S]*?-----END PUBLIC KEY-----)", "public_key_pem"),
+    (r"(-----BEGIN CERTIFICATE-----\s*[\s\S]*?-----END CERTIFICATE-----)", "tls_certificate"),
+    # ── Crypto / secrets ──────────────────────────────────────────────────
     (r"\b(0x[a-fA-F0-9]{64})\b", "eth_private_key"),
     (r"\b([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b", "bitcoin_wif"),
-    # JWT tokens
-    (
-        r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,})\b",
-        "jwt_token",
-    ),
-    # Generic long base64 strings (catch-all, lower priority)
-    (r"\b([A-Za-z0-9+/]{40,}={0,2})\b", "base64_long"),
+    # ── JWT ───────────────────────────────────────────────────────────────
+    (r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b", "jwt_token"),
+    # ── Generic long token strings (catch-all, high threshold to avoid FP) ─
+    (r"\b([A-Za-z0-9+/=_-]{40,})\b", "long_token"),
 ]
 
 _PLACEHOLDER_RE = re.compile(rf"\[{PLACEHOLDER_PREFIX}:([a-f0-9]{{8}})\]")
@@ -112,12 +99,12 @@ def _mask_text(text: str, secrets: dict[str, str]) -> str:
             if not groups:
                 continue
 
-            if kind.endswith("_env"):
-                prefix, secret, suffix = (
-                    groups[0],
-                    groups[1],
-                    groups[2] if len(groups) > 2 else "",
-                )
+            # Patterns with 2+ capture groups: prefix, secret, suffix
+            # (env var patterns, AWS patterns with extra param)
+            if len(groups) >= 2 and len(groups[1]) >= 4:
+                prefix = groups[0] or ""
+                secret = groups[1]
+                suffix = groups[2] if len(groups) > 2 else ""
                 secret_hash = _hash_secret(secret)
                 secrets[secret_hash] = secret
                 placeholder = _make_placeholder(secret_hash)
@@ -127,7 +114,10 @@ def _mask_text(text: str, secrets: dict[str, str]) -> str:
                     + text[match.end() :]
                 )
             else:
+                # Single capture group: the whole secret
                 secret = groups[0]
+                if len(secret) < 8:  # Skip very short matches
+                    continue
                 secret_hash = _hash_secret(secret)
                 secrets[secret_hash] = secret
                 placeholder = _make_placeholder(secret_hash)
@@ -201,10 +191,13 @@ async def _re_inject_non_streaming(response, secrets: dict[str, str]) -> JSONRes
 
         resp_json = json.loads(body_bytes)
         resp_json = _re_inject_recursive(resp_json, secrets)
+        # Remove Content-Length — re-injection changes response size
+        headers = dict(response.headers)
+        headers.pop("content-length", None)
         return JSONResponse(
             content=resp_json,
             status_code=response.status_code,
-            headers=dict(response.headers),
+            headers=headers,
         )
     except Exception:
         return response
