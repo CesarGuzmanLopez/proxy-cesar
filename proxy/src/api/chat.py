@@ -26,8 +26,10 @@ from src.service.chat_models import (
 )
 from src.service.context_alert import get_context_alert
 from src.service.chat_service import (
+    _try_physical_model,
     build_conversation_messages,
     call_with_fallback,
+    canonicalize_message_order,
     evaluate_router_suggestion,
     process_chat_request,
 )
@@ -520,6 +522,16 @@ async def _handle_streaming_with_db(
         thinking=thinking,
     )
 
+    # Sprint 11: Update physical_model from actual response when fallback occurred
+    if fallback_info.applied:
+        if hasattr(litellm_response, "model") and litellm_response.model:
+            logger.debug(
+                "physical_model_update (stream) | old=%s new=%s",
+                physical_model, litellm_response.model,
+            )
+            physical_model = litellm_response.model
+            provider = physical_model.split("/")[0] if "/" in physical_model else provider
+
     # No auto-describe — images pass through or error explicitly
     images_described: int = 0
     images_described_by: str | None = None
@@ -569,6 +581,16 @@ async def _handle_streaming_with_db(
                 tool_choice=tool_choice,
                 resolved_model=resolved_model,
                 is_new=is_new,
+                # Sprint 11: pass schema + kwargs for token-limit continuation
+                pm_schema=pm_schema,
+                call_kwargs={
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "tools": tools,
+                    "tool_choice": tool_choice,
+                    "stream_options": stream_options,
+                    "thinking": thinking,
+                },
             )
         ),
         media_type="text/event-stream",
@@ -760,29 +782,138 @@ def _build_final_metadata_chunk(
 
 
 async def _stream_response_generator(ctx: StreamContext):
-    """SSE streaming: forward chunks, persist turn on success, append metadata."""
+    """SSE streaming: forward chunks, persist turn on success, append metadata.
+
+    Sprint 11: supports token-limit continuation — when a model finishes with
+    ``finish_reason="length"`` and more physical models are available, the
+    generator suppresses the ``"length"`` finish_reason (sets to ``null``),
+    appends the accumulated content as an assistant message, and seamlessly
+    continues streaming from the next model.
+    """
     chunks: list = []
     db = ctx.db
-    try:
-        try:
-            async for chunk in ctx.litellm_response:
-                chunks.append(chunk)
-                yield f"data: {chunk.model_dump_json()}\n\n"
-        except Exception as e:
-            try:
-                await ctx.db.rollback()
-            except Exception:
-                pass
-            error_payload = {
-                "error": "PROXY_STREAM_ERROR",
-                "message": str(e),
-                "physical_model": ctx.physical_model,
-                "pseudo_model": ctx.pseudo_model,
-            }
-            yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'error'}], 'proxy_metadata': error_payload})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
 
+    # Sprint 11: prepare for token-limit continuation across multiple models
+    current_stream = ctx.litellm_response
+    phys_models = (
+        list(ctx.pm_schema.physical_models)
+        if ctx.pm_schema and ctx.call_kwargs
+        else []
+    )
+    current_idx: int = 0
+    accumulated_content: str = ""
+
+    try:
+        # ── Multi-stream loop (continues when a model hits token limit) ──
+        while True:
+            finish_reason: str | None = None
+            try:
+                async for chunk in current_stream:
+                    chunks.append(chunk)
+
+                    # Accumulate text content for potential continuation
+                    try:
+                        delta = chunk.choices[0].delta
+                        if delta and hasattr(delta, "content") and delta.content:
+                            accumulated_content += delta.content
+                    except (AttributeError, IndexError):
+                        pass
+
+                    # Detect finish_reason — intercept "length" if more models
+                    try:
+                        fr = (
+                            chunk.choices[0].finish_reason
+                            if chunk.choices
+                            else None
+                        )
+                    except (AttributeError, IndexError):
+                        fr = None
+
+                    if fr == "length" and current_idx < len(phys_models) - 1:
+                        # Suppress "length" — set to null so client continues
+                        chunk_dict = json.loads(chunk.model_dump_json())
+                        if chunk_dict.get("choices"):
+                            chunk_dict["choices"][0]["finish_reason"] = None
+                        yield f"data: {json.dumps(chunk_dict)}\n\n"
+                        finish_reason = "length"
+                        break
+
+                    yield f"data: {chunk.model_dump_json()}\n\n"
+
+                    if fr:
+                        finish_reason = fr
+                        break
+
+            except GeneratorExit:
+                # Client disconnected — clean up and exit
+                if db is not None:
+                    await db.close()
+                return
+            except Exception as e:
+                try:
+                    await ctx.db.rollback()
+                except Exception:
+                    pass
+                error_payload = {
+                    "error": "PROXY_STREAM_ERROR",
+                    "message": str(e),
+                    "physical_model": ctx.physical_model,
+                    "pseudo_model": ctx.pseudo_model,
+                }
+                yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'error'}], 'proxy_metadata': error_payload})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # ── Decide whether to continue with next model ──────────────
+            if finish_reason != "length":
+                break  # Natural stop — we're done
+
+            # All models exhausted — stop
+            if current_idx >= len(phys_models) - 1:
+                break
+
+            # ── Prepare and call next model ─────────────────────────────
+            current_idx += 1
+            next_phys = phys_models[current_idx]
+
+            # Build continuation messages: original input + partial assistant
+            cont_messages = list(ctx.messages or [])
+            cont_messages.append(
+                {"role": "assistant", "content": accumulated_content}
+            )
+
+            _trace_id = str(uuid.uuid4())[:8]
+            new_stream, skip_reason = await _try_physical_model(
+                next_phys,
+                canonicalize_message_order(cont_messages),
+                True,  # stream
+                ctx.call_kwargs or {},
+                estimate_tokens(cont_messages),
+                _trace_id,
+            )
+
+            if new_stream is None:
+                logger.warning(
+                    "stream_continuation_skip | trace=%s model=%s reason=%s",
+                    _trace_id, next_phys.model, skip_reason,
+                )
+                break  # Next model also skipped — give up
+
+            logger.info(
+                "stream_continuation | trace=%s model=%s accumulated=%d",
+                _trace_id, next_phys.model, len(accumulated_content),
+            )
+            # Update context to reflect the active model
+            ctx.physical_model = next_phys.model
+            ctx.provider = (
+                next_phys.provider.lower()
+                if next_phys.provider
+                else ctx.provider
+            )
+            current_stream = new_stream
+            # Continue the outer while loop to iterate the new stream
+
+        # ── All streams consumed — persist and finalize ─────────────────
         input_tokens, output_tokens, response_dict = _extract_tokens_from_chunks(chunks)
 
         # Sprint 7: extract cache metadata from streaming response

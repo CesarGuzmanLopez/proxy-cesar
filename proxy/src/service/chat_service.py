@@ -207,6 +207,36 @@ async def process_chat_request(
         tool_choice=tool_choice,
         thinking=thinking,
     )
+
+    # Sprint 11: Update physical_model from actual response when fallback occurred.
+    # The resolved physical_model is the first eligible model, but fallback may
+    # have picked a different one. The LiteLLM response.model (or dict 'model' key)
+    # reflects the provider that actually handled the request.
+    if fallback_info.applied:
+        actual_model: str | None = None
+        if hasattr(response, "model"):
+            actual_model = response.model
+        elif isinstance(response, dict):
+            actual_model = response.get("model")
+        if actual_model:
+            logger.debug(
+                "physical_model_update | trace=%s old=%s new=%s",
+                _req_id, physical_model, actual_model,
+            )
+            physical_model = actual_model
+            # Update provider from the response model
+            provider = physical_model.split("/")[0] if "/" in physical_model else provider
+        elif fallback_info.attempted_models:
+            # Fallback: use last attempted model
+            last_model = fallback_info.attempted_models[-1]
+            if "(" not in last_model:
+                logger.debug(
+                    "physical_model_update (fallback) | trace=%s old=%s new=%s",
+                    _req_id, physical_model, last_model,
+                )
+                physical_model = last_model
+                provider = physical_model.split("/")[0] if "/" in physical_model else provider
+
     _elapsed = time.monotonic() - _t0
     logger.info(
         "req_end   | trace=%s conv=%s pseudo=%s physical=%s "
@@ -669,6 +699,7 @@ async def call_with_fallback(
     messages: list[dict],
     stream: bool = False,
     estimated_input: int | None = None,
+    start_index: int = 0,
     **kwargs,
 ) -> tuple:
     """Try each physical model in order. On retryable errors, move to next.
@@ -680,6 +711,14 @@ async def call_with_fallback(
 
     Sprint 7: applies provider-specific cache optimizations (Anthropic cache_control)
     and tracks cache destruction on fallback.
+
+    Sprint 11: token-limit fallback — if a non-streaming model finishes with
+    ``finish_reason="length"`` and there are more physical models available,
+    the partial response is appended as an assistant message and the next
+    model is called to continue (composite response built at the end).
+
+    ``start_index`` (default 0) allows resuming from a specific position in
+    the physical models list — used by streaming continuation.
     """
     fallback_info = FallbackInfo()
     last_error: Exception | None = None
@@ -726,22 +765,102 @@ async def call_with_fallback(
             first_name,
         )
 
+    # Sprint 11: accumulate partial content across models when token limit is hit
+    accumulated_parts: list[tuple[str, str]] = []  # (model, partial_content)
+
     for idx, phys in enumerate(pseudo_model_schema.physical_models):
+        # Skip models before start_index (used for streaming continuation)
+        if idx < start_index:
+            continue
+
         try:
-            response = await _try_physical_model(
+            response, skip_reason = await _try_physical_model(
                 phys, ordered_messages, stream, kwargs, _est_input, _trace_id
             )
+
+            # ── Provider disabled / context too large ───────────
             if response is None:
                 _context_skipped.append(phys.model)
+                fallback_info.applied = True
+                fallback_info.reason = f"model_skipped/{skip_reason}: {phys.model}"
                 fallback_info.attempted_models.append(
-                    f"{phys.model} (skipped: context too small)"
+                    f"{phys.model} (skipped/{skip_reason})"
                 )
                 continue
 
             fallback_info.attempted_models.append(phys.model)
+
+            # ── Token-limit fallback (non-streaming only) ────────
+            last_model = idx >= len(pseudo_model_schema.physical_models) - 1
+            if not stream and not last_model:
+                try:
+                    finish_reason = response.choices[0].finish_reason
+                    if finish_reason == "length":
+                        partial = response.choices[0].message.content or ""
+                        accumulated_parts.append((phys.model, partial))
+                        fallback_info.applied = True
+                        fallback_info.reason = f"token_limit_continued: {phys.model}"
+                        # Track with suffix in attempted list
+                        fallback_info.attempted_models[-1] = (
+                            f"{phys.model} (token_limit)"
+                        )
+                        # Append partial as assistant message for next model
+                        ordered_messages.append(
+                            {"role": "assistant", "content": partial}
+                        )
+                        _est_input = estimate_tokens(ordered_messages)
+                        logger.info(
+                            "llm_token_limit | trace=%s model=%s "
+                            "content_len=%d models_remaining=%d",
+                            _trace_id, phys.model, len(partial),
+                            len(pseudo_model_schema.physical_models) - idx - 1,
+                        )
+                        continue
+                except (AttributeError, IndexError):
+                    pass  # Unusual response shape, skip token-limit check
+
+            # ── Successful response (natural stop or last model) ──
+            # If we accumulated parts from previous models, build composite
+            if accumulated_parts:
+                # Include this model's content as the final part
+                try:
+                    final_content = response.choices[0].message.content or ""
+                    finish_reason = response.choices[0].finish_reason
+                except (AttributeError, IndexError):
+                    final_content = ""
+                    finish_reason = "stop"
+                accumulated_parts.append((phys.model, final_content))
+
+                # Build composite response dict with all accumulated content
+                composite_text = "".join(
+                    c for _, c in accumulated_parts
+                )
+                response_dict = {
+                    "id": getattr(response, "id", f"chatcmpl-{_trace_id}"),
+                    "object": "chat.completion",
+                    "model": getattr(response, "model", phys.model),
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": composite_text,
+                        },
+                        "finish_reason": finish_reason,
+                    }],
+                    "usage": {
+                        "prompt_tokens": _est_input,
+                        "completion_tokens": len(composite_text),
+                    },
+                }
+                # Attach provider headers from the last response if available
+                prov_h = getattr(response, "_provider_response_headers", None)
+                if prov_h:
+                    response_dict["provider_headers"] = prov_h
+                response = response_dict
+
             elapsed = time.monotonic() - _start
             _log_model_call_result(response, phys, stream, _trace_id, elapsed)
             return response, fallback_info
+
         except _RETRYABLE as e:
             last_error = e
             fallback_info.attempted_models.append(phys.model)
@@ -755,6 +874,31 @@ async def call_with_fallback(
             continue
 
     elapsed = time.monotonic() - _start
+
+    # ── All models exhausted ────────────────────────────────────
+    # If we accumulated partial content but no model completed naturally,
+    # build a composite from whatever we have
+    if accumulated_parts:
+        composite_text = "".join(c for _, c in accumulated_parts)
+        last_model_name = accumulated_parts[-1][0]
+        response_dict = {
+            "id": f"chatcmpl-{_trace_id}",
+            "object": "chat.completion",
+            "model": last_model_name,
+            "choices": [{
+                "message": {"role": "assistant", "content": composite_text},
+                "finish_reason": "length",
+            }],
+            "usage": {
+                "prompt_tokens": _est_input,
+                "completion_tokens": len(composite_text),
+            },
+        }
+        logger.info(
+            "llm_accumulated_return | trace=%s models=%d total_len=%d finish=length",
+            _trace_id, len(accumulated_parts), len(composite_text),
+        )
+        return response_dict, fallback_info
 
     # Sprint 9: If all models were skipped due to context too large
     if len(_context_skipped) == len(pseudo_model_schema.physical_models):
@@ -1111,8 +1255,12 @@ async def _try_physical_model(
     kwargs: dict,
     _est_input: int,
     _trace_id: str,
-) -> Any:
-    """Attempt to call a single physical model. Returns response or None if skipped."""
+) -> tuple[Any, str | None]:
+    """Attempt to call a single physical model.
+
+    Returns (response, None) on success or (None, skip_reason) if skipped.
+    skip_reason is one of ``"provider_disabled"`` or ``"context_too_large"``.
+    """
     # ── Check if provider is disabled via env var ──────────────
     from src.config.settings import settings as _settings
 
@@ -1123,7 +1271,7 @@ async def _try_physical_model(
             "disabled_providers=%s",
             _trace_id, phys.model, phys.provider, _settings.disabled_providers,
         )
-        return None
+        return None, "provider_disabled"
 
     if phys.context_window is not None and _est_input > phys.context_window:
         logger.warning(
@@ -1131,7 +1279,7 @@ async def _try_physical_model(
             "input_est=%d reason=context_too_large",
             _trace_id, phys.model, phys.context_window, _est_input,
         )
-        return None
+        return None, "context_too_large"
 
     logger.info(
         "llm_call  | trace=%s attempt=0 model=%s stream=%s",
@@ -1182,7 +1330,7 @@ async def _try_physical_model(
         except (AttributeError, TypeError):
             pass
 
-    return response
+    return response, None
 
 
 def _log_model_call_result(

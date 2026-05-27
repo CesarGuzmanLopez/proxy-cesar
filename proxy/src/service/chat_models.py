@@ -50,6 +50,11 @@ class StreamContext:
     tool_choice: str | dict | None = None
     resolved_model: str | None = None
     is_new: bool | None = None
+    # Sprint 11: fields for token-limit fallback continuation
+    pm_schema: Any = None
+    """Pseudo-model schema with physical_models list — needed for continuing."""
+    call_kwargs: dict | None = None
+    """Kwargs to pass when calling the next model for continuation."""
 
 
 @dataclass
