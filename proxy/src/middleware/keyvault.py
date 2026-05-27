@@ -236,48 +236,53 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
     """Transparent secret vault middleware.
 
     Only activates for POST /v1/chat/completions.
-    Secrets are scoped per conversation_id via Valkey.
+    Always masks secrets in-memory. Persists to Valkey when available.
+    Re-injects real values in both streaming and non-streaming responses.
     """
 
     async def dispatch(self, request, call_next):
         if request.url.path != _CHAT_PATH:
             return await call_next(request)
 
-        valkey = request.app.state.valkey
-        if valkey is None:
-            return await call_next(request)
-
-        # ── Request: extract secrets, store in Valkey, mask body ──────────
+        # ── Parse body ───────────────────────────────────────────────────
         try:
             body_bytes = await request.body()
             body = json.loads(body_bytes)
         except Exception:
             return await call_next(request)
 
+        # ── Detect + mask secrets (always, in-memory) ─────────────────────
         conversation_id = body.get("conversation_id") or "anon"
         secrets: dict[str, str] = {}
 
         _mask_messages(body, secrets)
 
-        if secrets:
-            await _store_secrets(valkey, conversation_id, secrets)
-            body.setdefault("messages", []).insert(
-                0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT}
-            )
-            logger.info(
-                "keyvault_active conv=%s secrets=%d", conversation_id[:12], len(secrets)
-            )
+        if not secrets:
+            # No secrets found → pass through unmodified
+            return await call_next(request)
 
-        # Set cached body directly for downstream handler
+        # ── Persist to Valkey (best-effort, non-blocking) ─────────────────
+        valkey = getattr(request.app.state, "valkey", None)
+        if valkey:
+            import asyncio
+            asyncio.create_task(_store_secrets(valkey, conversation_id, secrets))
+
+        # ── Inject system prompt so LLM knows about placeholders ──────────
+        body.setdefault("messages", []).insert(
+            0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT}
+        )
+        logger.info(
+            "keyvault_active conv=%s secrets=%d valkey=%s",
+            conversation_id[:12], len(secrets), "yes" if valkey else "no",
+        )
+
+        # Set cached body for downstream handler
         request._body = json.dumps(body).encode()
 
-        # ── Call handler ─────────────────────────────────────────────────
+        # ── Call handler ──────────────────────────────────────────────────
         response = await call_next(request)
 
-        # ── Response: re-inject real values ────────────────────────────────
-        if not secrets:
-            return response
-
+        # ── Re-inject real values ─────────────────────────────────────────
         if isinstance(response, StreamingResponse):
             return StreamingResponse(
                 content=_build_re_inject_stream(response.body_iterator, secrets)(),
