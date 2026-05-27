@@ -62,6 +62,8 @@ jobs:
             else
               echo "[deploy] Pulling latest changes..."
               cd "$REPO_DIR"
+              # Fix git permissions if broken (ci user != deploy user)
+              sudo find .git/objects -type f ! -user "$(whoami)" -exec chown "$(whoami):" {} + 2>/dev/null || true
               git fetch origin "$BRANCH" --depth 1
               git reset --hard "origin/$BRANCH"
             fi
