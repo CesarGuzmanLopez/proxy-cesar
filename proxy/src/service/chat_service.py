@@ -92,6 +92,7 @@ async def process_chat_request(
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
     valkey=None,
+    thinking: dict | str | bool | None = None,
 ) -> ChatResult:
     """Execute the full chat completion flow.
 
@@ -204,6 +205,7 @@ async def process_chat_request(
         max_tokens=max_tokens,
         tools=tools,
         tool_choice=tool_choice,
+        thinking=thinking,
     )
     _elapsed = time.monotonic() - _t0
     logger.info(
@@ -1048,6 +1050,32 @@ def _resolve_api_key(phys) -> str | None:
     return os.environ.get(phys.api_key_env) or None
 
 
+def _normalise_thinking_param(thinking: dict | str | bool | None) -> dict | None:
+    """Normalise ``thinking`` from client-friendly shorthands to Anthropic dict.
+
+    Accepts:
+      - ``{"type": "enabled", "budget_tokens": 16000}`` → as-is
+      - ``{"type": "disabled"}`` → as-is
+      - ``True`` → ``{"type": "enabled"}``
+      - ``False`` → ``{"type": "disabled"}``
+      - ``"enabled"`` → ``{"type": "enabled"}``
+      - ``"disabled"`` → ``{"type": "disabled"}``
+      - ``None`` → ``None``  (leave unset, provider default applies)
+
+    The result is passed to ``litellm.acompletion()`` which translates it to the
+    provider-native format (Anthropic ``thinking``, OpenAI ``reasoning_effort``,
+    etc.).
+    """
+    if thinking is None:
+        return None
+    if isinstance(thinking, bool):
+        return {"type": "enabled" if thinking else "disabled"}
+    if isinstance(thinking, str):
+        return {"type": thinking.lower()}
+    # Already a dict — pass through (Anthropic format)
+    return thinking
+
+
 async def _try_physical_model(
     phys,
     ordered_messages: list[dict],
@@ -1097,13 +1125,26 @@ async def _try_physical_model(
     api_base = phys.api_base or None
     api_key = _resolve_api_key(phys)
 
+    # Normalise thinking parameter (client shorthands → Anthropic dict)
+    raw_thinking = kwargs.pop("thinking", None)
+    thinking = _normalise_thinking_param(raw_thinking)
+    if thinking is not None:
+        logger.debug(
+            "thinking    | trace=%s model=%s thinking=%s",
+            _trace_id, phys.model, thinking,
+        )
+
+    call_kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    if thinking is not None:
+        call_kwargs["thinking"] = thinking
+
     response = await call_litellm(
         model=phys.model,
         messages=call_messages,
         stream=stream,
         api_base=api_base,
         api_key=api_key,
-        **{k: v for k, v in kwargs.items() if v is not None},
+        **call_kwargs,
     )
 
     if not stream:

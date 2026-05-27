@@ -83,6 +83,11 @@ class ChatRequest(BaseModel, extra="forbid"):
     tool_choice: str | dict | None = None
     stream_options: dict | None = None
     """OpenAI-compatible stream options (e.g. {"include_usage": true})."""
+    thinking: dict | str | bool | None = None
+    """Extended thinking toggle (Anthropic-compatible).
+    ``{"type": "enabled", "budget_tokens": 16000}`` enables deep thinking;
+    ``{"type": "disabled"}`` or ``False`` disables it.
+    Currently supported by ``pensamiento-profundo-caro`` (qwen3.7-max)."""
 
 
 # ── Endpoint ────────────────────────────────────────────────────────────────
@@ -177,6 +182,7 @@ async def chat_completions(
             tools=request.tools,
             tool_choice=request.tool_choice,
             stream_options=request.stream_options,
+            thinking=request.thinking,
         )
 
     # Non-streaming path: session lifecycle managed here with try/finally
@@ -189,6 +195,7 @@ async def chat_completions(
             request=request,
             messages=messages,
             valkey=app_state.valkey,
+            thinking=request.thinking,
         )
     except HTTPException:
         await db.rollback()
@@ -211,6 +218,7 @@ async def _handle_non_streaming(
     request: ChatRequest,
     messages: list[dict],
     valkey=None,
+    thinking: dict | str | bool | None = None,
 ) -> dict:
     """Non-streaming request: call LLM, save turn, return response."""
     result = await process_chat_request(
@@ -226,6 +234,7 @@ async def _handle_non_streaming(
         tools=request.tools,
         tool_choice=request.tool_choice,
         valkey=valkey,
+        thinking=thinking,
     )
 
     # Build response with Sprint 2 + Sprint 4 proxy_metadata
@@ -272,6 +281,7 @@ async def _handle_streaming(
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
     stream_options: dict | None = None,
+    thinking: dict | str | bool | None = None,
 ):
     """Streaming request: return SSE StreamingResponse.
 
@@ -297,6 +307,7 @@ async def _handle_streaming(
             tools=tools,
             tool_choice=tool_choice,
             stream_options=stream_options,
+            thinking=thinking,
         )
     except HTTPException:
         await db.close()
@@ -361,6 +372,7 @@ async def _handle_streaming_with_db(
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
     stream_options: dict | None = None,
+    thinking: dict | str | bool | None = None,
 ):
     """Pre-stream logic (runs synchronously before SSE starts)."""
     # Resolve model
@@ -505,6 +517,7 @@ async def _handle_streaming_with_db(
         tools=tools,
         tool_choice=tool_choice,
         stream_options=stream_options,
+        thinking=thinking,
     )
 
     # No auto-describe — images pass through or error explicitly

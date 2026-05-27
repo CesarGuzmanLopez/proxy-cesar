@@ -36,6 +36,17 @@ async def list_models(request: Request):
 
     # Pseudo-models from config
     for name, pm in config.pseudo_models.items():
+        # Detect thinking support: any physical model using an Anthropic-compatible
+        # endpoint (api_base without /v1/ suffix, or provider=anthropic) supports
+        # the ``thinking`` parameter.
+        supports_thinking = any(
+            phys.api_base
+            and "/v1" not in phys.api_base
+            for phys in pm.physical_models
+        )
+        caps = dict(ALL_CAPABILITIES)
+        caps["thinking"] = supports_thinking
+
         models.append(
             {
                 "id": name,
@@ -44,7 +55,7 @@ async def list_models(request: Request):
                 "owned_by": "proxy-cesar",
                 "display_name": pm.display_name,
                 "description": pm.description,
-                "capabilities": dict(ALL_CAPABILITIES),
+                "capabilities": caps,
                 "context_window": pm.context_window,
                 "input_token_threshold": pm.input_token_threshold,
                 "pricing": {
