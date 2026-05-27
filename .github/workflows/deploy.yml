@@ -62,19 +62,24 @@ jobs:
             else
               echo "[deploy] Pulling latest changes..."
               cd "$REPO_DIR"
-              # Git fetch can fail if .git/objects has wrong ownership.
-              # Strategy: try normally, then with sudo, then force-reclone.
-              git fetch origin "$BRANCH" --depth 1 2>/dev/null || \
-                sudo git fetch origin "$BRANCH" --depth 1 2>/dev/null || {
-                  echo "[deploy] Re-cloning repo (permission issue)..."
-                  sudo rm -rf "$REPO_DIR"
-                  git clone --branch "$BRANCH" --depth 1 \
-                    https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
-                  cd "$REPO_DIR"
-                }
-              sudo git reset --hard "origin/$BRANCH" 2>/dev/null || \
-                git reset --hard "origin/$BRANCH"
-              sudo chown -R "$(whoami)": "$REPO_DIR/.git" 2>/dev/null || true
+              # Git objects may have wrong ownership (e.g. root from previous sudo).
+              # If fetch fails, nuke .git and re-clone (preserving .venv and .env).
+              if ! git fetch origin "$BRANCH" --depth 1 2>/dev/null; then
+                echo "[deploy] Re-cloning repo (stale permissions)..."
+                cd /opt
+                # Preserve proxy/ dir that has .venv and .env
+                cp -r "$REPO_DIR/proxy/.venv" /tmp/proxy-venv-bak 2>/dev/null || true
+                cp "$REPO_DIR/proxy/.env" /tmp/proxy-env-bak 2>/dev/null || true
+                rm -rf "$REPO_DIR"
+                git clone --branch "$BRANCH" --depth 1 \
+                  https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
+                # Restore preserved files
+                cp -r /tmp/proxy-venv-bak "$REPO_DIR/proxy/.venv" 2>/dev/null || true
+                cp /tmp/proxy-env-bak "$REPO_DIR/proxy/.env" 2>/dev/null || true
+                rm -rf /tmp/proxy-venv-bak /tmp/proxy-env-bak 2>/dev/null || true
+                cd "$REPO_DIR"
+              fi
+              git reset --hard "origin/$BRANCH"
             fi
 
             cd "$REPO_DIR/proxy"
