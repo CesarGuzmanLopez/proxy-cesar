@@ -25,8 +25,8 @@ PLACEHOLDER_PREFIX = "KEYVAULT"
 
 _SECRET_PATTERNS: list[tuple[str, str]] = [
     # ── API keys (prefixed — highly specific, low false positive) ──────────
-    # OpenAI / DeepSeek / generic sk-
-    (r"\b(sk-(?:proj-|ant-|or-v1-)?[A-Za-z0-9-_]{10,})\b", "sk_key"),
+    # Generic sk- / gsk_ / skg_ / usk_ (any 0-1 char before/after 'sk')
+    (r"\b([a-z]{0,1}sk[a-z]{0,1}[-_][A-Za-z0-9_-]{10,})\b", "sk_key"),
     # GitHub
     (r"\b(ghp_[A-Za-z0-9]{36})\b", "github_classic"),
     (r"\b(github_pat_[A-Za-z0-9-_]{10,})\b", "github_pat"),
@@ -34,8 +34,6 @@ _SECRET_PATTERNS: list[tuple[str, str]] = [
     (r"\b(glpat-[A-Za-z0-9-_]{10,})\b", "gitlab"),
     # HuggingFace
     (r"\b(hf_[A-Za-z0-9]{10,})\b", "huggingface"),
-    # Groq
-    (r"\b(gsk_[A-Za-z0-9]{10,})\b", "groq_key"),
     # Google AI
     (r"\b(AIza[0-9A-Za-z_-]{35})\b", "google_ai"),
     # AWS
