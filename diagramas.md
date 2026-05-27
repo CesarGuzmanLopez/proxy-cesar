@@ -238,7 +238,26 @@ sequenceDiagram
 
 ---
 
-## 8. Blob Description Cache
+## 8. Flujo de Razonamiento (Thinking / Reasoning Effort)
+
+```mermaid
+flowchart LR
+    C[Cliente<br/>thinking: 'high'] --> P[Proxy]
+    P --> D{Capacidad del<br/>physical model}
+    D -->|Anthropic| A[thinking dict<br/>budget_tokens: 16000]
+    D -->|OpenAI| O[reasoning_effort: 'high']
+    D -->|Otros| X[auto<br/>no se envía nada]
+    A --> LLM[LiteLLM acompletion]
+    O --> LLM
+    X --> LLM
+```
+
+La normalización ocurre en `_normalise_reasoning_param()` dentro de `chat_fallback.py`:
+- Cada modelo físico en la cadena de fallback se evalúa individualmente
+- Si el modelo primario es Anthropic y el fallback es OpenAI, cada uno recibe el formato correcto
+- `"auto"` y `None` siempre dejan que el proveedor decida
+
+## 9. Blob Description Cache
 
 Las descripciones de imágenes/audio/PDF generadas por el Blob Vault se
 almacenan en Redis (Valkey) con una clave compuesta:

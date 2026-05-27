@@ -230,3 +230,37 @@ curl -s -w "\nHTTP: %{http_code}" -X POST http://localhost:9110/v1/chat/completi
 ```
 
 **Resultado esperado:** `HTTP: 400` con error `IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL`
+
+---
+
+## 13. Razonamiento Multi-Provider (thinking / reasoning_effort)
+
+**Como** usuario
+**Quiero** controlar el nivel de esfuerzo de razonamiento con el parámetro `thinking`
+**Para** que cada modelo lo interprete en su formato nativo
+
+```bash
+# Anthropic: high → budget_tokens: 16000
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"pensamiento-profundo-caro","messages":[{"role":"user","content":"Razonamiento profundo"}],"thinking":"high","stream":false}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok:', bool(d.get('choices')));md=d.get('proxy_metadata',{});print('physical:', md.get('physical_model'))"
+
+# OpenAI: high → reasoning_effort: "high"
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"normal","messages":[{"role":"user","content":"Razonamiento"}],"thinking":"high","stream":false}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok:', bool(d.get('choices')));md=d.get('proxy_metadata',{});print('physical:', md.get('physical_model'))"
+
+# Auto: no param sent
+curl -s -X POST http://localhost:9110/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"normal","messages":[{"role":"user","content":"Sin thinking"}],"thinking":"auto","stream":false}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('ok:', bool(d.get('choices')))"
+```
+
+**Criterios:**
+- `thinking="high"` en modelo Anthropic → se envía `budget_tokens: 16000`
+- `thinking="high"` en modelo OpenAI → se envía `reasoning_effort: "high"`
+- `thinking="auto"` o `None` en cualquier modelo → no se envía nada (provider decide)
+- El endpoint `/v1/models` reporta `thinking` y `reasoning_effort` por separado por pseudo-modelo

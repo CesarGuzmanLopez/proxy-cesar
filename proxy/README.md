@@ -117,6 +117,29 @@ Conversations pinned to their first physical model via Redis (`conv:{id}:physica
 - Layer 2 — Canonical ordering: `system → tools → history → query`
 - Layer 3 — Provider-specific: Anthropic `cache_control`, DeepSeek auto-caching
 
+### Provider Reasoning Support
+
+The proxy accepts a `thinking` parameter (OpenAI-compatible) and maps it to the format each provider understands:
+
+| Client sends | Anthropic | OpenAI | Others |
+|---|---|---|---|
+| `"low"` | `budget_tokens: 2048` | `reasoning_effort: "low"` | auto |
+| `"medium"` | `budget_tokens: 8192` | `reasoning_effort: "medium"` | auto |
+| `"high"` | `budget_tokens: 16000` | `reasoning_effort: "high"` | auto |
+| `"xhigh"` | `budget_tokens: 32000` | `reasoning_effort: "high"` | auto |
+| `"max"` | `budget_tokens: 64000` | `reasoning_effort: "high"` | auto |
+| `"auto"` / `None` | auto (provider decides) | auto | auto |
+| `True` / `"enabled"` | `thinking: {type: enabled}` | auto | auto |
+| `False` / `"disabled"` | `thinking: {type: disabled}` | auto | auto |
+| Dict, e.g. `{"type":"enabled","budget_tokens":2000}` | Passthrough | auto | auto |
+
+The capability is detected per physical model:
+- If `provider == "anthropic"` or `model` starts with `anthropic/` → `thinking` capability
+- If `provider == "openai"` or `model` starts with `openai/` → `reasoning_effort` capability
+- Otherwise → auto (no param sent, provider decides)
+
+The `/v1/models` endpoint advertises both capabilities separately per pseudo-model.
+
 ### Rate Limiting
 
 Per-pseudo-model fixed-window rate limiter in Redis. Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
@@ -149,7 +172,9 @@ Per-pseudo-model fixed-window rate limiter in Redis. Headers: `X-RateLimit-Limit
 ```
 
 ### `GET /v1/models`
-Lists all 10 pseudo-models with capabilities.
+Lists all pseudo-models with capabilities, including:
+- `thinking: bool` — models routed to Anthropic-compatible endpoints support the `thinking` dict parameter
+- `reasoning_effort: bool` — models routed to OpenAI endpoints support the `reasoning_effort` string param
 
 ### `POST /v1/chat/completions`
 OpenAI-compatible. Supports `stream: true` (SSE) and `stream: false`.
@@ -158,6 +183,13 @@ OpenAI-compatible. Supports `stream: true` (SSE) and `stream: false`.
 ```json
 {"model":"normal","messages":[{"role":"user","content":"Hello"}],"stream":false}
 ```
+
+**Optional `thinking` parameter** controls reasoning effort. Accepted values:
+- `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` — effort levels mapped per provider
+- `"auto"` / `None` — let the provider decide
+- `True` / `"enabled"` — enabled with provider default budget
+- `False` / `"disabled"` — explicitly disabled (Anthropic only, others → auto)
+- Dict `{"type": "enabled", "budget_tokens": N}` — explicit Anthropic budget (passthrough)
 
 **Response includes `proxy_metadata`:**
 ```json

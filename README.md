@@ -90,7 +90,11 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 
 **Dos endpoints de OpenCode Go:**
 - `openai/` → `https://opencode.ai/zen/go/v1` (OpenAI-compat, 9 modelos)
+  - Usa `reasoning_effort` (low/medium/high) para control de esfuerzo
 - `anthropic/` → `https://opencode.ai/zen/go` (Anthropic-compat, solo `qwen3.7-max`)
+  - Usa `thinking` dict con `budget_tokens` para control de esfuerzo
+
+**Esfuerzo de razonamiento multi-proveedor:** El proxy acepta el parámetro `thinking` del cliente y lo traduce al formato que cada proveedor entiende (`budget_tokens` para Anthropic, `reasoning_effort` para OpenAI, auto para otros). Ver `proxy/README.md`.
 
 **Capas de procesamiento:** CORS → Auth → RateLimit → KeyVault → Blob Vault → Fallback loop → Response
 
