@@ -62,21 +62,21 @@ jobs:
             else
               echo "[deploy] Pulling latest changes..."
               cd "$REPO_DIR"
-              # Git objects may have wrong ownership (e.g. root from previous sudo).
-              # If fetch fails, nuke .git and re-clone (preserving .venv and .env).
+              # Git objects may have wrong ownership (e.g. root from sudo).
+              # If fetch fails, clone fresh to a temp dir and swap.
               if ! git fetch origin "$BRANCH" --depth 1 2>/dev/null; then
-                echo "[deploy] Re-cloning repo (stale permissions)..."
-                cd /opt
-                # Preserve proxy/ dir that has .venv and .env
-                cp -r "$REPO_DIR/proxy/.venv" /tmp/proxy-venv-bak 2>/dev/null || true
-                cp "$REPO_DIR/proxy/.env" /tmp/proxy-env-bak 2>/dev/null || true
-                rm -rf "$REPO_DIR"
+                echo "[deploy] Re-cloning (stale permissions)..."
+                NEW_DIR="/opt/proxy-cesar-tmp"
+                rm -rf "$NEW_DIR" 2>/dev/null || true
                 git clone --branch "$BRANCH" --depth 1 \
-                  https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
-                # Restore preserved files
-                cp -r /tmp/proxy-venv-bak "$REPO_DIR/proxy/.venv" 2>/dev/null || true
-                cp /tmp/proxy-env-bak "$REPO_DIR/proxy/.env" 2>/dev/null || true
-                rm -rf /tmp/proxy-venv-bak /tmp/proxy-env-bak 2>/dev/null || true
+                  https://github.com/CesarGuzmanLopez/proxy-cesar.git "$NEW_DIR"
+                # Copy .venv and .env from old repo
+                cp -r "$REPO_DIR/proxy/.venv" "$NEW_DIR/proxy/.venv" 2>/dev/null || true
+                cp "$REPO_DIR/proxy/.env" "$NEW_DIR/proxy/.env" 2>/dev/null || true
+                # Swap: move old away, rename new
+                mv "$REPO_DIR" "/opt/proxy-cesar-old" 2>/dev/null || true
+                mv "$NEW_DIR" "$REPO_DIR"
+                rm -rf "/opt/proxy-cesar-old" 2>/dev/null || true
                 cd "$REPO_DIR"
               fi
               git reset --hard "origin/$BRANCH"
