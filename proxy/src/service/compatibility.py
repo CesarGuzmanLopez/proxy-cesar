@@ -10,14 +10,10 @@ python.md §4: pure functions with explicit Result monad.
 from fastapi import HTTPException
 
 from src.config.pseudo_models import (
-    PhysicalModelSchema,
     PseudoModelSchema,
     ProxyConfigSchema,
 )
 from src.domain.capabilities import TurnCapabilities
-
-
-_SPECIALIZED_MODEL_ERRORS: dict[str, dict[str, str]] = {}
 
 
 def validate_incoming_content(
@@ -32,11 +28,9 @@ def validate_incoming_content(
     Returns:
       - None if everything is OK
       - {"action": "transform_unsupported"} if content should be blobified
-    Raises HTTPException for unrecoverable errors (specialized model, etc.).
+    Raises HTTPException for unrecoverable errors (parallel tools mismatch).
     """
     phys = pseudo_model.physical_models
-
-    _check_specialized_model_mismatch(turn_caps, pseudo_model_name)
 
     # Images → model without vision
     result = _check_content_support(
@@ -71,38 +65,6 @@ def validate_incoming_content(
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────
-
-
-def _check_specialized_model_mismatch(
-    turn_caps: TurnCapabilities,
-    pseudo_model_name: str,
-) -> None:
-    """Raise HTTPException if content type is incompatible with specialized model."""
-    content_type_map = {
-        "has_images": "image_url",
-        "has_audio": "input_audio",
-        "has_video": "video",
-    }
-    for cap_attr, error_type in content_type_map.items():
-        if not getattr(turn_caps, cap_attr, False):
-            continue
-        if pseudo_model_name not in _SPECIALIZED_MODEL_ERRORS:
-            continue
-        error_info = _SPECIALIZED_MODEL_ERRORS[pseudo_model_name]
-        if error_type not in error_info:
-            continue
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": f"{error_type.upper()}_NOT_SUPPORTED_BY_SPECIALIZED_MODEL",
-                "message": error_info[error_type],
-                "remediation": [
-                    f"Use a different model for {error_type} content",
-                    "Try 'model': 'vision' for images, or 'model': 'audio' for audio",
-                ],
-                "current_pseudo_model": pseudo_model_name,
-            },
-        )
 
 
 def _check_content_support(
@@ -159,8 +121,3 @@ def _check_parallel_tools_support(
             ],
         },
     )
-
-
-def _any_vision(models: list[PhysicalModelSchema]) -> bool:
-    """Check if any physical model in the list has vision capability."""
-    return any(m.vision for m in models)
