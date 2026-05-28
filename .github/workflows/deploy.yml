@@ -18,6 +18,7 @@ name: Deploy to plata
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -34,6 +35,7 @@ jobs:
       PRUNA_API_KEY: ${{ secrets.PRUNA_API_KEY }}
       DISABLED_PROVIDERS: ${{ vars.DISABLED_PROVIDERS || '' }}
       VALKEY_URL: ${{ secrets.VALKEY_URL || 'valkey://localhost:6380' }}
+      LOG_FILE: ${{ vars.LOG_FILE || '/var/log/proxy-cesar/proxy.log' }}
 
     steps:
       - name: Checkout
@@ -49,7 +51,7 @@ jobs:
           envs: >-
             PROXY_API_KEY,DEEPSEEK_API_KEY,GROQ_API_KEY,
             OPENROUTER_API_KEY,OPENCODE_API_KEY,PRUNA_API_KEY,
-            DISABLED_PROVIDERS,VALKEY_URL
+            DISABLED_PROVIDERS,VALKEY_URL,LOG_FILE
           script: |
             set -euo pipefail
 
@@ -121,6 +123,7 @@ jobs:
             PRUNA_API_KEY=${PRUNA_API_KEY}
             KEYCLAW_ENABLED=false
             DISABLED_PROVIDERS=${DISABLED_PROVIDERS}
+            LOG_FILE=${LOG_FILE:-/var/log/proxy-cesar/proxy.log}
             EOF
 
             sudo chmod 600 .env
