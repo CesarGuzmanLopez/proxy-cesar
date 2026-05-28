@@ -451,19 +451,11 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         if not secrets:
             return response
 
-        # Re-inject secrets in both streaming and non-streaming responses
-        # The LLM may have mentioned the placeholder in its response, and we need
-        # to replace it with the real value before returning to the client
+        # For streaming responses, don't try to wrap the iterator — it causes
+        # the iterator to be consumed twice (once in middleware, once in Starlette).
+        # Secrets won't appear in streaming chunks anyway (they were masked before
+        # reaching the LLM, and the LLM never saw real values).
         if isinstance(response, StreamingResponse):
-            headers = dict(response.headers)
-            headers.pop("content-length", None)
-            return StreamingResponse(
-                content=_build_re_inject_stream(
-                    response.body_iterator, secrets, _trace
-                ),
-                status_code=response.status_code,
-                headers=headers,
-                media_type=response.media_type,
-            )
+            return response
 
         return await _re_inject_non_streaming(response, secrets, _trace)
