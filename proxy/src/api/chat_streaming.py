@@ -482,6 +482,9 @@ async def _handle_streaming_with_db(
 
     # Extract keyvault secrets from request state for re-injection in generator
     keyvault_secrets = getattr(request.state, "keyvault_secrets", {}) if request else {}
+    if keyvault_secrets:
+        logger.info("stream_keyvault_active conv=%s secrets=%s",
+                     conversation_id[:12], list(keyvault_secrets.keys()))
 
     _streaming_response = StreamingResponse(
         _stream_response_generator(
