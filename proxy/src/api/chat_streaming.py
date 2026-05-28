@@ -539,16 +539,30 @@ def _dump_chunk_for_sse(chunk) -> str:
     We remove it here at serialization time so it never reaches the client.
     """
     try:
-        d = json.loads(chunk.model_dump_json())
-    except (AttributeError, TypeError, ValueError):
-        return chunk.model_dump_json() if hasattr(chunk, "model_dump_json") else "{}"
+        # Get the JSON string from the chunk object
+        json_str = chunk.model_dump_json()
+        # Parse it to a dict
+        d = json.loads(json_str)
 
-    # Remove reasoning_content from all deltas before sending to client
-    for choice in d.get("choices", []):
-        if "delta" in choice:
-            choice["delta"].pop("reasoning_content", None)
+        # Remove reasoning_content from all deltas before sending to client
+        for choice in d.get("choices", []):
+            if isinstance(choice, dict) and "delta" in choice:
+                if isinstance(choice["delta"], dict):
+                    choice["delta"].pop("reasoning_content", None)
 
-    return json.dumps(d)
+        # Re-serialize without reasoning_content
+        return json.dumps(d)
+    except Exception as e:
+        # If anything fails, try to return the original but still remove reasoning_content
+        try:
+            json_str = chunk.model_dump_json()
+            # Do a simple string replacement as fallback
+            import re
+            json_str = re.sub(r',"reasoning_content":"[^"]*"', '', json_str)
+            json_str = re.sub(r',"reasoning_content":null', '', json_str)
+            return json_str
+        except Exception:
+            return chunk.model_dump_json() if hasattr(chunk, "model_dump_json") else "{}"
 
 
 async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[str, str] | None = None):
