@@ -364,6 +364,19 @@ async def process_chat_request(
         images_described_by = auto_describe_meta.get("described_by")
 
     try:
+        # Build compatibility info for response metadata
+        compatibility_info = {}
+        if turn_caps.has_images and not any(
+            m.vision for m in pm_schema.physical_models
+        ):
+            compatibility_info["images_delegated"] = True
+        if turn_caps.has_audio and not any(
+            m.audio for m in pm_schema.physical_models
+        ):
+            compatibility_info["audio_delegated"] = True
+        if turn_caps.has_pdf and not any(m.vision for m in pm_schema.physical_models):
+            compatibility_info["pdf_delegated"] = True
+
         return await _save_and_return(
             SaveContext(
                 db=db,
@@ -388,6 +401,7 @@ async def process_chat_request(
                 images_described_by=images_described_by,
                 router_suggestion=router_suggestion,
                 context_alert=context_alert,
+                compatibility=compatibility_info,
             )
         )
     except Exception:
