@@ -222,8 +222,26 @@ async def _handle_streaming_with_db(
     # (this happens AFTER model selection, not before like the old logic)
     delegation = validate_physical_model_content(turn_caps, selected_phys_model)
 
+    # Debug logging for content delegation
+    logger.info(
+        "content_validation_stream trace=%s conv=%s model=%s has_images=%s model_vision=%s delegation=%s",
+        trace.request_id if trace else "?",
+        conversation_id[:12],
+        physical_model,
+        getattr(turn_caps, "has_images", False),
+        getattr(selected_phys_model, "vision", False),
+        bool(delegation),
+    )
+
     # Apply content delegation (images → descriptions, audio → transcriptions, etc.)
     if delegation:
+        logger.info(
+            "content_delegation_applying_stream trace=%s conv=%s model=%s action=%s",
+            trace.request_id if trace else "?",
+            conversation_id[:12],
+            physical_model,
+            delegation.get("action"),
+        )
         from src.service.tool_detector import replace_base64_with_blob_refs, inject_blob_extraction_guidance
 
         valkey_client = getattr(affinity, "_client", None)
