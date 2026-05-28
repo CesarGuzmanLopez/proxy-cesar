@@ -533,36 +533,18 @@ async def _handle_streaming_with_db(
 
 
 def _dump_chunk_for_sse(chunk) -> str:
-    """Serialize a streaming chunk to JSON, removing reasoning_content early.
+    """Serialize a streaming chunk to JSON.
 
-    LiteLLM's model_dump_json() includes reasoning_content from the provider.
-    We remove it here at serialization time so it never reaches the client.
+    Just serialize the chunk object as-is. Any cleaning of fields
+    (like removing reasoning_content) happens in the caller after normalization.
     """
     try:
-        # Get the JSON string from the chunk object
-        json_str = chunk.model_dump_json()
-        # Parse it to a dict
-        d = json.loads(json_str)
-
-        # Remove reasoning_content from all deltas before sending to client
-        for choice in d.get("choices", []):
-            if isinstance(choice, dict) and "delta" in choice:
-                if isinstance(choice["delta"], dict):
-                    choice["delta"].pop("reasoning_content", None)
-
-        # Re-serialize without reasoning_content
-        return json.dumps(d)
-    except Exception as e:
-        # If anything fails, try to return the original but still remove reasoning_content
+        return chunk.model_dump_json()
+    except (AttributeError, TypeError):
         try:
-            json_str = chunk.model_dump_json()
-            # Do a simple string replacement as fallback
-            import re
-            json_str = re.sub(r',"reasoning_content":"[^"]*"', '', json_str)
-            json_str = re.sub(r',"reasoning_content":null', '', json_str)
-            return json_str
+            return json.dumps(chunk.model_dump(exclude_none=False))
         except Exception:
-            return chunk.model_dump_json() if hasattr(chunk, "model_dump_json") else "{}"
+            return "{}"
 
 
 async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[str, str] | None = None):
@@ -739,6 +721,11 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
 
                     # Normalize chunk: if content is null but reasoning_content exists, copy it
                     normalise_stream_chunk(chunk_dict)
+
+                    # ALWAYS remove reasoning_content from all chunks before client sees them
+                    for choice in chunk_dict.get("choices", []):
+                        if isinstance(choice, dict) and "delta" in choice:
+                            choice["delta"].pop("reasoning_content", None)
 
                     # Re-inject secrets: replace [KEYVAULT:hash] with real values
                     if keyvault_secrets:
