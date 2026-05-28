@@ -200,6 +200,7 @@ async def chat_completions(
             stream_options=request.stream_options,
             thinking=request.thinking,
             trace=trace,
+            request=fastapi_request,
         )
         logger.info(
             "chat_request_streaming_returned request_id=%s conv=%s",

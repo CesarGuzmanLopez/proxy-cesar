@@ -114,6 +114,7 @@ async def _handle_streaming(
     stream_options: dict | None = None,
     thinking: dict | str | bool | None = None,
     trace: PipelineTrace | None = None,
+    request = None,
 ):
     """Streaming request: return SSE StreamingResponse.
 
@@ -141,6 +142,7 @@ async def _handle_streaming(
             stream_options=stream_options,
             thinking=thinking,
             trace=trace,
+            request=request,
         )
     except HTTPException:
         try:
@@ -191,6 +193,7 @@ async def _handle_streaming_with_db(
     stream_options: dict | None = None,
     thinking: dict | str | bool | None = None,
     trace: PipelineTrace | None = None,
+    request = None,
 ):
     """Pre-stream logic (runs synchronously before SSE starts)."""
     # Resolve model
@@ -476,6 +479,9 @@ async def _handle_streaming_with_db(
             for h, v in provider_headers.items():
                 _sse_headers[h] = str(v)
 
+    # Extract keyvault secrets from request state for re-injection in generator
+    keyvault_secrets = getattr(request.state, "keyvault_secrets", {}) if request else {}
+
     _streaming_response = StreamingResponse(
         _stream_response_generator(
             StreamContext(
@@ -517,7 +523,8 @@ async def _handle_streaming_with_db(
                     "thinking": thinking,
                 },
                 trace=trace,
-            )
+            ),
+            keyvault_secrets=keyvault_secrets,
         ),
         media_type="text/event-stream",
         headers=_sse_headers,
@@ -546,7 +553,7 @@ def _dump_chunk_for_sse(chunk) -> str:
     return json.dumps(d)
 
 
-async def _stream_response_generator(ctx: StreamContext):
+async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[str, str] | None = None):
     """SSE streaming: forward chunks, persist turn on success, append metadata.
 
     Sprint 11: supports token-limit continuation — when a model finishes with
@@ -554,6 +561,8 @@ async def _stream_response_generator(ctx: StreamContext):
     generator suppresses the ``"length"`` finish_reason (sets to ``null``),
     appends the accumulated content as an assistant message, and seamlessly
     continues streaming from the next model.
+
+    keyvault_secrets: dict mapping [KEYVAULT:hash] to real values for re-injection.
     """
     import uuid
 
@@ -717,7 +726,17 @@ async def _stream_response_generator(ctx: StreamContext):
                         break
 
                     # Normalize chunk: if content is null but reasoning_content exists, copy it
-                    # normalise_stream_chunk(chunk_dict)  # TEMP: Disabled to test if this breaks streaming
+                    normalise_stream_chunk(chunk_dict)
+
+                    # Re-inject secrets: replace [KEYVAULT:hash] with real values
+                    if keyvault_secrets:
+                        chunk_json = json.dumps(chunk_dict)
+                        for secret_hash, real_value in keyvault_secrets.items():
+                            placeholder = f"[KEYVAULT:{secret_hash}]"
+                            if placeholder in chunk_json:
+                                chunk_json = chunk_json.replace(placeholder, real_value)
+                        chunk_dict = json.loads(chunk_json)
+
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
 
                     if fr:
