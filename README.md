@@ -97,7 +97,9 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 
 **Capas de procesamiento:** CORS → Auth → RateLimit → KeyVault → Blob Vault → Fallback loop → Response
 
-**KeyVault:** Detecta 22 patrones de secrets (API keys, PEM, SSH, JWT, wallets) → los reemplaza por `[KEYVAULT:hash]` antes de llegar al LLM → los reinyecta en la respuesta.
+**KeyVault:** Detecta 27 patrones de secrets (API keys, PEM, SSH, JWT, wallets) → los reemplaza por `[KEYVAULT:hash]` antes de llegar al LLM → los reinyecta en la respuesta.
+
+> ⚠️ **Streaming:** Los secrets se detectan y almacenan en Valkey, y el system prompt se inyecta para que el LLM entienda los placeholders. Pero la **re-inyección en la respuesta no ocurre** — el cliente ve `[KEYVAULT:hash]` sin reemplazar. Esto es porque `BaseHTTPMiddleware` de Starlette no permite modificar el body de streaming responses. La re-inyección completa requiere bufferizar chunks SSE entre request y response, lo cual no está implementado. Para secrets reales, usa `stream: false` o implementa re-inyección del lado del cliente.
 
 **Blob Vault:** Contenido no soportado por el modelo (imágenes en modelo sin visión) → describe con modelo helper → pasa descripción al LLM.
 
