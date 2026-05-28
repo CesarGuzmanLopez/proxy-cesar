@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 KEYVAULT_TTL = 3600
 PLACEHOLDER_PREFIX = "KEYVAULT"
 
+# ── File extensions to exclude (avoid matching file paths / filenames) ─────────
+_EXCLUDED_EXTENSIONS: frozenset[str] = frozenset({
+    ".txt", ".bin", ".log", ".csv", ".json", ".yaml", ".yml",
+    ".xml", ".md", ".py", ".js", ".ts", ".css", ".html",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".pdf", ".doc", ".docx", ".zip", ".tar", ".gz",
+    ".env", ".cfg", ".conf", ".ini", ".toml",
+    ".pem", ".crt", ".key", ".pub", ".cer",
+    ".wav", ".mp3", ".mp4", ".mov", ".avi",
+})
+
 # ── Pre-compiled regex patterns for better performance ─────────────────────────
 # Compiled once at module load, not on every request
 _SECRET_PATTERNS_RAW: list[tuple[str, str]] = [
@@ -65,7 +76,6 @@ _SECRET_PATTERNS_RAW: list[tuple[str, str]] = [
     (r"\b(0x[a-fA-F0-9]{64})\b", "eth_private_key"),
     (r"\b([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b", "bitcoin_wif"),
     (r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b", "jwt_token"),
-    (r"\b([A-Za-z0-9+/=_-]{60,})\b", "long_token"),
 ]
 
 # Compile patterns once at module load time
@@ -90,6 +100,11 @@ _KEYVAULT_SYSTEM_PROMPT = (
 # always produces the same placeholder. This NORMALIZES variable secrets into
 # consistent tokens, which IMPROVES provider cache stability rather than breaking it.
 # This is NOT a bug.
+
+
+def _has_excluded_extension(secret: str) -> bool:
+    """Check if secret looks like a file path/name with an excluded extension."""
+    return any(secret.rstrip().lower().endswith(ext) for ext in _EXCLUDED_EXTENSIONS)
 
 
 @lru_cache(maxsize=1024)
@@ -139,6 +154,10 @@ def _mask_text(text: str, secrets: dict[str, str]) -> str:
                 if len(secret) < 8:
                     continue
                 prefix = suffix = ""
+
+            # Skip if secret looks like a file path/name with excluded extension
+            if _has_excluded_extension(secret):
+                continue
 
             # Store and replace in one operation
             secret_hash = _hash_secret(secret)
