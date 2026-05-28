@@ -450,13 +450,10 @@ class KeyVaultMiddleware:
         # ── Build modified request ────────────────────────────────────────
         modified_body = json.dumps(body).encode()
 
-        # Create a receive that returns the modified body once, then
-        # delegates to a disconnect-like behavior that Starlette expects.
         _body_sent = False
-        _disconnect_sent = False
 
         async def _modified_receive():
-            nonlocal _body_sent, _disconnect_sent
+            nonlocal _body_sent
             if not _body_sent:
                 _body_sent = True
                 return {
@@ -464,65 +461,14 @@ class KeyVaultMiddleware:
                     "body": modified_body,
                     "more_body": False,
                 }
-            # Starlette calls receive() again after body to wait for disconnect
-            # Return disconnect once, then wait forever on subsequent calls
-            if not _disconnect_sent:
-                _disconnect_sent = True
-                return {"type": "http.disconnect"}
-            # Block forever — Starlette shouldn't call receive() again after disconnect
-            import asyncio
-            await asyncio.Event().wait()
-            return {"type": "http.disconnect"}  # unreachable, but type-safe
+            # Return disconnect after body is consumed
+            return {"type": "http.disconnect"}
 
-        # ── Wrap send to intercept streaming for re-injection ─────────────
-        _initial_send = send
-        _headers_sent = False
-        _is_streaming = False
-        _chunks: list[bytes] = []
-
-        async def _send(message):
-            nonlocal _headers_sent, _is_streaming
-            if message["type"] == "http.response.start":
-                _headers_sent = True
-                headers = message.get("headers", [])
-                for h in headers:
-                    if h[0] == b"content-type" and b"text/event-stream" in h[1]:
-                        _is_streaming = True
-                        break
-                await _initial_send(message)
-            elif message["type"] == "http.response.body":
-                body_chunk = message.get("body", b"")
-                more = message.get("more_body", False)
-                if _is_streaming and body_chunk:
-                    _chunks.append(body_chunk)
-                if not _is_streaming:
-                    _chunks.append(body_chunk)
-                # Only send when stream ends (more_body=False) for re-injection
-                if not _is_streaming:
-                    await _initial_send({
-                        "type": "http.response.body",
-                        "body": _re_inject(b"".join(_chunks).decode("utf-8", errors="replace"), secrets).encode("utf-8"),
-                        "more_body": more,
-                    })
-                    _chunks.clear()
-                elif not more:
-                    # Streaming finished — flush remaining chunks with re-injection
-                    if _chunks:
-                        combined = b"".join(_chunks)
-                        await _initial_send({
-                            "type": "http.response.body",
-                            "body": _re_inject(combined.decode("utf-8", errors="replace"), secrets).encode("utf-8"),
-                            "more_body": False,
-                        })
-                    else:
-                        await _initial_send(message)
-                else:
-                    # Streaming middle chunks — pass through without re-injection
-                    # (re-injection happens at the end on the combined body)
-                    await _initial_send(message)
-
-        # ── Call inner app with original scope + modified receive/send ────
-        await self.app(scope, _modified_receive, _send)
+        # ── Call inner app with modified receive, original send ────────────
+        # For re-injection: streaming chunks will contain [KEYVAULT:hash]
+        # placeholders that the client should handle. The middleware only
+        # re-injects for non-streaming via _re_inject_recursive in the handler.
+        await self.app(scope, _modified_receive, send)
 
     async def _passthrough(self, scope, body_bytes, original_receive, send):
         """Pass the request through unmodified when no secrets are detected."""
