@@ -586,7 +586,7 @@ async def _stream_response_generator(ctx: StreamContext):
                     "pseudo_model": ctx.pseudo_model,
                 }
                 yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'error'}], 'proxy_metadata': error_payload})}\n\n"
-                yield "data: [DONE]\n\n"
+                # NOTE: [DONE] will be sent by finally block below, not here
                 return
 
             # ── Decide whether to continue with next model ──────────────
