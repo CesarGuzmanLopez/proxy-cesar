@@ -429,26 +429,9 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             "yes" if valkey else "no",
         )
 
-        # ── Override receive to return modified body, avoid request._body ─
-        # Setting request._body breaks streaming with BaseHTTPMiddleware.
-        # Instead, we clear the cached body and override the receive function
-        # so the handler reads the modified version fresh.
+        # ── Modified body via request._body — test if this breaks streaming ─
         modified_body = json.dumps(body).encode()
-        request._body = b""  # Clear cache so next call won't use old body
-        _used = False
-
-        async def _override_receive():
-            nonlocal _used
-            if _used:
-                return {"type": "http.disconnect"}
-            _used = True
-            return {
-                "type": "http.request",
-                "body": modified_body,
-                "more_body": False,
-            }
-
-        request._receive = _override_receive
+        request._body = modified_body
 
         # ── Call handler ──────────────────────────────────────────────────
         response = await call_next(request)
