@@ -118,9 +118,21 @@ async def chat_completions(
     # Prepare messages as dicts
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
+    # Log full request details including message content (truncated for safety)
+    _msg_summaries = []
+    for m in messages:
+        _role = m.get("role", "?")
+        _c = m.get("content", "")
+        if isinstance(_c, str):
+            _preview = _c[:80].replace("\n", " ")
+        elif isinstance(_c, list):
+            _preview = f"[{len(_c)} parts]"
+        else:
+            _preview = str(_c)[:80]
+        _msg_summaries.append(f"{_role}={_preview}")
     logger.info(
         "chat_request_full request_id=%s conv=%s model=%s stream=%s "
-        "messages=%d tools=%d thinking=%s msg_roles=%s",
+        "messages=%d tools=%d thinking=%s msgs=%s",
         request_id,
         conversation_id[:12],
         request.model,
@@ -128,7 +140,7 @@ async def chat_completions(
         len(messages),
         len(request.tools) if request.tools else 0,
         str(request.thinking)[:50] if request.thinking else "none",
-        [m.get("role", "?") for m in messages],
+        " | ".join(_msg_summaries),
     )
 
     # Sprint 9: Check for inline commands early — if detected, respond
