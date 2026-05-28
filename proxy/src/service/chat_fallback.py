@@ -31,7 +31,6 @@ from src.adapters.cache.provider_cache import (
 from src.adapters.litellm import call_litellm
 from src.config.pseudo_models import PhysicalModelSchema
 from src.config.settings import settings as _global_settings
-from src.domain.types import Result, Ok, Err
 from src.domain.errors import ContextTooLargeForAllModels, AllModelsFailed
 from src.service.capability_detector import estimate_tokens
 from src.service.chat_models import FallbackInfo
@@ -220,7 +219,9 @@ async def _try_physical_model(
     # reasoning_effort. Models with openai/ prefix that are NOT actual
     # OpenAI models (e.g. kimi-k2.5, qwen3.6-plus) get auto.
     supports_anthropic = model_prefix == "anthropic" or provider == "anthropic"
-    is_openai_reasoning_model = bool(re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model))
+    is_openai_reasoning_model = bool(
+        re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model)
+    )
     supports_reasoning_effort = is_openai_reasoning_model
     if supports_anthropic:
         reasoning_capability = "anthropic"
@@ -229,7 +230,9 @@ async def _try_physical_model(
     else:
         reasoning_capability = "other"
 
-    thinking_dict, reasoning_effort = _normalise_reasoning_param(raw_thinking, reasoning_capability)
+    thinking_dict, reasoning_effort = _normalise_reasoning_param(
+        raw_thinking, reasoning_capability
+    )
     logger.debug(
         "reasoning   | trace=%s model=%s raw=%s cap=%s",
         _trace_id,
@@ -239,7 +242,9 @@ async def _try_physical_model(
     )
 
     call_kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    call_kwargs.pop("thinking", None)  # Remove raw — replaced by formatted version below
+    call_kwargs.pop(
+        "thinking", None
+    )  # Remove raw — replaced by formatted version below
 
     if supports_anthropic and thinking_dict is not None:
         call_kwargs["thinking"] = thinking_dict
@@ -344,7 +349,6 @@ def _build_all_models_failed_error(
     fallback_info: FallbackInfo,
     pseudo_model_schema,
     last_error: Exception | None,
-    context_skipped_note: str,
 ) -> AllModelsFailed:
     """Build domain error when all models failed (not just skipped)."""
     return AllModelsFailed(
@@ -597,10 +601,6 @@ async def call_with_fallback(
         )
         raise ValueError(f"ContextTooLargeForAllModels: {error}")
 
-    context_skipped_note = ""
-    if _context_skipped:
-        context_skipped_note = f" ({len(_context_skipped)} skipped: context too large)"
-
     logger.error(
         "llm_fail   | trace=%s elapsed=%.1fs models=%s last_error=%s",
         _trace_id,
@@ -609,6 +609,6 @@ async def call_with_fallback(
         last_error,
     )
     error = _build_all_models_failed_error(
-        fallback_info, pseudo_model_schema, last_error, context_skipped_note
+        fallback_info, pseudo_model_schema, last_error
     )
     raise ValueError(f"AllModelsFailed: {error}")

@@ -7,8 +7,7 @@ Covers:
 - Placeholder generation and re-injection
 """
 import json
-import hashlib
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from starlette.responses import JSONResponse
@@ -307,7 +306,6 @@ def test_system_prompt_insertion_logic_system_not_first():
 
 def test_conversation_id_from_body():
     """conversation_id is taken directly from body when present."""
-    from src.middleware.keyvault import _hash_secret
 
     body = {"conversation_id": "conv-123", "messages": [{"role": "user", "content": "Hi"}]}
     raw_cid = body.get("conversation_id")

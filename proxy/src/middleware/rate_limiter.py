@@ -82,8 +82,8 @@ def _extract_model(body_bytes: bytes) -> str:
         m = _MODEL_RE.search(scan_slice)
         if m:
             return m.group(1).decode()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("rate_limit_model_extract_error err=%s", exc)
     return "unknown"
 
 

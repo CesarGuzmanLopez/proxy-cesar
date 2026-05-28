@@ -42,7 +42,9 @@ async def list_models(request: Request):
         supports_reasoning_effort = False
         for phys in pm.physical_models:
             prov = phys.provider.lower() if phys.provider else ""
-            model_prefix = phys.model.split("/")[0].lower() if "/" in phys.model else prov
+            model_prefix = (
+                phys.model.split("/")[0].lower() if "/" in phys.model else prov
+            )
             if prov == "anthropic" or model_prefix == "anthropic":
                 supports_thinking = True
             # Only actual OpenAI o-series models (o1, o3, o4-mini, etc.) support

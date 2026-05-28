@@ -109,7 +109,11 @@ def normalize_history(
     for i, msg in enumerate(messages):
         tool_calls = msg.get("tool_calls", [])
         # Only deep copy if this is an assistant msg with multiple tool calls
-        msg_to_process = copy.deepcopy(msg) if (msg.get("role") == "assistant" and len(tool_calls) > 1) else msg
+        msg_to_process = (
+            copy.deepcopy(msg)
+            if (msg.get("role") == "assistant" and len(tool_calls) > 1)
+            else msg
+        )
 
         if msg.get("role") == "assistant" and len(tool_calls) > 1:
             _serialize_parallel_turn(

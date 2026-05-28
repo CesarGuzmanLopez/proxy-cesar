@@ -9,15 +9,19 @@ Usage:
     arq src.tasks.arq_app.WorkerSettings
 """
 
+import logging
+
 try:
-    from arq import create_pool
-    from arq.connections import RedisSettings
+    from arq import create_pool as _create_pool_impl
+    from arq.connections import RedisSettings as _RedisSettingsImpl
 
     HAS_ARQ = True
 except ImportError:
     HAS_ARQ = False
-    create_pool = None  # type: ignore[assignment]
-    RedisSettings = None  # type: ignore[assignment]
+    _create_pool_impl = None
+    _RedisSettingsImpl = None
+
+logger = logging.getLogger(__name__)
 
 
 # ── Worker function (discovered by name) ──────────────────────────────────
@@ -83,17 +87,20 @@ async def compact_conversation_async(
         await engine.dispose()
 
 
-# ── Worker settings for CLI ──────────────────────────────────────────────
+# ── Worker settings for CLI (only defined when arq is available) ──────────
 
 
-class WorkerSettings:
-    """arq worker settings for `arq src.tasks.arq_app.WorkerSettings`."""
+if HAS_ARQ:
+    from arq.connections import RedisSettings
 
-    functions = [compact_conversation_async]
-    redis_settings = RedisSettings.from_dsn("valkey://localhost:6379")
-    keep_result = 3600  # Keep results for 1 hour
-    max_jobs = 4  # Max concurrent compaction jobs
-    job_timeout = 300  # 5 minutes max per compaction job
+    class WorkerSettings:
+        """arq worker settings for `arq src.tasks.arq_app.WorkerSettings`."""
+
+        functions = [compact_conversation_async]
+        redis_settings = RedisSettings.from_dsn("valkey://localhost:6379")
+        keep_result = 3600  # Keep results for 1 hour
+        max_jobs = 4  # Max concurrent compaction jobs
+        job_timeout = 300  # 5 minutes max per compaction job
 
 
 # ── Helper to create pool in FastAPI lifespan ────────────────────────────
@@ -107,8 +114,12 @@ async def create_arq_pool():
     """
     if not HAS_ARQ:
         return None
+    from arq import create_pool
+    from arq.connections import RedisSettings
+
     try:
         pool = await create_pool(RedisSettings.from_dsn("valkey://localhost:6379"))
         return pool
-    except Exception:
+    except Exception as exc:
+        logger.debug("arq_pool_create_failed err=%s", exc)
         return None

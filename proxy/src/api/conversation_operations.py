@@ -12,8 +12,7 @@ from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
-from src.service.capability_detector import load_session_capabilities
-from src.service.compactor.explicit import compact_conversation, CompactionOrchestrator
+from src.service.compactor.explicit import CompactionOrchestrator
 
 router = APIRouter()
 
@@ -45,7 +44,9 @@ async def compact_conversation_endpoint(
     config = fastapi_request.app.state.config
     arq_pool = getattr(fastapi_request.app.state, "arq_pool", None)
     valkey = getattr(fastapi_request.app.state, "valkey", None)
-    orchestrator: CompactionOrchestrator = fastapi_request.app.state.compaction_orchestrator
+    orchestrator: CompactionOrchestrator = (
+        fastapi_request.app.state.compaction_orchestrator
+    )
 
     db = fastapi_request.app.state.db_session_factory()
     try:
@@ -71,6 +72,13 @@ async def compact_conversation_endpoint(
         return result
     except HTTPException:
         raise
+    except ValueError as e:
+        error_msg = str(e)
+        status_code, error_type = _map_compaction_error(error_msg)
+        raise HTTPException(
+            status_code=status_code,
+            detail={"error": error_type, "message": error_msg},
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=502,
@@ -149,12 +157,15 @@ async def degrade_images(
         api_base = None
         api_key = None
         if current_pm:
-            vision_models = [m for m in current_pm.physical_models if getattr(m, "vision", False)]
+            vision_models = [
+                m for m in current_pm.physical_models if getattr(m, "vision", False)
+            ]
             if vision_models:
                 vision_phys = vision_models[0]
                 vision_model = vision_phys.model
                 api_base = getattr(vision_phys, "api_base", None) or None
                 from src.service.chat_fallback import _resolve_api_key as _resolve_key
+
                 api_key = _resolve_key(vision_phys)
 
         if not vision_model:
@@ -376,3 +387,16 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.UUID(value)
     except ValueError:
         return uuid.uuid5(uuid.NAMESPACE_DNS, value)
+
+
+def _map_compaction_error(error_msg: str) -> tuple[int, str]:
+    """Map compaction domain error ValueError messages to HTTP status codes."""
+    if error_msg.startswith("ConversationNotFound:"):
+        return 404, "CONVERSATION_NOT_FOUND"
+    if error_msg.startswith("EmptyConversation:"):
+        return 400, "EMPTY_CONVERSATION"
+    if error_msg.startswith("HistoryTooLargeForCompactor:"):
+        return 400, "HISTORY_TOO_LARGE"
+    if error_msg.startswith("CompactionFailed:"):
+        return 502, "COMPACTION_FAILED"
+    return 502, "COMPACTION_FAILED"

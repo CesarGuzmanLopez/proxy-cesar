@@ -76,14 +76,16 @@ class CompactionOrchestrator:
         # Get or create lock for this conversation
         lock = self._locks.setdefault(conv_uuid, asyncio.Lock())
 
-        # Try to acquire non-blocking
-        if not lock.acquire(blocking=False):
+        # Non-blocking acquire: check if already locked
+        if lock.locked():
             logger.info(
                 "compact_already_in_progress conv=%s trigger=%s",
                 str(conv_uuid)[:12],
                 trigger,
             )
             return False, {}
+
+        await lock.acquire()
 
         try:
             # Lock acquired - proceed with compaction
@@ -239,7 +241,9 @@ async def _run_compaction_sync(
         conv = await db.get(Conversation, conv_uuid)
 
     # ── Describe images using any available vision model ──────────────
-    all_messages = await _prepare_multimedia_for_compaction(all_messages, config, valkey)
+    all_messages = await _prepare_multimedia_for_compaction(
+        all_messages, config, valkey
+    )
 
     # ── Call compactor model API ───────────────────────────────────────
     compaction_messages = [
@@ -547,7 +551,9 @@ def _resolve_api_key(phys) -> str | None:
 
 
 async def _prepare_multimedia_for_compaction(
-    history: list[dict], config, valkey=None,
+    history: list[dict],
+    config,
+    valkey=None,
 ) -> list[dict]:
     """Describe images using any available vision model before compaction."""
     if not _history_has_images(history):

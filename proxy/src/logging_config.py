@@ -14,6 +14,8 @@ import sys
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
+_setup_logger = logging.getLogger(__name__)
+
 
 class JSONFormatter(logging.Formatter):
     """Structured JSON log formatter.
@@ -91,9 +93,9 @@ def setup_logging(level: str | int = "INFO") -> logging.Logger:
             )
             file_handler.setFormatter(JSONFormatter())
             handlers.append(file_handler)
-            print(f"[INIT] Logging to file: {log_file}", file=sys.stderr)
+            _setup_logger.info("Logging to file: %s", log_file)
         except Exception as e:
-            print(f"[INIT] WARNING: Could not setup file logging to {log_file}: {e}", file=sys.stderr)
+            _setup_logger.warning("Could not setup file logging to %s: %s", log_file, e)
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)

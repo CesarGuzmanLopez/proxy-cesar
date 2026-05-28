@@ -14,7 +14,6 @@ import base64
 import hashlib
 import logging
 import re
-from typing import Any
 
 import fitz  # PyMuPDF — mandatory for PDF text extraction
 
@@ -312,7 +311,7 @@ def _classify_content_parts(  # noqa: S3776 — 3 content types × multiple chec
 
 def _build_blob_output(others, images, descs, audios, aresults, files, fresults):
     """Build output content list from classified parts and descriptions."""
-    out: list[dict[str, Any]] = list(others)
+    out: list[dict[str, object]] = list(others)
 
     def _bt(h, mime, sz, label, desc=""):
         t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {sz} KB"
@@ -331,11 +330,11 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
 
 
 async def _process_msg_blobs(
-    msg: dict[str, Any],
+    msg: dict[str, object],
     prefix: str,
     valkey,
     config,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Process one user message: classify, store, describe, build output."""
     content = msg.get("content", "")
     if not isinstance(content, list):
@@ -401,7 +400,10 @@ async def _describe_images(valkey, prefix, blobs, user_text, config):
         return []
     prompt_hash = hashlib.sha256((user_text or "").encode()).hexdigest()[:8]
     cached = await asyncio.gather(
-        *[_get_cached(valkey, f"{prefix}:{h}:desc:{prompt_hash}") for h, _, _, _ in blobs]
+        *[
+            _get_cached(valkey, f"{prefix}:{h}:desc:{prompt_hash}")
+            for h, _, _, _ in blobs
+        ]
     )
     if all(cached):
         return cached
@@ -424,16 +426,17 @@ async def _get_cached(valkey, key: str) -> str:
     try:
         v = await valkey.get(key)
         return v or ""
-    except Exception:
+    except Exception as exc:
+        logger.debug("blob_cache_get_error key=%s err=%s", key, exc)
         return ""
 
 
 async def replace_base64_with_blob_refs(
-    messages: list[dict[str, Any]],
+    messages: list[dict[str, object]],
     conversation_id: str | None = None,
     valkey=None,
     config=None,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Replace base64 content with [BLOB:hash:mime] references.
 
     Groups images from the same message and describes them together
@@ -443,7 +446,7 @@ async def replace_base64_with_blob_refs(
     if valkey is None:
         return messages
     prefix = f"blob:{conversation_id or 'anon'}"
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, object]] = []
     for msg in messages:
         if msg.get("role") != "user":
             results.append(msg)

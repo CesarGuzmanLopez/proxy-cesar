@@ -5,8 +5,11 @@ All edge cases are handled deterministically — no ML, no heuristics.
 """
 
 import json
+import logging
 
 MAX_TOOL_RESULT_TOKENS = 8000
+
+logger = logging.getLogger(__name__)
 
 
 def _process_tool_delta(
@@ -82,7 +85,8 @@ async def accumulate_streaming_tool_calls(
             for tc_delta in tool_call_deltas:
                 _process_tool_delta(tc_delta, tool_calls_by_index)
 
-    except Exception:
+    except Exception as exc:
+        logger.debug("accumulate_streaming_tool_calls_error err=%s", exc)
         was_incomplete = True
 
     # Assemble final tool calls

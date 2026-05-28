@@ -5,10 +5,10 @@ In-memory counters serve as the fast path; Valkey persists every write
 asynchronously so metrics survive proxy redeploys.
 """
 
+import asyncio
 import logging
 import threading
 import time
-from typing import Any
 
 from fastapi import APIRouter, Request
 from sqlalchemy import func, select, text
@@ -28,7 +28,8 @@ class MetricsStore:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._valkey: Any = None
+        self._valkey: object | None = None
+        self._bg_tasks: set[asyncio.Task[None]] = set()
         self.total_requests: int = 0
         self.requests_by_pseudo: dict[str, int] = {}
         self.total_input_tokens: int = 0
@@ -96,41 +97,49 @@ class MetricsStore:
 
     # ── Valkey sync (best-effort, non-blocking) ──────────────────────
 
+    def _add_bg_task(self, coro) -> None:
+        """Schedule a background coroutine, keeping a reference to prevent GC."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
     def _sync_key(self, key: str, delta: int) -> None:
         v = self._valkey
         if v is None:
             return
-        import asyncio
         try:
-            asyncio.create_task(self._incrby(v, f"metrics:{key}", delta, _METRICS_TTL))
+            self._add_bg_task(self._incrby(v, f"metrics:{key}", delta, _METRICS_TTL))
         except RuntimeError:
-            pass  # No event loop (e.g., sync context)
+            logger.debug("metrics_sync_key_no_event_loop key=%s", key)
 
     def _sync_hash(self, base: str, field: str) -> None:
         v = self._valkey
         if v is None:
             return
-        import asyncio
         try:
-            asyncio.create_task(self._hincrby(v, f"metrics:{base}", field, _METRICS_TTL))
+            self._add_bg_task(self._hincrby(v, f"metrics:{base}", field, _METRICS_TTL))
         except RuntimeError:
-            pass
+            logger.debug(
+                "metrics_sync_hash_no_event_loop base=%s field=%s", base, field
+            )
 
     @staticmethod
     async def _incrby(v, key: str, delta: int, ttl: int) -> None:
         try:
             await v.incrby(key, delta)
             await v.expire(key, ttl, nx=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("metrics_incrby_error key=%s err=%s", key, exc)
 
     @staticmethod
     async def _hincrby(v, key: str, field: str, ttl: int) -> None:
         try:
             await v.hincrby(key, field, 1)
             await v.expire(key, ttl, nx=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "metrics_hincrby_error key=%s field=%s err=%s", key, field, exc
+            )
 
     async def restore_from_valkey(self) -> None:
         """Restore in-memory counters from Valkey on startup."""
@@ -142,21 +151,31 @@ class MetricsStore:
                 t = await v.get("metrics:total_requests")
                 if t:
                     self.total_requests = int(t)
-                for k in ("total_input_tokens", "total_output_tokens",
-                          "total_cached_tokens", "total_saved_by_compaction",
-                          "cache_hits", "errors_4xx", "errors_5xx"):
+                for k in (
+                    "total_input_tokens",
+                    "total_output_tokens",
+                    "total_cached_tokens",
+                    "total_saved_by_compaction",
+                    "cache_hits",
+                    "errors_4xx",
+                    "errors_5xx",
+                ):
                     val = await v.get(f"metrics:{k}")
                     if val:
                         setattr(self, k, int(val))
 
                 rbp = await v.hgetall("metrics:requests_by_pseudo")
-                self.requests_by_pseudo = {k.decode(): int(v) for k, v in (rbp or {}).items()}
+                self.requests_by_pseudo = {
+                    k.decode(): int(v) for k, v in (rbp or {}).items()
+                }
 
                 fb = await v.hgetall("metrics:fallbacks")
                 self.fallbacks = {k.decode(): int(v) for k, v in (fb or {}).items()}
 
                 eb = await v.hgetall("metrics:errors_by_type")
-                self.errors_by_type = {k.decode(): int(v) for k, v in (eb or {}).items()}
+                self.errors_by_type = {
+                    k.decode(): int(v) for k, v in (eb or {}).items()
+                }
         except Exception as exc:
             logger.debug("metrics_valkey_restore_failed error=%s", exc)
 

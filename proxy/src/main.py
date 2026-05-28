@@ -69,13 +69,13 @@ async def lifespan(app: FastAPI):
     try:
         import fitz  # noqa: F401 — PyMuPDF for PDF text extraction
     except ImportError:
-        print("FATAL: PyMuPDF (fitz) is required. Install with: pip install PyMuPDF")
+        logger.critical("PyMuPDF (fitz) is required. Install with: pip install PyMuPDF")
         raise SystemExit(1) from None
 
-    print(f"Loading pseudo_models.yaml from {CONFIG_PATH}...")
+    logger.info("Loading pseudo_models.yaml from %s", CONFIG_PATH)
     config = load_config(CONFIG_PATH)
     app.state.config = config
-    print(f"Loaded {len(config.pseudo_models)} pseudo-models")
+    logger.info("Loaded %d pseudo-models", len(config.pseudo_models))
 
     # Database — SQLite WAL mode + busy timeout for concurrent access
     _db_url = settings.database_url
@@ -131,6 +131,7 @@ async def lifespan(app: FastAPI):
 
     # Metrics — persist to Valkey so counters survive restarts
     from src.api.metrics import metrics as _metrics
+
     _metrics.set_valkey(valkey_client)
     await _metrics.restore_from_valkey()
 
@@ -144,14 +145,14 @@ async def lifespan(app: FastAPI):
 
         arq_pool = await _create_arq_pool()
         if arq_pool:
-            print("arq pool created — async compaction available")
+            logger.info("arq pool created — async compaction available")
         else:
-            print("arq pool not available — compaction runs synchronously")
+            logger.info("arq pool not available — compaction runs synchronously")
     except Exception:
-        print("arq not available — compaction runs synchronously")
+        logger.info("arq not available — compaction runs synchronously")
     app.state.arq_pool = arq_pool
 
-    print(f"Proxy ready on port {settings.proxy_port}")
+    logger.info("Proxy ready on port %s", settings.proxy_port)
 
     yield
 
@@ -160,7 +161,7 @@ async def lifespan(app: FastAPI):
         await app.state.arq_pool.close()
     await valkey_client.close()
     await engine.dispose()
-    print("Proxy shut down")
+    logger.info("Proxy shut down")
 
 
 app = FastAPI(

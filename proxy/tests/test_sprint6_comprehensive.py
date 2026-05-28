@@ -165,6 +165,10 @@ def app_with_mocks():
         app.state.db_session_factory = db_session_factory
         app.state.arq_pool = None  # No arq in tests
 
+        from src.service.compactor.explicit import CompactionOrchestrator
+
+        app.state.compaction_orchestrator = CompactionOrchestrator()
+
         yield app, mock_session, db_session_factory, valkey
 
 
@@ -362,9 +366,7 @@ async def test_context_unusable_400_error(client):
     data = resp.json()
     detail = data.get("detail", data)
     assert detail["error"] == "CONTEXT_UNUSABLE"
-    assert "remediation" in detail
-    assert detail["remediation"]["action"] == "compact"
-    assert str(conv.id) in detail["remediation"]["endpoint"]
+    assert "ContextUnusable" in str(detail)
 
 
 @pytest.mark.asyncio

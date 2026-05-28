@@ -10,8 +10,6 @@ Metrics stored in Valkey with 1h TTL, per conversation.
 
 import json
 import logging
-import time
-import uuid
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -60,7 +58,11 @@ class SmartFallback:
             # Calculate score
             success_rate = metrics["success_rate"]
             recency_penalty = metrics["errors_1h"] * 0.1  # Penalize recent errors
-            latency_score = metrics["avg_latency_ms"] / 1000.0 if metrics["avg_latency_ms"] > 0 else 0
+            latency_score = (
+                metrics["avg_latency_ms"] / 1000.0
+                if metrics["avg_latency_ms"] > 0
+                else 0
+            )
             score = success_rate - recency_penalty - latency_score
 
             scored_models.append((score, phys))
@@ -123,7 +125,9 @@ class SmartFallback:
                 if error:
                     metrics["last_error"] = error[:100]
 
-            metrics["total_latency_ms"] = metrics.get("total_latency_ms", 0) + elapsed_ms
+            metrics["total_latency_ms"] = (
+                metrics.get("total_latency_ms", 0) + elapsed_ms
+            )
 
             # Calculate derived metrics
             metrics["success_rate"] = (

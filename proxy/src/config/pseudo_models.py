@@ -4,12 +4,14 @@ Fail-fast: any validation error → SystemExit(1) with clear FATAL message.
 Exact 14 validation rules from sprint §3.2.
 """
 
+import logging
 import re
-import sys
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator, ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 # ── Physical model ──────────────────────────────────────────────────────────
@@ -145,10 +147,9 @@ def _validate_pseudo_model_names(schema: ProxyConfigSchema) -> None:
     pattern = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]*$")
     for name in schema.pseudo_models:
         if not pattern.match(name):
-            print(
-                f"FATAL: Invalid pseudo-model name: '{name}'. "
-                f"Only alphanumeric and hyphens allowed.",
-                file=sys.stderr,
+            logger.critical(
+                "Invalid pseudo-model name: '%s'. Only alphanumeric and hyphens allowed.",
+                name,
             )
             raise SystemExit(1)
 
@@ -163,28 +164,25 @@ def load_config(path: Path = Path("pseudo_models.yaml")) -> ProxyConfigSchema:
         with open(path) as f:
             raw = yaml.safe_load(f)
     except FileNotFoundError:
-        print(f"FATAL: {path} not found", file=sys.stderr)
+        logger.critical("%s not found", path)
         raise SystemExit(1) from None
     except yaml.YAMLError as e:
-        print(f"FATAL: {path} is not valid YAML: {e}", file=sys.stderr)
+        logger.critical("%s is not valid YAML: %s", path, e)
         raise SystemExit(1) from None
 
     # Rule 2: pseudo_models key must exist and be a dict
     if not isinstance(raw, dict) or "pseudo_models" not in raw:
-        print(
-            "FATAL: pseudo_models must be a mapping at root level",
-            file=sys.stderr,
-        )
+        logger.critical("pseudo_models must be a mapping at root level")
         raise SystemExit(1)
 
     # Validate with Pydantic
     try:
         schema = ProxyConfigSchema.model_validate(raw)
     except ValidationError as e:
-        print(f"FATAL: {path} validation failed:", file=sys.stderr)
+        logger.critical("%s validation failed:", path)
         for error in e.errors():
             loc = " -> ".join(str(p) for p in error["loc"])
-            print(f"  - {loc}: {error['msg']}", file=sys.stderr)
+            logger.critical("  - %s: %s", loc, error["msg"])
         raise SystemExit(1) from None
 
     # Additional imperative validations

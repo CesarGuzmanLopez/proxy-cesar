@@ -150,7 +150,6 @@ async def process_chat_request(
         conv_uuid,
         pseudo_model_name,
         pm_schema,
-        config,
     )
     # Sprint 5: Auto-describe images on pseudo-model switch
     auto_describe_meta: dict | None = None
@@ -264,9 +263,9 @@ async def process_chat_request(
                 input_tokens=int(input_tokens),
                 output_tokens=int(output_tokens),
             )
-    except Exception:
+    except Exception as exc:
         # If logging fails, continue anyway
-        pass
+        logger.debug("llm_response_parsing_error err=%s", exc)
 
     # Sprint 11: Update physical_model from actual response when fallback occurred.
     # FASE 1: Record failure if pinned model failed
@@ -388,7 +387,7 @@ def _resolve_and_validate(
     else:
         pm = config.pseudo_models[resolved]
     caps = detect_turn_capabilities(messages, tools)
-    delegation = validate_incoming_content(caps, pm, resolved, config, tools)
+    delegation = validate_incoming_content(caps, pm, resolved, tools)
     return resolved, pm, caps, delegation
 
 
@@ -407,7 +406,6 @@ async def _resolve_session_conv_and_models(
     conv_uuid: uuid.UUID,
     pseudo_model_name: str,
     pm_schema: PseudoModelSchema,
-    config: ProxyConfigSchema,
 ) -> tuple:
     """Steps 4-11: Load/create conversation, session, check switch, resolve physical model.
 

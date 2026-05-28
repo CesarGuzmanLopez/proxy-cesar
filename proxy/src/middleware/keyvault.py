@@ -212,7 +212,9 @@ def _mask_messages(body: dict, secrets: dict[str, str]) -> None:
                     part["text"] = _mask_text(str(part.get("text", "")), secrets)
 
 
-async def _store_secrets(valkey, conversation_id: str, secrets: dict[str, str], trace_id: str = "????") -> None:
+async def _store_secrets(
+    valkey, conversation_id: str, secrets: dict[str, str], trace_id: str = "????"
+) -> None:
     """Store detected secrets in Valkey with TTL."""
     for secret_hash, secret_value in secrets.items():
         try:
@@ -222,7 +224,10 @@ async def _store_secrets(valkey, conversation_id: str, secrets: dict[str, str], 
                 ex=KEYVAULT_TTL,
             )
             logger.debug(
-                "keyvault_store trace=%s conv=%s hash=%s", trace_id, conversation_id[:12], secret_hash
+                "keyvault_store trace=%s conv=%s hash=%s",
+                trace_id,
+                conversation_id[:12],
+                secret_hash,
             )
         except Exception as exc:
             logger.error(
@@ -248,7 +253,9 @@ def _re_inject_recursive(obj: object, secrets: dict[str, str]) -> object:
     return obj
 
 
-async def _re_inject_non_streaming(response, secrets: dict[str, str], trace_id: str = "????") -> JSONResponse:
+async def _re_inject_non_streaming(
+    response, secrets: dict[str, str], trace_id: str = "????"
+) -> JSONResponse:
     """Re-inject secrets into a non-streaming response."""
     try:
         if hasattr(response, "body_iterator") and response.body_iterator is not None:
@@ -273,7 +280,9 @@ async def _re_inject_non_streaming(response, secrets: dict[str, str], trace_id: 
         return response
 
 
-def _build_re_inject_stream(original_iterator, secrets: dict[str, str], trace_id: str = "????"):
+def _build_re_inject_stream(
+    original_iterator, secrets: dict[str, str], trace_id: str = "????"
+):
     """Wrap a streaming response body iterator to re-inject secrets on each chunk."""
 
     async def _wrapper():
@@ -315,7 +324,8 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         try:
             body_bytes = await request.body()
             body = json.loads(body_bytes)
-        except Exception:
+        except Exception as exc:
+            logger.debug("keyvault_parse_error trace=%s err=%s", _trace, exc)
             return await call_next(request)
 
         # ── Detect + mask secrets (always, in-memory) ─────────────────────
@@ -339,7 +349,14 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         if valkey:
             import asyncio
 
-            asyncio.create_task(_store_secrets(valkey, conversation_id, secrets, _trace))
+            task = asyncio.create_task(
+                _store_secrets(valkey, conversation_id, secrets, _trace)
+            )
+            # Keep reference to prevent premature garbage collection
+            if not hasattr(request.app.state, "_kv_tasks"):
+                request.app.state._kv_tasks = set()
+            request.app.state._kv_tasks.add(task)
+            task.add_done_callback(request.app.state._kv_tasks.discard)
 
         # ── Inject system prompt so LLM knows about placeholders ──────────
         # Bug 8 fix: insert AFTER any existing system messages to preserve
@@ -370,7 +387,9 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         # ── Re-inject real values ─────────────────────────────────────────
         if isinstance(response, StreamingResponse):
             return StreamingResponse(
-                content=_build_re_inject_stream(response.body_iterator, secrets, _trace)(),
+                content=_build_re_inject_stream(
+                    response.body_iterator, secrets, _trace
+                )(),
                 status_code=response.status_code,
                 headers=dict(response.headers),
                 media_type=response.media_type,

@@ -7,10 +7,10 @@ in src/adapters/ layer.
 python.md §1: Hexagonal architecture - dependencies point inward.
 """
 
-from typing import Protocol, TypeVar, Any
+from collections.abc import Coroutine
+from typing import Protocol, TypeVar
 
-
-T = TypeVar("T")
+T_co = TypeVar("T_co", covariant=True)
 
 
 class AsyncSessionPort(Protocol):
@@ -20,11 +20,15 @@ class AsyncSessionPort(Protocol):
     This protocol decouples service from SQLModel library.
     """
 
-    async def get(self, entity_type: type[T], ident: Any, **kwargs) -> T | None:
+    async def get(
+        self, entity_type: type[T_co], ident: str | int, **kwargs: object
+    ) -> T_co | None:
         """Get entity by primary key. Options can include eager loading."""
         ...
 
-    async def execute(self, statement: Any, **kwargs) -> Any:
+    async def execute(
+        self, statement: object, **kwargs: object
+    ) -> Coroutine[None, None, object]:
         """Execute a SQL statement."""
         ...
 
@@ -44,7 +48,7 @@ class AsyncSessionPort(Protocol):
         """Close session."""
         ...
 
-    def add(self, instance: Any) -> None:
+    def add(self, instance: object) -> None:
         """Add instance to session."""
         ...
 
@@ -52,6 +56,11 @@ class AsyncSessionPort(Protocol):
         """Async context manager entry."""
         ...
 
-    def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         """Async context manager exit."""
         ...

@@ -6,7 +6,6 @@ Extracted from chat.py to keep individual files under 600 lines.
 import json
 import logging
 import uuid
-from typing import Any
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -95,16 +94,29 @@ async def _handle_streaming(
     except HTTPException:
         try:
             await db.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("stream_db_close_error err=%s", exc)
         if trace:
             trace.proxy_out(http_status=400, stream=True)
         raise
+    except ValueError as e:
+        try:
+            await db.close()
+        except Exception as exc:
+            logger.debug("stream_db_close_error err=%s", exc)
+        error_msg = str(e)
+        status_code, error_type = _map_stream_domain_error(error_msg)
+        if trace:
+            trace.proxy_out(http_status=status_code, stream=True)
+        raise HTTPException(
+            status_code=status_code,
+            detail={"error": error_type, "message": error_msg},
+        ) from e
     except Exception as e:
         try:
             await db.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("stream_db_close_error err=%s", exc)
         metrics.record_error(502, "PROXY_ERROR")
         if trace:
             trace.proxy_out(http_status=502, stream=True)
@@ -141,7 +153,7 @@ async def _handle_streaming_with_db(
     turn_caps = detect_turn_capabilities(messages, tools)
 
     # Validate incoming content
-    validate_incoming_content(turn_caps, pm_schema, resolved_model, config, tools)
+    validate_incoming_content(turn_caps, pm_schema, resolved_model, tools)
 
     # Resolve conversation ID
     try:
@@ -320,8 +332,7 @@ async def _handle_streaming_with_db(
             )
 
     logger.info(
-        "stream_llm_ok conv=%s physical=%s provider=%s fallback=%s "
-        "attempted=%s",
+        "stream_llm_ok conv=%s physical=%s provider=%s fallback=%s attempted=%s",
         conversation_id[:12],
         physical_model,
         provider or "none",
@@ -428,6 +439,7 @@ async def _stream_response_generator(ctx: StreamContext):
     continues streaming from the next model.
     """
     import uuid
+
     stream_id = str(uuid.uuid4())[:8]  # Unique ID for this streaming session
     chunks: list = []
     db = ctx.db
@@ -522,7 +534,8 @@ async def _stream_response_generator(ctx: StreamContext):
                         _first_chunk_logged = True
                         _content_preview = (
                             (delta.content or "")[:80]
-                            if hasattr(chunk.choices[0], "delta") and hasattr(chunk.choices[0].delta, "content")
+                            if hasattr(chunk.choices[0], "delta")
+                            and hasattr(chunk.choices[0].delta, "content")
                             else ""
                         )
                         logger.info(
@@ -580,8 +593,8 @@ async def _stream_response_generator(ctx: StreamContext):
             except Exception as e:
                 try:
                     await ctx.db.rollback()
-                except Exception:
-                    pass
+                except Exception as rollback_err:
+                    logger.debug("stream_db_rollback_error err=%s", rollback_err)
                 error_payload = {
                     "error": "PROXY_STREAM_ERROR",
                     "message": str(e),
@@ -606,7 +619,7 @@ async def _stream_response_generator(ctx: StreamContext):
 
             # Build continuation messages: full history + partial assistant
             cont_messages = list(ctx.active_messages or ctx.messages or [])
-            assistant_msg: dict[str, Any] = {
+            assistant_msg: dict[str, object] = {
                 "role": "assistant",
                 "content": accumulated_content,
             }
@@ -800,8 +813,8 @@ async def _stream_response_generator(ctx: StreamContext):
         if db is not None:
             try:
                 await db.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("stream_db_close_finally_error err=%s", exc)
 
 
 def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
@@ -817,3 +830,18 @@ def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
         if model_prefix in ("anthropic",):
             cache_provider = model_prefix
     return should_apply_cache_control(cache_provider)
+
+
+def _map_stream_domain_error(error_msg: str) -> tuple[int, str]:
+    """Map domain error ValueError messages to HTTP status codes for streaming path."""
+    if error_msg.startswith("AllModelsFailed:"):
+        return 503, "ALL_MODELS_FAILED"
+    if error_msg.startswith("ContextTooLargeForAllModels:"):
+        return 400, "CONTEXT_TOO_LARGE"
+    if error_msg.startswith("ContextUnusable:"):
+        return 400, "CONTEXT_UNUSABLE"
+    if error_msg.startswith("InputExceedsThreshold:"):
+        return 400, "INPUT_EXCEEDS_THRESHOLD"
+    if error_msg.startswith("ParallelToolsNotSupported:"):
+        return 400, "PARALLEL_TOOLS_NOT_SUPPORTED"
+    return 502, "PROXY_ERROR"

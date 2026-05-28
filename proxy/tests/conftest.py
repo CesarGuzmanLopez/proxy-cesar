@@ -115,6 +115,11 @@ async def async_client(mock_valkey):
 
     app.state.db_session_factory = MagicMock(return_value=mock_session)
 
+    # Compaction Orchestrator for FASE 3
+    from src.service.compactor.explicit import CompactionOrchestrator
+
+    app.state.compaction_orchestrator = CompactionOrchestrator()
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

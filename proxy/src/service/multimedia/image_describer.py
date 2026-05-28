@@ -183,8 +183,10 @@ async def auto_describe_images(
     refs = find_image_refs(messages)
     if not refs:
         return messages, {
-            "ok": True, "images_described": 0,
-            "reason": "no_images_found", "status": "no_images_found",
+            "ok": True,
+            "images_described": 0,
+            "reason": "no_images_found",
+            "status": "no_images_found",
         }
 
     unique_refs = [r for r in refs if not r["is_duplicate"]]
@@ -224,10 +226,12 @@ async def auto_describe_images(
         ]
         for ref in uncached:
             degraded = degrade_image(ref["url"])
-            batch_content.append({
-                "type": "image_url",
-                "image_url": {"url": degraded, "detail": "high"},
-            })
+            batch_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": degraded, "detail": "high"},
+                }
+            )
 
         batch_tokens: int = 0
         try:
@@ -244,7 +248,9 @@ async def auto_describe_images(
                 if hasattr(response, "usage") and response.usage:
                     batch_tokens = getattr(response.usage, "completion_tokens", 0) or 0
                 elif isinstance(response, dict):
-                    batch_tokens = (response.get("usage") or {}).get("completion_tokens", 0) or 0
+                    batch_tokens = (response.get("usage") or {}).get(
+                        "completion_tokens", 0
+                    ) or 0
             except (AttributeError, TypeError, KeyError) as e:
                 logger.warning("image_metadata_extraction_failed error=%s", str(e))
 
@@ -256,7 +262,9 @@ async def auto_describe_images(
                     if hasattr(choice, "message"):
                         text = choice.message.content or ""
                 elif isinstance(response, dict):
-                    text = (response.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+                    text = (response.get("choices") or [{}])[0].get("message", {}).get(
+                        "content", ""
+                    ) or ""
             except (AttributeError, IndexError, TypeError, KeyError) as e:
                 logger.warning("image_description_parsing_failed error=%s", str(e))
             if text and isinstance(text, str):
@@ -266,11 +274,15 @@ async def auto_describe_images(
                 try:
                     parsed = json_mod.loads(text)
                     if isinstance(parsed, list):
-                        tokens_per_image = max(batch_tokens // len(parsed), 1) if batch_tokens else 0
+                        tokens_per_image = (
+                            max(batch_tokens // len(parsed), 1) if batch_tokens else 0
+                        )
                         for i, ref in enumerate(uncached):
                             desc = str(parsed[i])[:500] if i < len(parsed) else ""
                             url_cache[ref["url"]] = desc
-                            total_tokens += tokens_per_image if tokens_per_image else len(desc) // 4
+                            total_tokens += (
+                                tokens_per_image if tokens_per_image else len(desc) // 4
+                            )
                             if valkey is not None and desc:
                                 try:
                                     await valkey.set(
@@ -279,30 +291,40 @@ async def auto_describe_images(
                                         ex=BLOB_STORAGE_TTL_SECONDS,
                                     )
                                 except Exception as e:
-                                    logger.warning("blob_storage_error error=%s", str(e))
+                                    logger.warning(
+                                        "blob_storage_error error=%s", str(e)
+                                    )
                 except (json_mod.JSONDecodeError, IndexError, TypeError):
                     pass
 
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).warning(
                 "auto_describe_batch_failed model=%s images=%d error=%s",
-                vision_model, len(uncached), str(exc),
+                vision_model,
+                len(uncached),
+                str(exc),
             )
 
         # Fallback: any image still missing description gets described individually
         for ref in uncached:
             if ref["url"] not in url_cache or not url_cache[ref["url"]]:
                 desc, tokens = await describe_image(
-                    ref["url"], ref["detail"], vision_model,
-                    api_base=api_base, api_key=api_key,
+                    ref["url"],
+                    ref["detail"],
+                    vision_model,
+                    api_base=api_base,
+                    api_key=api_key,
                 )
                 url_cache[ref["url"]] = desc
                 total_tokens += tokens
 
     # Build modified message list (shallow copy list, deep copy only modified msgs)
     # Optimization: avoid deepcopy of entire list if only a few messages change
-    modified_indices: set[int] = {ref["msg_idx"] for ref in refs if url_cache.get(ref["url"])}
+    modified_indices: set[int] = {
+        ref["msg_idx"] for ref in refs if url_cache.get(ref["url"])
+    }
     modified: list[dict] = [
         deepcopy(msg) if i in modified_indices else msg
         for i, msg in enumerate(messages)

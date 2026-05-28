@@ -13,7 +13,7 @@ from httpx import AsyncClient
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "pseudo_models.yaml"
 
 # Load expected primary model from YAML config so tests don't hardcode model names
-import yaml
+import yaml  # noqa: E402 — must load before app to determine expected model
 with open(CONFIG_PATH) as _f:
     _raw_config = yaml.safe_load(_f)
 NORMAL_PRIMARY = _raw_config["pseudo_models"]["normal"]["physical_models"][0]["model"]

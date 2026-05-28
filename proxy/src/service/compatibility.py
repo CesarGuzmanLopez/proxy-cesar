@@ -10,7 +10,6 @@ python.md §3: errors as data in domain, exceptions at boundary.
 
 from src.config.pseudo_models import (
     PseudoModelSchema,
-    ProxyConfigSchema,
 )
 from src.domain.capabilities import TurnCapabilities
 from src.domain.errors import ParallelToolsNotSupported
@@ -20,7 +19,6 @@ def validate_incoming_content(
     turn_caps: TurnCapabilities,
     pseudo_model: PseudoModelSchema,
     pseudo_model_name: str,
-    config: ProxyConfigSchema,
     tools: list[dict] | None = None,
 ) -> dict | None:
     """Validate that the current pseudo-model can handle the incoming content.
@@ -73,7 +71,7 @@ def validate_incoming_content(
         return result
 
     # Parallel tools → model without parallel support
-    parallel_error = _check_parallel_tools_support(turn_caps, phys, pseudo_model_name, config)
+    parallel_error = _check_parallel_tools_support(turn_caps, phys, pseudo_model_name)
     if parallel_error is not None:
         raise ValueError(f"ParallelToolsNotSupported: {parallel_error}")
 
@@ -105,7 +103,6 @@ def _check_parallel_tools_support(
     turn_caps: TurnCapabilities,
     physical_models: list,
     pseudo_model_name: str,
-    config,
 ) -> ParallelToolsNotSupported | None:
     """Check if parallel tools are supported.
 

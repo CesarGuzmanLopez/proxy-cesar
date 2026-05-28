@@ -5,7 +5,6 @@ Extracted from chat.py to keep individual files under 600 lines.
 
 import copy
 import logging
-from typing import Any
 
 from sqlalchemy import func
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -126,7 +125,9 @@ async def _persist_stream_turn(
     response_dict: dict,
     input_tokens: int,
     output_tokens: int,
-) -> Result[tuple[AsyncSession, Conversation, SessionCapabilities], StreamPersistenceFailed]:
+) -> Result[
+    tuple[AsyncSession, Conversation, SessionCapabilities], StreamPersistenceFailed
+]:
     """Persist turn after successful stream — extracted for cognitive complexity.
 
     Returns Ok[db, conv, updated_caps] on success, or Err[StreamPersistenceFailed] on error.
@@ -146,11 +147,13 @@ async def _persist_stream_turn(
             db is None,
             conv is None,
         )
-        return Err(StreamPersistenceFailed(
-            conversation_id=ctx.conversation_id,
-            turn_number=0,
-            reason="missing_context_for_persistence"
-        ))
+        return Err(
+            StreamPersistenceFailed(
+                conversation_id=ctx.conversation_id,
+                turn_number=0,
+                reason="missing_context_for_persistence",
+            )
+        )
 
     turn_number = 1
     try:
@@ -212,11 +215,13 @@ async def _persist_stream_turn(
                 ctx.conversation_id,
                 str(rollback_err),
             )
-        return Err(StreamPersistenceFailed(
-            conversation_id=ctx.conversation_id,
-            turn_number=turn_number,
-            reason=str(e)
-        ))
+        return Err(
+            StreamPersistenceFailed(
+                conversation_id=ctx.conversation_id,
+                turn_number=turn_number,
+                reason=str(e),
+            )
+        )
 
 
 def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
@@ -248,7 +253,7 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
     # Reconstruct content, reasoning_content, and tool_calls from ALL chunks
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
-    tool_calls_map: dict[int, dict[str, Any]] = {}
+    tool_calls_map: dict[int, dict[str, object]] = {}
     finish_reason: str | None = None
     response_id: str | None = None
     response_created: int | None = None
@@ -322,7 +327,7 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
     content = "".join(content_parts) if content_parts else None
     reasoning_content = "".join(reasoning_parts) if reasoning_parts else None
 
-    tool_calls_list: list[dict[str, Any]] = []
+    tool_calls_list: list[dict[str, object]] = []
     for idx in sorted(tool_calls_map.keys()):
         tc = tool_calls_map[idx]
         if tc["id"] and tc["function"]["name"]:
@@ -337,13 +342,13 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
                 }
             )
 
-    message: dict[str, Any] = {"role": "assistant", "content": content}
+    message: dict[str, object] = {"role": "assistant", "content": content}
     if reasoning_content:
         message["reasoning_content"] = reasoning_content
     if tool_calls_list:
         message["tool_calls"] = tool_calls_list
 
-    response_dict: dict[str, Any] = {}
+    response_dict: dict[str, object] = {}
     if response_id:
         response_dict["id"] = response_id
     if response_created:
@@ -362,7 +367,7 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
     try:
         usage = getattr(last_chunk, "usage", None)
         if usage is not None:
-            usage_dict: dict[str, Any] = {}
+            usage_dict: dict[str, object] = {}
             for attr in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 val = getattr(usage, attr, None)
                 if val is not None:

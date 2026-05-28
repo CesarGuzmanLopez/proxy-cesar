@@ -253,17 +253,13 @@ async def test_empty_conversation_400(config_with_compactador, mock_db):
     )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ValueError, match="EmptyConversation"):
         await compact_conversation(
             conversation_id=str(conv.id),
             db=mock_db,
             config=config_with_compactador,
             arq_pool=None,
         )
-    assert exc_info.value.status_code == 400
-    assert "EMPTY_CONVERSATION" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio
@@ -271,16 +267,13 @@ async def test_conversation_not_found_404(config_with_compactador, mock_db):
     """Compacting a non-existent conversation returns 404 error."""
     mock_db.get = AsyncMock(return_value=None)
 
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ValueError, match="ConversationNotFound"):
         await compact_conversation(
             conversation_id=str(uuid.uuid4()),
             db=mock_db,
             config=config_with_compactador,
             arq_pool=None,
         )
-    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio

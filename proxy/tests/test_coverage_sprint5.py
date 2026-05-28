@@ -39,7 +39,7 @@ async def test_call_with_fallback_non_retryable_propagates():
 
 @pytest.mark.asyncio
 async def test_call_with_fallback_retryable_triggers_fallback():
-    """503/429 on ALL models raises 503 ALL_MODELS_FAILED."""
+    """503/429 on ALL models raises ValueError with AllModelsFailed."""
     mock_phys1 = MagicMock()
     mock_phys1.model = "test-model-1"
     mock_phys1.context_window = None
@@ -57,7 +57,6 @@ async def test_call_with_fallback_retryable_triggers_fallback():
     mock_schema.display_name = "Test"
     mock_schema.default_thinking = None
 
-    from fastapi import HTTPException
     from litellm.exceptions import ServiceUnavailableError
 
     svc_err = ServiceUnavailableError(
@@ -66,10 +65,8 @@ async def test_call_with_fallback_retryable_triggers_fallback():
         model="test-model",
     )
     with patch("src.service.chat_fallback.call_litellm", side_effect=svc_err):
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(ValueError, match="AllModelsFailed"):
             await call_with_fallback(mock_schema, [])
-        assert exc.value.status_code == 503
-        assert "ALL_MODELS_FAILED" in exc.value.detail["error"]
 
 
 @pytest.mark.asyncio

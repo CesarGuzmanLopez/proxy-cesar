@@ -31,7 +31,11 @@ def _get_encoding():
     try:
         return tiktoken.get_encoding(_TIKTOKEN_ENCODING)
     except Exception as e:
-        logger.warning("tiktoken_encoding_fallback from=%s to=cl100k_base error=%s", _TIKTOKEN_ENCODING, str(e))
+        logger.warning(
+            "tiktoken_encoding_fallback from=%s to=cl100k_base error=%s",
+            _TIKTOKEN_ENCODING,
+            str(e),
+        )
         return tiktoken.get_encoding("cl100k_base")
 
 

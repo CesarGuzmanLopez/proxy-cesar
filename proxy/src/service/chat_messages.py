@@ -30,7 +30,7 @@ def _load_messages_from_turns(conv: Conversation) -> list[dict]:
     all_messages: list[dict] = []
     for turn in sorted(conv.turns, key=lambda t: t.turn_number):
         # Skip degradation_event turns
-        if turn.turn_type == "degradation_event":
+        if getattr(turn, "turn_type", None) == "degradation_event":
             continue
         turn_msgs = turn.messages
         if isinstance(turn_msgs, list):
@@ -68,7 +68,7 @@ def build_conversation_messages(
     history: list[dict] = []
     for turn in sorted(conv.turns, key=lambda t: t.turn_number):
         # FASE D: Skip degradation_event turns to prevent context contamination
-        if turn.turn_type == "degradation_event":
+        if getattr(turn, "turn_type", None) == "degradation_event":
             logger.debug(
                 "skip_degradation_event_turn conv=%s turn=%s",
                 conv.id,
@@ -106,7 +106,9 @@ def build_conversation_messages(
                 current_system_contents.add(("str", content))
             elif isinstance(content, list):
                 try:
-                    current_system_contents.add(("list", tuple(str(p) for p in content)))
+                    current_system_contents.add(
+                        ("list", tuple(str(p) for p in content))
+                    )
                 except (TypeError, ValueError):
                     pass
 
@@ -121,7 +123,10 @@ def build_conversation_messages(
                         continue
                 elif isinstance(content, list):
                     try:
-                        if ("list", tuple(str(p) for p in content)) in current_system_contents:
+                        if (
+                            "list",
+                            tuple(str(p) for p in content),
+                        ) in current_system_contents:
                             continue
                     except (TypeError, ValueError):
                         pass
@@ -259,7 +264,9 @@ async def handle_auto_describe(
         had_parallel_tools=False,
     )
     db.add(deg_turn)
-    conv.images_described = max(conv.images_described or 0, 0) + described_count + in_flight_count
+    conv.images_described = (
+        max(conv.images_described or 0, 0) + described_count + in_flight_count
+    )
     conv.capability_has_images = False
 
     return (described_in_flight, desc_meta)

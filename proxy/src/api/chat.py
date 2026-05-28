@@ -221,12 +221,24 @@ async def chat_completions(
             thinking=request.thinking,
             trace=trace,
         )
-        trace.proxy_out(http_status=200, stream=False, details={"response_len": len(response.body)})
+        trace.proxy_out(
+            http_status=200, stream=False, details={"response_len": len(response.body)}
+        )
         return response
     except HTTPException as e:
         await db.rollback()
         trace.proxy_out(http_status=e.status_code, stream=False)
         raise
+    except ValueError as e:
+        await db.rollback()
+        error_msg = str(e)
+        # Map domain errors (service-layer ValueError wrappers) to HTTP status codes
+        status_code, error_type = _map_domain_error(error_msg)
+        trace.proxy_out(http_status=status_code, stream=False)
+        raise HTTPException(
+            status_code=status_code,
+            detail={"error": error_type, "message": error_msg},
+        ) from e
     except Exception as e:
         await db.rollback()
         metrics.record_error(502, "PROXY_ERROR")
@@ -237,6 +249,25 @@ async def chat_completions(
         ) from e
     finally:
         await db.close()
+
+
+def _map_domain_error(error_msg: str) -> tuple[int, str]:
+    """Map domain error ValueError messages to HTTP status codes.
+
+    Service layer wraps domain errors as ``ValueError(f"ErrorName: {detail}")``.
+    This function extracts the status code and error type for the HTTP boundary.
+    """
+    if error_msg.startswith("AllModelsFailed:"):
+        return 503, "ALL_MODELS_FAILED"
+    if error_msg.startswith("ContextTooLargeForAllModels:"):
+        return 400, "CONTEXT_TOO_LARGE"
+    if error_msg.startswith("ContextUnusable:"):
+        return 400, "CONTEXT_UNUSABLE"
+    if error_msg.startswith("InputExceedsThreshold:"):
+        return 400, "INPUT_EXCEEDS_THRESHOLD"
+    if error_msg.startswith("ParallelToolsNotSupported:"):
+        return 400, "PARALLEL_TOOLS_NOT_SUPPORTED"
+    return 502, "PROXY_ERROR"
 
 
 async def _handle_non_streaming(
@@ -307,7 +338,9 @@ async def _handle_non_streaming(
                 headers[h] = str(v)
 
     # Log full response for debugging
-    resp_content = response_dict.get("choices", [{}])[0].get("message", {}).get("content", "")
+    resp_content = (
+        response_dict.get("choices", [{}])[0].get("message", {}).get("content", "")
+    )
     logger.info(
         "chat_response_full conv=%s model=%s physical=%s "
         "content_len=%d finish=%s reasoning=%s preview=%s",
@@ -316,7 +349,11 @@ async def _handle_non_streaming(
         result.physical_model,
         len(resp_content),
         response_dict.get("choices", [{}])[0].get("finish_reason", "?"),
-        bool(response_dict.get("choices", [{}])[0].get("message", {}).get("reasoning_content")),
+        bool(
+            response_dict.get("choices", [{}])[0]
+            .get("message", {})
+            .get("reasoning_content")
+        ),
         resp_content[:2000],
     )
 

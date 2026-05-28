@@ -5,7 +5,7 @@ disappear or don't reach the client properly.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 import pytest
 from src.api.chat_stream_persistence import _extract_tokens_from_chunks
 

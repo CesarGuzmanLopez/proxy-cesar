@@ -122,10 +122,11 @@ class ValkeyAffinityAdapter:
                 data = json.loads(metrics)
                 return data.get("errors_1h", 0)
         except Exception as e:
-            logger.warning("affinity_get_failure_count_error model=%s error=%s", model, e)
+            logger.warning(
+                "affinity_get_failure_count_error model=%s error=%s", model, e
+            )
 
         return 0
-
 
 
 async def setup_valkey(settings: Settings) -> valkey_async.Valkey:
