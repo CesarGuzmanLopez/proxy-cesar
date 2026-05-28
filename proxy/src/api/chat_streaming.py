@@ -36,6 +36,7 @@ from src.service.model_resolver import (
 )
 from src.service.threshold_guard import check_input_threshold
 from src.service.pipeline_trace import PipelineTrace
+from src.adapters.litellm.client import normalise_stream_chunk
 from src.api.chat_stream_persistence import (
     _build_final_metadata_chunk,
     _extract_tokens_from_chunks,
@@ -713,7 +714,11 @@ async def _stream_response_generator(ctx: StreamContext):
                         finish_reason = "length"
                         break
 
-                    yield f"data: {_dump_chunk_for_sse(chunk)}\n\n"
+                    # Normalize chunk before sending: if content is null but
+                    # reasoning_content exists, copy it to content for client visibility
+                    chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
+                    normalise_stream_chunk(chunk_dict)
+                    yield f"data: {json.dumps(chunk_dict)}\n\n"
 
                     if fr:
                         finish_reason = fr

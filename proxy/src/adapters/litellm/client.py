@@ -132,20 +132,28 @@ def _extract_response_headers(response) -> dict:
 
 
 def normalise_stream_chunk(chunk) -> None:
-    """Normalise a streaming chunk in-place so that ``content`` is never polluted by reasoning.
+    """Normalise a streaming chunk in-place so that ``content`` is never empty.
 
-    Some providers (GLM via OpenRouter, DeepSeek in chain-of-thought mode)
+    Some providers (GLM via OpenRouter, DeepSeek, Kimi K2.5 in chain-of-thought mode)
     emit the assistant response in ``delta.reasoning_content`` instead of
     ``delta.content``, leaving ``delta.content`` as ``None`` for every chunk.
 
-    Previously this function copied ``reasoning_content`` into ``content``
-    which caused reasoning and content to be mixed together in the client
-    output.  Now it only keeps the chunk as-is: ``reasoning_content`` stays
-    in its own field, ``content`` stays clean.
+    If content is None but reasoning_content has a value, copy it to content
+    so the client receives visible response instead of empty content.
 
     The function is a no-op for chunks that lack ``reasoning_content``.
     """
-    pass
+    try:
+        if not chunk or "choices" not in chunk:
+            return
+
+        for choice in chunk.get("choices", []):
+            delta = choice.get("delta", {})
+            # If content is empty but reasoning_content has value, copy it
+            if delta.get("content") is None and delta.get("reasoning_content"):
+                delta["content"] = delta["reasoning_content"]
+    except Exception:
+        pass  # Silently ignore if normalization fails
 
 
 def setup_litellm(settings: Settings) -> None:
