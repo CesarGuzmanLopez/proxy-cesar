@@ -160,6 +160,12 @@ async def process_chat_request(
         delegation, messages, conversation_id, affinity, valkey, config
     )
 
+    # NEW: Inject guidance about blob extraction and available tools
+    # This explains to the model that content was auto-extracted and it can use
+    # its own specialized tools if it has them
+    from src.service.tool_detector import inject_blob_extraction_guidance
+    messages = inject_blob_extraction_guidance(messages)
+
     # Sprint 5: Auto-describe images on pseudo-model switch
     auto_describe_meta: dict | None = None
     messages_for_llm: list[dict] = messages  # May be replaced by described version

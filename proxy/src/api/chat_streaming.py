@@ -224,12 +224,14 @@ async def _handle_streaming_with_db(
 
     # Apply content delegation (images → descriptions, audio → transcriptions, etc.)
     if delegation:
-        from src.service.tool_detector import replace_base64_with_blob_refs
+        from src.service.tool_detector import replace_base64_with_blob_refs, inject_blob_extraction_guidance
 
         valkey_client = getattr(affinity, "_client", None)
         messages = await replace_base64_with_blob_refs(
             messages, conversation_id, valkey_client, config
         )
+        # Inject guidance about blob extraction and available tools
+        messages = inject_blob_extraction_guidance(messages)
 
     if is_new:
         conv = Conversation(

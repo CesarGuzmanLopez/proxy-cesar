@@ -310,22 +310,55 @@ def _classify_content_parts(  # noqa: S3776 — 3 content types × multiple chec
 
 
 def _build_blob_output(others, images, descs, audios, aresults, files, fresults):
-    """Build output content list from classified parts and descriptions."""
+    """Build output content list from classified parts and descriptions.
+
+    Each blob is sent with:
+    1. Metadata: blob hash, MIME type, size
+    2. Auto-extracted information (description, transcription, text)
+    3. Guidance: model can use tools to extract alternative information if needed
+
+    This allows models with specialized tools (PDF extraction, image analysis,
+    audio processing) to decide whether to use the proxy's extraction or
+    invoke their own tools for custom analysis.
+    """
     out: list[dict[str, object]] = list(others)
 
-    def _bt(h, mime, sz, label, desc=""):
-        t = f"[The user sent an {label}. blob: {BLOB_PREFIX}:{h}:{mime} | {sz} KB"
+    def _bt(h, mime, sz, label, desc="", extraction_method=""):
+        # Header: what was sent and how to access it
+        t = f"[Content provided: {label}\n"
+        t += f"  blob_ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"
+
+        # Extraction info: how it was processed
+        if extraction_method:
+            t += f"\n  extraction: {extraction_method}"
+
+        # Content: the extracted/described information
         if desc:
-            t += f"\n{desc}"
-        t += "]"
+            t += f"\n\nExtracted content:\n{desc}"
+            t += "\n\nNote: If you have specialized tools for analyzing this content,"
+            t += " you can:"
+            t += "\n  • Use the blob reference to retrieve raw data if needed"
+            t += "\n  • Apply your own analysis tools for custom extraction"
+            t += "\n  • Combine your analysis with the provided extraction"
+        else:
+            t += "\n\nWarning: Extraction failed or produced empty result."
+            t += "\n  • Check if a specialized tool is available for this content type"
+
+        t += "\n]"
         return {"type": "text", "text": t}
 
     for (h, _, mime, sz), d in zip(images, descs):
-        out.append(_bt(h, mime, sz, "image", d))
+        extraction = "Vision model (description via Groq/similar)"
+        out.append(_bt(h, mime, sz, "image", d, extraction))
+
     for (h, _, mime, sz), d in zip(audios, aresults):
-        out.append(_bt(h, mime, sz, "audio file", d))
+        extraction = "Speech-to-text (Whisper/similar transcription)"
+        out.append(_bt(h, mime, sz, "audio", d, extraction))
+
     for (h, _, mime, sz), d in zip(files, fresults):
-        out.append(_bt(h, mime, sz, "file", d))
+        extraction = "PDF text extraction"
+        out.append(_bt(h, mime, sz, "document", d, extraction))
+
     return out
 
 
@@ -500,3 +533,69 @@ async def _describe_pdf(valkey, desc_key: str, raw: str) -> str:
     if desc:
         await _store_desc(valkey, desc_key, desc)
     return desc
+
+
+def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
+    """Inject system message explaining blob extraction and tool availability.
+
+    When the proxy auto-extracts content (describes images, transcribes audio,
+    extracts PDF text), it sends the extracted information in the message.
+    This system message tells the model:
+
+    1. Content was auto-extracted from blobs (multimodal content the model can't process)
+    2. The model can choose to use its own specialized tools for alternative analysis
+    3. How to access the blob reference if needed for custom processing
+
+    This allows models with specialized tools (PDF parsers, image recognition,
+    audio analysis) to decide whether to use the proxy's extraction or invoke
+    their own tools for custom or more accurate analysis.
+
+    Returns:
+        messages with injected system message if blobs detected, otherwise unchanged
+    """
+    # Check if any message contains blob references (extracted content)
+    has_blobs = False
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            if "[Content provided:" in content or f"[{BLOB_PREFIX}:" in content:
+                has_blobs = True
+                break
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    if "[Content provided:" in part["text"]:
+                        has_blobs = True
+                        break
+        if has_blobs:
+            break
+
+    if not has_blobs:
+        return messages
+
+    # Check if system message already exists
+    has_system = any(m.get("role") == "system" for m in messages)
+
+    system_message = (
+        "**Blob Content Processing Guide**\n\n"
+        "Some of the content in this conversation was auto-extracted from multimodal files "
+        "(images, audio, PDFs) that the current model cannot process natively. "
+        "The proxy has automatically:\n"
+        "  • Described images using vision models\n"
+        "  • Transcribed audio using speech-to-text\n"
+        "  • Extracted text from PDFs\n\n"
+        "**If you have specialized tools available**, you can:\n"
+        "  1. Use the blob reference (format: BLOB:hash:mimetype) to access raw data\n"
+        "  2. Apply your own analysis for custom extraction or more detailed processing\n"
+        "  3. Combine your specialized analysis with the provided extraction\n\n"
+        "The extracted content is provided as text context above. "
+        "Use your tools if you need alternative analysis or higher precision."
+    )
+
+    # Insert system message at the beginning if not already present
+    if has_system:
+        # System message exists, don't add another (user may have custom instructions)
+        return messages
+    else:
+        # Add as first message
+        return [{"role": "system", "content": system_message}] + messages
