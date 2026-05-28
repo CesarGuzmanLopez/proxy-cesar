@@ -150,10 +150,19 @@ async def _handle_streaming_with_db(
         pm_schema = config.pseudo_models[resolved_model]
 
     # Detect capabilities in incoming messages
+    content_details = []
+    for i, msg in enumerate(messages):
+        content = msg.get("content")
+        if isinstance(content, list):
+            part_types = [part.get("type", "?") for part in content]
+            content_details.append(f"msg{i}:list[{','.join(part_types)}]")
+        elif isinstance(content, str):
+            content_details.append(f"msg{i}:str")
+        else:
+            content_details.append(f"msg{i}:{type(content).__name__}")
     logger.info(
-        "messages_format_check count=%d content_types=%s",
-        len(messages),
-        [msg.get("content", {}) if isinstance(msg.get("content"), dict) else "list" if isinstance(msg.get("content"), list) else type(msg.get("content")).__name__ for msg in messages]
+        "messages_structure_detailed content_info=%s",
+        " | ".join(content_details)
     )
     turn_caps = detect_turn_capabilities(messages, tools)
 
