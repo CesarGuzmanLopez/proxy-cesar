@@ -363,7 +363,7 @@ def _build_re_inject_stream(
             # Re-raise to avoid silent failure — the client will see the error
             raise
 
-    return _wrapper
+    return _wrapper()
 
 
 # ── Middleware ────────────────────────────────────────────────────────────────
