@@ -22,17 +22,17 @@
 ## Los 10 Pseudo-Modelos
 
 | # | Pseudo-modelo | Primary (Go) | Fallback(s) | Tools | Visión | Límite |
-|---|---|---|---|---|---|---|
-| 1 | `normal` | kimi-k2.5 | deepseek-v4-flash | strict | — | 500K |
-| 2 | `pensamiento-profundo-caro` | qwen3.7-max | deepseek-v4-pro | strict | — | 120K |
-| 3 | `tareas-avanzadas` | kimi-k2.6 | v4-pro → v4-flash | strict | — | 200K |
-| 4 | `codigo-preciso` | mimo-v2-pro | mimo-v2.5-pro → v4-flash | strict | — | 200K |
-| 5 | `vision` | mimo-v2-omni | llama-4-scout (Groq) | sí | ✅ | 120K |
-| 6 | `pensamiento-rapido` | qwen3.6-plus | deepseek-v4-flash | sí | — | 120K |
-| 7 | `normal-gratis` | nemotron (OpenRouter) | qwen3-32b (Groq) | no | — | 200K |
-| 8 | `massive-fast` | minimax-m2.7 | gpt-oss-20b (Groq) | sí | — | 131K |
-| 9 | `flash-lowcost` | qwen3.5-plus | deepseek-v4-flash | sí | — | 128K |
-| 10 | `compactador` | glm-5.1 | gpt-oss-20b → v4-flash | sí | — | 3M |
+|---|---|---|---|---|---|---|---|
+| 1 | `normal` | kimi-k2.5 (256K) | deepseek-v4-flash (1M) | strict | — | 256K |
+| 2 | `pensamiento-profundo-caro` | qwen3.7-max (1M) | deepseek-v4-pro (1M) | strict | — | 120K |
+| 3 | `tareas-avanzadas` | kimi-k2.6 (256K) | v4-pro → v4-flash | strict | — | 256K |
+| 4 | `codigo-preciso` | mimo-v2.5-pro (1M) | mimo-v2-pro → v4-flash | strict | — | 1M |
+| 5 | `vision` | llama-4-scout (Groq, 131K) | mimo-v2-omni (256K) | sí | ✅ | 120K |
+| 6 | `pensamiento-rapido` | qwen3.6-plus (1M) | deepseek-v4-flash (1M) | sí | — | 120K |
+| 7 | `normal-gratis` | nemotron (OpenRouter, 1M) | qwen3-32b (Groq, 131K) | no | — | 131K |
+| 8 | `massive-fast` | minimax-m2.7 (192K) | gpt-oss-20b (Groq, 131K) | sí | — | 131K |
+| 9 | `flash-lowcost` | qwen3.5-plus (1M) | deepseek-v4-flash (1M) | sí | — | 128K |
+| 10 | `compactador` | glm-5.1 (198K) | gpt-oss-20b → v4-flash | sí | — | 3M |
 
 **Model Aliases:** `gpt-4o`/`gpt-4o-mini` → `normal` · `o3` → `pensamiento-profundo-caro` · `o4-mini` → `pensamiento-rapido` · `gemini-2.5-flash` → `vision` · `gemini-2.5-pro`/`claude-sonnet-4` → `codigo-preciso` · `claude-haiku-3-5` → `flash-lowcost` · `default` → `normal`
 
@@ -80,7 +80,6 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 | `PROXY_API_KEY` | — | Bearer token (vacío = dev mode) |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./proxy.db` | SQLite |
 | `VALKEY_URL` | `valkey://localhost:6380` | Redis nativo |
-| `KEYCLAW_ENABLED` | `false` | Deshabilitado |
 | `OPENCODE_API_KEY` | — | OpenCode Go (primary) |
 | `DEEPSEEK_API_KEY` | — | Fallbacks |
 | `GROQ_API_KEY` | — | Groq |
@@ -102,7 +101,36 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 
 **Blob Vault:** Contenido no soportado por el modelo (imágenes en modelo sin visión) → describe con modelo helper → pasa descripción al LLM.
 
-**Compactación:** No automática. Si el input supera el umbral → `400 INPUT_EXCEEDS_THRESHOLD` con sugerencia de usar `POST /conversations/{id}/compact`.
+**Compactación:** No automática. Si el input supera el umbral → error `400 context_length_exceeded` (formato OpenAI) con sugerencia de compactar.
+
+## Arquitectura: Sin Rehidratación de Contexto
+
+El proxy **nunca reconstruye** el historial de conversación desde la base de datos. El cliente (opencode, Continue, etc.) envía el contexto completo en cada request. Esto es una decisión de diseño deliberada:
+
+- ❌ **Rehidratación desde DB** causaba duplicación de mensajes: 6 mensajes del cliente se convertían en 59 tras cargar el historial = 128K tokens inflados → `ALL_MODELS_FAILED`
+- ✅ **El cliente manda el contexto completo** — los clientes modernos ya gestionan su propio historial
+- ✅ **DB solo para auditoría**, compactación, blobs y afinidad
+
+### Cómo se decide qué se envía al LLM
+
+1. Mensajes del cliente (tal cual llegan, con contexto completo)
+2. Si el modelo físico no soporta el contenido (imagen sin visión, etc.) → content delegation reemplaza blobs por descripciones textuales
+3. `estimate_tokens` se ejecuta **después** de la delegación (paso 2), midiendo lo que realmente se manda al LLM
+4. `context_alert` compara `historial_en_DB + petición_actual` contra `context_window` del pseudo-modelo
+5. Si excede → error `400 context_length_exceeded` (formato OpenAI)
+
+### Content Delegation
+
+Cuando el modelo seleccionado no puede procesar un tipo de contenido directamente:
+
+| Tipo | Acción | Modelo helper |
+|------|--------|---------------|
+| Imagen | → descripción textual | Groq visión |
+| Audio | → transcripción | Whisper |
+| PDF | → extracción de texto | interno |
+| DOCX | → extracción de texto | interno |
+
+Cada descripción se **trunca** al tamaño del archivo original (`sz KB → sz × 1024 chars` como máximo), para evitar que la delegación infle el contexto más que el binario original. Mínimo 500 chars de descripción útil.
 
 ## Deploy
 
@@ -116,23 +144,27 @@ GitHub Actions en cada push a `main`:
 
 **Secrets:** `PLATA_HOST` · `PLATA_USER` · `PLATA_SSH_KEY` · `OPENCODE_API_KEY` · `GROQ_API_KEY` · `DEEPSEEK_API_KEY` · `OPENROUTER_API_KEY` · `PRUNA_API_KEY` · `PROXY_API_KEY`
 
-## Errores del Sistema
+## Errores del Sistema (formato OpenAI)
 
-| Código | Error | Causa |
+Todos los errores se devuelven en formato estándar OpenAI:
+
+```json
+{"error": {"message": "...", "type": "invalid_request_error", "param": null, "code": "context_length_exceeded"}}
+```
+
+| HTTP | `code` | Causa |
 |---|---|---|
-| 400 | `INPUT_EXCEEDS_THRESHOLD` | Input > límite del pseudo-modelo |
-| 400 | `IMAGES_NOT_SUPPORTED_BY_PSEUDO_MODEL` | Imagen en modelo sin visión |
-| 400 | `PARALLEL_TOOLS_NOT_SUPPORTED` | Sin parallel tools |
-| 409 | `PSEUDO_MODEL_INCOMPATIBLE` | Switch bloqueado por capacidades |
-| 413 | `CONTEXT_TOO_LARGE_FOR_ALL_MODELS` | Todos los físicos excedidos |
-| 429 | `RATE_LIMIT_EXCEEDED` | Límite de tasa |
-| 502 | `ALL_MODELS_FAILED` | Todos los físicos fallaron |
-| 502 | `PROXY_ERROR` | Error interno |
+| 400 | `context_length_exceeded` | Input + historial > context_window |
+| 400 | `unsupported_parameters` | Parallel tools no soportados |
+| 429 | `rate_limit_exceeded` | Límite de tasa por pseudo-modelo |
+| 503 | `server_error` | Todos los físicos fallaron |
+| 502 | `server_error` | Error interno del proxy |
 
 ## Documentación Relacionada
 
 - [`proxy/README.md`](proxy/README.md) — Documentación técnica del proxy
+- [`CLAUDE.md`](CLAUDE.md) — Guía de arquitectura para AI agents
 - [`diagramas.md`](diagramas.md) — Diagramas de arquitectura (Mermaid)
-- [`BUG_VERIFICATION_FLOW.md`](BUG_VERIFICATION_FLOW.md) — Historias de usuario + comandos de verificación
+- [`python.md`](python.md) — Convenciones de código Python
 - [`README-plata.md`](README-plata.md) — Reglas del servidor de producción
 - [`proxy/pseudo_models.yaml`](proxy/pseudo_models.yaml) — Configuración fuente de los 10 modelos
