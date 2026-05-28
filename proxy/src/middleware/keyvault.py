@@ -440,7 +440,8 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         # ── Call handler ──────────────────────────────────────────────────
         response = await call_next(request)
 
-        # ── Re-inject for non-streaming ───────────────────────────────────
         if isinstance(response, StreamingResponse):
+            logger.info("keyvault_streaming_return trace=%s", _trace)
             return response
+        logger.info("keyvault_nonstreaming_return trace=%s type=%s", _trace, type(response).__name__)
         return await _re_inject_non_streaming(response, secrets, _trace)

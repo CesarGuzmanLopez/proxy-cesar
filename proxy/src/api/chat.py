@@ -99,6 +99,7 @@ async def chat_completions(
         try:
             modified_raw = _json.loads(fastapi_request.state._keyvault_body)
             request = ChatRequest.model_validate(modified_raw)
+            logger.info("keyvault_handler request sanitized")
         except Exception:
             pass
 
