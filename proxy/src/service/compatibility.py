@@ -5,15 +5,15 @@ in the incoming request. Unsupported content is routed to the Blob
 Vault for transformation (images, audio, PDF) or rejected (video).
 
 python.md §4: pure functions with explicit Result monad.
+python.md §3: errors as data in domain, exceptions at boundary.
 """
-
-from fastapi import HTTPException
 
 from src.config.pseudo_models import (
     PseudoModelSchema,
     ProxyConfigSchema,
 )
 from src.domain.capabilities import TurnCapabilities
+from src.domain.errors import ParallelToolsNotSupported
 
 
 def validate_incoming_content(
@@ -73,7 +73,9 @@ def validate_incoming_content(
         return result
 
     # Parallel tools → model without parallel support
-    _check_parallel_tools_support(turn_caps, phys, pseudo_model_name, config)
+    parallel_error = _check_parallel_tools_support(turn_caps, phys, pseudo_model_name, config)
+    if parallel_error is not None:
+        raise ValueError(f"ParallelToolsNotSupported: {parallel_error}")
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────
@@ -104,32 +106,20 @@ def _check_parallel_tools_support(
     physical_models: list,
     pseudo_model_name: str,
     config,
-) -> None:
-    """Raise HTTPException if parallel tools are not supported."""
+) -> ParallelToolsNotSupported | None:
+    """Check if parallel tools are supported.
+
+    Returns ParallelToolsNotSupported error if parallel tools are required
+    but not supported by the pseudo-model. Returns None if OK.
+    """
     if not turn_caps.has_parallel_tools:
-        return
+        return None
 
     has_parallel = any(m.parallel_tools for m in physical_models)
     if has_parallel:
-        return
+        return None
 
-    parallel_pseudos = [
-        name
-        for name, pm in config.pseudo_models.items()
-        if any(m.parallel_tools for m in pm.physical_models)
-    ]
-    raise HTTPException(
-        status_code=400,
-        detail={
-            "error": "PARALLEL_TOOLS_NOT_SUPPORTED_BY_PSEUDO_MODEL",
-            "message": (
-                f"Pseudo-model '{pseudo_model_name}' has no physical models "
-                f"with parallel_tools: true. The incoming request contains "
-                f"parallel tool calls that cannot be processed."
-            ),
-            "remediation": [
-                f"Switch to a pseudo-model with parallel tool support: {parallel_pseudos}",
-                "Use POST /conversations/{id}/normalize-tools to serialize parallel calls (Sprint 3)",
-            ],
-        },
+    return ParallelToolsNotSupported(
+        pseudo_model=pseudo_model_name,
+        has_parallel_tools=turn_caps.has_parallel_tools,
     )

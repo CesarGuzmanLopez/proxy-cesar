@@ -10,24 +10,21 @@ Sprint 3: +canonical tool storage, tiktoken, thinking blocks, tool edge cases.
 Sprint 4: +pre-compaction, continuous compaction, external compaction detection.
 """
 
-# NOTE: HTTPException is raised from this service layer instead of returning
-# Result[Err] as python.md §3 recommends. This is INTENTIONAL technical debt:
-# - Refactoring to Result monad would require changing 20+ callers and tests
-# - The system functions correctly as-is
-# - The conversion is low-risk and can be done incrementally in a future sprint
-# - Only _raise_if_exceeds_threshold and _raise_if_context_unusable raise directly;
-#   the majority of error handling uses the Result monad pattern correctly.
+# ── Service layer uses Result monad for domain errors ──────────────────────
+# HTTPException is only raised at the router boundary, not in service logic.
+# python.md §3: errors as data in domain, exceptions at boundary.
 
 import logging
 import time
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy.orm import selectinload
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation
 from src.domain.affinity import AffinityPort
+from src.domain.ports import AsyncSessionPort
+from src.domain.types import Result, Ok, Err
+from src.domain.errors import InputExceedsThreshold, ContextUnusable
 from src.api.metrics import metrics
 from src.config.pseudo_models import ProxyConfigSchema, PseudoModelSchema
 from src.domain.capabilities import SessionCapabilities
@@ -68,10 +65,10 @@ __all__ = [
     "_resolve_and_validate",
     "_parse_uuid",
     "_resolve_session_conv_and_models",
-    "_raise_if_exceeds_threshold",
+    "_check_input_threshold",
     "_apply_content_delegation",
     "_build_command_chat_result",
-    "_raise_if_context_unusable",
+    "_check_context_usable",
     "_extract_cmd_name",
     "evaluate_router_suggestion",
     # Re-exports
@@ -96,7 +93,7 @@ async def process_chat_request(
     stream: bool,
     config: ProxyConfigSchema,
     affinity: AffinityPort,
-    db: AsyncSession,
+    db: AsyncSessionPort,
     temperature: float | None = None,
     max_tokens: int | None = None,
     tools: list[dict] | None = None,
@@ -177,7 +174,22 @@ async def process_chat_request(
 
     # Step 12: Check input threshold
     est_input = estimate_tokens(messages_for_llm)
-    _raise_if_exceeds_threshold(est_input, pm_schema, pseudo_model_name, config)
+    threshold_check = _check_input_threshold(
+        est_input, pm_schema, pseudo_model_name, config
+    )
+    match threshold_check:
+        case Err(error=err):
+            # Log and re-raise for router to handle
+            logger.error(
+                "req_failed | trace=%s reason=input_exceeds_threshold "
+                "estimated=%d threshold=%d",
+                _req_id,
+                err.estimated,
+                err.threshold,
+            )
+            raise ValueError(f"InputExceedsThreshold: {err}")
+        case Ok():
+            pass  # Threshold OK
 
     active_messages = messages_for_llm
 
@@ -187,7 +199,19 @@ async def process_chat_request(
         context_window=pm_schema.context_window,
         conversation_id=conv_id,
     )
-    _raise_if_context_unusable(context_alert, conv, pm_schema, conv_id)
+    context_check = _check_context_usable(context_alert, conv, pm_schema, conv_id)
+    match context_check:
+        case Err(error=err):
+            logger.error(
+                "req_failed | trace=%s reason=context_unusable "
+                "context_tokens=%d context_window=%d",
+                _req_id,
+                err.context_tokens,
+                err.context_window,
+            )
+            raise ValueError(f"ContextUnusable: {err}")
+        case Ok():
+            pass  # Context is usable
 
     # Sprint 5: Router LLM — evaluate complexity (non-blocking, never changes model)
     router_suggestion: dict | None = await evaluate_router_suggestion(
@@ -366,7 +390,7 @@ def _parse_uuid(conv_id: str) -> uuid.UUID:
 
 
 async def _resolve_session_conv_and_models(
-    db: AsyncSession,
+    db: AsyncSessionPort,
     affinity: AffinityPort,
     conv_id: str,
     conv_uuid: uuid.UUID,
@@ -436,13 +460,17 @@ async def _resolve_session_conv_and_models(
     )
 
 
-def _raise_if_exceeds_threshold(
+def _check_input_threshold(
     estimated_input: int,
     pm_schema: PseudoModelSchema,
     pseudo_model_name: str,
     config: ProxyConfigSchema,
-) -> None:
-    """Step 12: Raise 400 if input exceeds threshold (auto-compaction removed)."""
+) -> Result[None, InputExceedsThreshold]:
+    """Step 12: Check if input exceeds threshold.
+
+    Returns Ok(None) if within threshold, Err(InputExceedsThreshold) otherwise.
+    Uses domain error instead of raising HTTPException.
+    """
     check = check_input_threshold(
         pseudo_model_name=pseudo_model_name,
         input_token_threshold=pm_schema.input_token_threshold,
@@ -451,20 +479,8 @@ def _raise_if_exceeds_threshold(
     )
     if not check.success:
         error = check.error
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "INPUT_EXCEEDS_THRESHOLD",
-                "message": (
-                    f"Input ({error.estimated} tokens) exceeds threshold "
-                    f"({error.threshold} tokens) for pseudo-model "
-                    f"'{pm_schema.display_name}'."
-                ),
-                "suggestions": _suggest_higher_threshold_models(
-                    config, error.estimated
-                ),
-            },
-        )
+        return Err(error)
+    return Ok(None)
 
 
 # ── Content delegation ────────────────────────────────────────────────────────
@@ -493,27 +509,27 @@ async def _apply_content_delegation(
 # ── Context guard ─────────────────────────────────────────────────────────────
 
 
-def _raise_if_context_unusable(context_alert, conv, pm_schema, conv_id: str) -> None:
-    """Raise HTTPException if context is unusable."""
+def _check_context_usable(
+    context_alert,
+    conv,
+    pm_schema,
+    conv_id: str,
+) -> Result[None, ContextUnusable]:
+    """Check if conversation context is usable.
+
+    Returns Ok(None) if context is usable, Err(ContextUnusable) otherwise.
+    Uses domain error instead of raising HTTPException.
+    """
     if context_alert.alert_level != "unusable":
-        return
-    raise HTTPException(
-        status_code=400,
-        detail={
-            "error": "CONTEXT_UNUSABLE",
-            "message": context_alert.warning,
-            "context_tokens": conv.total_tokens if conv else 0,
-            "context_window": pm_schema.context_window,
-            "remediation": {
-                "action": "compact",
-                "endpoint": f"POST /conversations/{conv_id}/compact",
-                "description": (
-                    "Compact the conversation history into a snapshot. "
-                    "Original history is preserved."
-                ),
-            },
-        },
+        return Ok(None)
+
+    error = ContextUnusable(
+        conversation_id=conv_id,
+        context_tokens=conv.total_tokens if conv else 0,
+        context_window=pm_schema.context_window,
+        warning_message=context_alert.warning,
     )
+    return Err(error)
 
 
 # ── Command result builder ────────────────────────────────────────────────────

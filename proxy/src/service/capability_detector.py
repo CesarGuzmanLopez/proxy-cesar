@@ -13,10 +13,10 @@ import uuid
 
 import tiktoken
 from sqlalchemy import update
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation
 from src.domain.capabilities import SessionCapabilities, TurnCapabilities
+from src.domain.ports import AsyncSessionPort
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ def detect_turn_capabilities(
 
 
 async def load_session_capabilities(
-    db: AsyncSession,
+    db: AsyncSessionPort,
     conversation_id: uuid.UUID,
     total_tokens: int = 0,
 ) -> SessionCapabilities:
@@ -133,7 +133,7 @@ async def load_session_capabilities(
 
 
 async def accumulate_capabilities(
-    db: AsyncSession,
+    db: AsyncSessionPort,
     conversation_id: uuid.UUID,
     turn_caps: TurnCapabilities,
     existing: SessionCapabilities,

@@ -8,11 +8,11 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from litellm.types.utils import ModelResponse
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation
 from src.config.pseudo_models import PseudoModelSchema
 from src.domain.capabilities import SessionCapabilities, TurnCapabilities
+from src.domain.ports import AsyncSessionPort
 from src.service.context_alert import ContextAlert
 from src.service.pipeline_trace import PipelineTrace
 
@@ -46,7 +46,7 @@ class StreamContext:
     context_alert: ContextAlert | None = None
     cache_metadata: dict | None = None
     images_degraded_manually: bool = False
-    db: AsyncSession | None = None
+    db: AsyncSessionPort | None = None
     conv: Conversation | None = None
     conv_uuid: UUID | None = None
     turn_caps: TurnCapabilities | None = None
@@ -71,7 +71,7 @@ class StreamContext:
 class SaveContext:
     """Context for saving a turn and returning ChatResult — reduces params from 23 to 1."""
 
-    db: AsyncSession
+    db: AsyncSessionPort
     conv: Conversation
     conv_uuid: UUID
     conv_id: str

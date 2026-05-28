@@ -16,9 +16,9 @@ import re
 import uuid
 
 from sqlalchemy import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationTurn
+from src.domain.ports import AsyncSessionPort
 from src.service.capability_detector import load_session_capabilities
 
 _COMMAND_RE = re.compile(r"^[/@]?(\b(?:status|help)\b)\s*(.*)", re.IGNORECASE)
@@ -43,7 +43,7 @@ class InlineCommandResult:
 async def handle_inline_command(
     messages: list[dict],
     conversation_id: str | None,
-    db: AsyncSession,
+    db: AsyncSessionPort,
 ) -> InlineCommandResult:
     last_msg = _find_last_user_message(messages)
     if last_msg is None:
@@ -73,7 +73,7 @@ async def handle_inline_command(
 
 async def _handle_status(
     conversation_id: str | None,
-    db: AsyncSession,
+    db: AsyncSessionPort,
 ) -> InlineCommandResult:
     if not conversation_id:
         return InlineCommandResult(

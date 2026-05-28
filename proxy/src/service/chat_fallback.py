@@ -10,7 +10,6 @@ import time
 import uuid
 
 
-from fastapi import HTTPException
 from litellm.types.utils import ModelResponse
 from litellm.exceptions import (
     AuthenticationError,
@@ -32,6 +31,8 @@ from src.adapters.cache.provider_cache import (
 from src.adapters.litellm import call_litellm
 from src.config.pseudo_models import PhysicalModelSchema
 from src.config.settings import settings as _global_settings
+from src.domain.types import Result, Ok, Err
+from src.domain.errors import ContextTooLargeForAllModels, AllModelsFailed
 from src.service.capability_detector import estimate_tokens
 from src.service.chat_models import FallbackInfo
 
@@ -321,8 +322,8 @@ def _build_context_too_large_error(
     _context_skipped: list[str],
     _trace_id: str,
     elapsed: float,
-) -> HTTPException:
-    """Build 413 error when all models are skipped due to context."""
+) -> ContextTooLargeForAllModels:
+    """Build domain error when all models are skipped due to context."""
     logger.error(
         "llm_fail   | trace=%s elapsed=%.1fs reason=all_context_too_large "
         "input_est=%d models=%s",
@@ -331,24 +332,10 @@ def _build_context_too_large_error(
         _est_input,
         _context_skipped,
     )
-    return HTTPException(
-        status_code=413,
-        detail={
-            "error": "CONTEXT_TOO_LARGE_FOR_ALL_MODELS",
-            "message": (
-                f"The conversation ({_est_input:,} tokens) exceeds the "
-                f"context window of all remaining models in "
-                f"'{pseudo_model_schema.display_name}'. "
-                f"Type 'compact' or '/compact' in your message to compact."
-            ),
-            "estimated_tokens": _est_input,
-            "remediation": {
-                "action": "compact",
-                "description": "Compact the conversation into a snapshot.",
-                "command": "/compact",
-            },
-            "context_skipped": _context_skipped,
-        },
+    return ContextTooLargeForAllModels(
+        estimated_tokens=_est_input,
+        context_skipped=_context_skipped,
+        pseudo_model=pseudo_model_schema.display_name or "unknown",
     )
 
 
@@ -357,20 +344,12 @@ def _build_all_models_failed_error(
     pseudo_model_schema,
     last_error: Exception | None,
     context_skipped_note: str,
-) -> HTTPException:
-    """Build 503 error when all models failed (not just skipped)."""
-    return HTTPException(
-        status_code=503,
-        detail={
-            "error": "ALL_MODELS_FAILED",
-            "message": (
-                f"All {len(fallback_info.attempted_models)} model(s) for "
-                f"pseudo-model '{pseudo_model_schema.display_name}' failed"
-                f"{context_skipped_note}."
-            ),
-            "attempted": fallback_info.attempted_models,
-            "last_error": str(last_error),
-        },
+) -> AllModelsFailed:
+    """Build domain error when all models failed (not just skipped)."""
+    return AllModelsFailed(
+        pseudo_model=pseudo_model_schema.display_name or "unknown",
+        attempted=fallback_info.attempted_models,
+        last_error=str(last_error),
     )
 
 
@@ -585,9 +564,10 @@ async def call_with_fallback(
         return response_dict, fallback_info
 
     if len(_context_skipped) == len(pseudo_model_schema.physical_models):
-        raise _build_context_too_large_error(
+        error = _build_context_too_large_error(
             _est_input, pseudo_model_schema, _context_skipped, _trace_id, elapsed
         )
+        raise ValueError(f"ContextTooLargeForAllModels: {error}")
 
     context_skipped_note = ""
     if _context_skipped:
@@ -600,6 +580,7 @@ async def call_with_fallback(
         fallback_info.attempted_models,
         last_error,
     )
-    raise _build_all_models_failed_error(
+    error = _build_all_models_failed_error(
         fallback_info, pseudo_model_schema, last_error, context_skipped_note
     )
+    raise ValueError(f"AllModelsFailed: {error}")

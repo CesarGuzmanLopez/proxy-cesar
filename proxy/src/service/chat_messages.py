@@ -6,10 +6,9 @@ image description when switching from vision to non-vision models.
 
 import logging
 
-from sqlmodel.ext.asyncio.session import AsyncSession
-
 from src.adapters.db.models import Conversation, ConversationTurn
 from src.config.pseudo_models import PseudoModelSchema, ProxyConfigSchema
+from src.domain.ports import AsyncSessionPort
 from src.service.multimedia.image_describer import auto_describe_images
 
 logger = logging.getLogger(__name__)
@@ -192,7 +191,7 @@ async def handle_auto_describe(
     current_pseudo_name: str,
     new_pm_schema: PseudoModelSchema,
     config: ProxyConfigSchema,
-    db: AsyncSession,
+    db: AsyncSessionPort,
     pinned_physical_model: str,
     in_flight_messages: list[dict] | None = None,
 ) -> tuple[list[dict] | None, dict | None]:

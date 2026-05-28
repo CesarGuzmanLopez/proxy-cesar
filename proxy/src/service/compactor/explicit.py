@@ -5,19 +5,24 @@ Reuses existing ConversationSnapshot table with snapshot_type="explicit".
 For histories >500K tokens, dispatches to arq for async processing.
 
 python.md §7: async-first.
-python.md §3: HTTPException at boundary, Result monad in service layer.
+python.md §3: errors as data in domain, exceptions at boundary.
 """
 
 import json
 import logging
 import uuid
 
-from fastapi import HTTPException
 from sqlalchemy import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
 from src.adapters.litellm import call_litellm
+from src.domain.errors import (
+    ConversationNotFound,
+    EmptyConversation,
+    HistoryTooLargeForCompactor,
+    CompactionFailed,
+)
+from src.domain.ports import AsyncSessionPort
 from src.service.capability_detector import estimate_tokens
 from src.service.compactor.prompts import build_explicit_compaction_prompt
 
@@ -123,7 +128,7 @@ async def _run_compaction_sync(
     compactor_model: str,
     all_messages: list[dict],
     total_tokens: int,
-    db: AsyncSession,
+    db: AsyncSessionPort,
     config,
     conv: Conversation | None = None,
     api_base: str | None = None,
@@ -186,14 +191,13 @@ async def _run_compaction_sync(
             compactor_model,
             exc,
         )
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "COMPACTION_FAILED",
-                "message": f"Compactor model failed: {exc}",
-                "compactor_model": compactor_model,
-            },
+        # Return domain error - router will convert to HTTPException
+        error = CompactionFailed(
+            conversation_id=conversation_id,
+            compactor_model=compactor_model,
+            reason=str(exc),
         )
+        raise ValueError(f"CompactionFailed: {error}")
 
     # ── Create snapshot ONLY after API call succeeds ───────────────────
     new_snapshot = ConversationSnapshot(
@@ -249,7 +253,7 @@ async def _run_compaction_sync(
 
 async def compact_conversation(
     conversation_id: str,
-    db: AsyncSession,
+    db: AsyncSessionPort,
     config,
     arq_pool=None,
     valkey=None,
@@ -273,10 +277,9 @@ async def compact_conversation(
     conv_uuid = _parse_uuid(conversation_id)
     conv = await db.get(Conversation, conv_uuid)
     if not conv:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "CONVERSATION_NOT_FOUND"},
-        )
+        # Return domain error - router will convert to HTTPException
+        error = ConversationNotFound(conversation_id=conversation_id)
+        raise ValueError(f"ConversationNotFound: {error}")
 
     _trace = str(uuid.uuid4())[:8]
     logger.info(
@@ -294,13 +297,9 @@ async def compact_conversation(
     turns = result.scalars().all()
 
     if not turns:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "EMPTY_CONVERSATION",
-                "message": "Nothing to compact.",
-            },
-        )
+        # Return domain error - router will convert to HTTPException
+        error = EmptyConversation(conversation_id=conversation_id)
+        raise ValueError(f"EmptyConversation: {error}")
 
     # Reconstruct full history
     all_messages: list[dict] = []
@@ -331,17 +330,12 @@ async def compact_conversation(
                 for m in compactador_pm.physical_models
                 if not getattr(m, "audio", False)
             )
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "HISTORY_TOO_LARGE_FOR_COMPACTOR",
-                "message": (
-                    f"No compactador model has a context window large enough "
-                    f"for {total_tokens} tokens."
-                ),
-                "max_compactor_window": max_window,
-            },
+        # Return domain error - router will convert to HTTPException
+        error = HistoryTooLargeForCompactor(
+            total_tokens=total_tokens,
+            max_compactor_window=max_window,
         )
+        raise ValueError(f"HistoryTooLargeForCompactor: {error}")
 
     compactor_model = compactor_phys.model
     api_base = compactor_phys.api_base or None
