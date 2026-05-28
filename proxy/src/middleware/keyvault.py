@@ -429,30 +429,18 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             "yes" if valkey else "no",
         )
 
-        # ── Override body via request._receive (don't set request._body!) ──
+        # ── Create a new Request with modified body ────────────────────────
         modified_body = json.dumps(body).encode()
-        # Remove cached body so next call reads from our overridden _receive
-        try:
-            del request._body
-        except AttributeError:
-            pass
-        _used = False
-
-        async def _override_receive():
-            nonlocal _used
-            if _used:
-                return {"type": "http.disconnect"}
-            _used = True
-            return {
-                "type": "http.request",
-                "body": modified_body,
-                "more_body": False,
-            }
-
-        request._receive = _override_receive
+        from starlette.requests import Request as StarletteRequest
+        modified_request = StarletteRequest(
+            scope=request.scope,
+            receive=request._receive,
+        )
+        # Set the modified body as the cached body
+        modified_request._body = modified_body
 
         # ── Call handler ──────────────────────────────────────────────────
-        response = await call_next(request)
+        response = await call_next(modified_request)
 
         # ── Re-inject for non-streaming ───────────────────────────────────
         if isinstance(response, StreamingResponse):
