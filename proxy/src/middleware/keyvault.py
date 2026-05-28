@@ -366,7 +366,7 @@ def _build_re_inject_stream(
     return _wrapper()
 
 
-# ── ASGI Middleware (not BaseHTTPMiddleware — breaks streaming) ───────────────
+# ── Middleware ────────────────────────────────────────────────────────────────
 
 
 class KeyVaultMiddleware(BaseHTTPMiddleware):
@@ -374,10 +374,7 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
 
     Only activates for POST /v1/chat/completions.
     Always masks secrets in-memory. Persists to Valkey when available.
-    Re-injects real values in non-streaming responses.
-
-    Uses request._receive override instead of request._body to avoid
-    breaking streaming responses with BaseHTTPMiddleware.
+    Re-injects real values in both streaming and non-streaming responses.
     """
 
     async def dispatch(self, request, call_next):
@@ -396,24 +393,39 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
 
         # ── Detect + mask secrets (always, in-memory) ─────────────────────
         raw_cid = body.get("conversation_id")
-        conversation_id = raw_cid or str(
-            uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(body, sort_keys=True))
-        )
+        if raw_cid:
+            conversation_id = raw_cid
+        else:
+            conversation_id = str(
+                uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(body, sort_keys=True))
+            )
         secrets: dict[str, str] = {}
+
         _mask_messages(body, secrets)
 
         if not secrets:
+            # No secrets found → pass through unmodified
             return await call_next(request)
 
         # ── Persist to Valkey (best-effort, non-blocking) ─────────────────
         valkey = getattr(request.app.state, "valkey", None)
         if valkey:
             import asyncio
-            asyncio.create_task(
+
+            task = asyncio.create_task(
                 _store_secrets(valkey, conversation_id, secrets, _trace)
             )
+            # Keep reference to prevent premature garbage collection
+            if not hasattr(request.app.state, "_kv_tasks"):
+                request.app.state._kv_tasks = set()
+            request.app.state._kv_tasks.add(task)
+            task.add_done_callback(request.app.state._kv_tasks.discard)
 
         # ── Inject system prompt so LLM knows about placeholders ──────────
+        # Bug 8 fix: insert AFTER any existing system messages to preserve
+        # canonical order (system messages first, in order). Placing at
+        # position 0 would put our prompt before the original system prompt,
+        # potentially confusing the model.
         msgs = body.setdefault("messages", [])
         insert_pos = 0
         for i, m in enumerate(msgs):
@@ -421,6 +433,13 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
                 break
             insert_pos = i + 1
         msgs.insert(insert_pos, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
+        # ── Store secrets in request.state for handler to use ─────────────
+        # Do NOT set request._body — it breaks streaming responses.
+        # The handler reads request.state.keyvault_secrets and applies masking.
+        modified_body = json.dumps(body).encode()
+        request.state.keyvault_secrets = secrets
+        request.state._keyvault_body = modified_body
+
         logger.info(
             "keyvault_active trace=%s conv=%s secrets=%d valkey=%s",
             _trace,
@@ -429,19 +448,10 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             "yes" if valkey else "no",
         )
 
-        # ── Store modified body in request.state (NOT request._body!) ─────
-        # Setting request._body breaks streaming responses with BaseHTTPMiddleware.
-        # Instead, we store the modified body and secrets in request.state so
-        # the handler can read them without touching request._body at all.
-        modified_body = json.dumps(body).encode()
-        request.state.keyvault_secrets = secrets
-        request.state._keyvault_body = modified_body
-
         # ── Call handler ──────────────────────────────────────────────────
         response = await call_next(request)
 
+        # ── Re-inject for non-streaming ───────────────────────────────────
         if isinstance(response, StreamingResponse):
-            logger.info("keyvault_streaming_return trace=%s", _trace)
             return response
-        logger.info("keyvault_nonstreaming_return trace=%s type=%s", _trace, type(response).__name__)
         return await _re_inject_non_streaming(response, secrets, _trace)

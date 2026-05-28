@@ -93,16 +93,6 @@ async def chat_completions(
     db = app_state.db_session_factory()
     affinity = app_state.affinity
 
-    # If KeyVault middleware modified the body, use sanitized version
-    if hasattr(fastapi_request.state, "_keyvault_body"):
-        import json as _json
-        try:
-            modified_raw = _json.loads(fastapi_request.state._keyvault_body)
-            request = ChatRequest.model_validate(modified_raw)
-            logger.info("keyvault_handler request sanitized")
-        except Exception:
-            pass
-
     # Determine conversation ID
     conversation_id = request.conversation_id or str(uuid.uuid4())
     request_id = str(uuid.uuid4())[:8]  # Unique ID for this request
@@ -127,6 +117,18 @@ async def chat_completions(
 
     # Prepare messages as dicts
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
+
+    # If KeyVault middleware sanitized the body, use the sanitized messages
+    # (avoids BaseHTTPMiddleware + request._body streaming issue)
+    if hasattr(fastapi_request.state, "_keyvault_body"):
+        try:
+            import json as _json
+            sanitized = _json.loads(fastapi_request.state._keyvault_body)
+            sanitized_msgs = sanitized.get("messages", [])
+            if sanitized_msgs:
+                messages = sanitized_msgs
+        except Exception:
+            pass
 
     # Log full request details including message content
     _msg_summaries = []
