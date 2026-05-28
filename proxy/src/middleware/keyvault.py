@@ -450,6 +450,15 @@ class KeyVaultMiddleware:
         # ── Build modified request ────────────────────────────────────────
         modified_body = json.dumps(body).encode()
 
+        # Update content-length in scope headers to match modified body
+        new_headers = []
+        for k, v in scope.get("headers", []):
+            if k.lower() == b"content-length":
+                new_headers.append((k, str(len(modified_body)).encode()))
+            else:
+                new_headers.append((k, v))
+        scope["headers"] = new_headers
+
         _body_sent = False
 
         async def _modified_receive():
@@ -461,13 +470,8 @@ class KeyVaultMiddleware:
                     "body": modified_body,
                     "more_body": False,
                 }
-            # Return disconnect after body is consumed
             return {"type": "http.disconnect"}
 
-        # ── Call inner app with modified receive, original send ────────────
-        # For re-injection: streaming chunks will contain [KEYVAULT:hash]
-        # placeholders that the client should handle. The middleware only
-        # re-injects for non-streaming via _re_inject_recursive in the handler.
         await self.app(scope, _modified_receive, send)
 
     async def _passthrough(self, scope, body_bytes, original_receive, send):
