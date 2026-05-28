@@ -23,15 +23,28 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 DESCRIPTION_PROMPT: str = (
-    "Describe this image in detail for a text-only AI model. "
-    "Include: what is shown, layout, visible text, colors, "
-    "key elements, and any technical details (UI, code, diagram). "
-    "Be thorough but concise — max 200 words."
+    "Analyze this image exhaustively for a text-only AI model. "
+    "You must:\n"
+    "1. Extract ALL visible text exactly as it appears (including text that is crossed out, "
+    "strikethrough, handwritten, annotations, side notes, headers, footers, watermarks, labels). "
+    "Preserve the original language and exact spelling.\n"
+    "2. Describe the image in rich detail: overall scene, objects, people, actions, "
+    "expressions, clothing, environment, lighting, colors, composition, perspective, "
+    "spatial relationships, style (photograph, illustration, screenshot, diagram, chart, etc.).\n"
+    "3. For UI/code/diagrams: describe layout, structure, hierarchy, interactive elements, "
+    "data visualizations, axes, legends, trends, values shown.\n"
+    "4. Note any imperfections: blur, glare, artifacts, damage, low resolution areas.\n"
+    "5. If there are multiple panels/sections, describe each separately.\n\n"
+    "Format your response with clear sections:\n"
+    "[EXTRACTED TEXT]: All visible text verbatim\n"
+    "[DESCRIPTION]: Detailed visual description\n"
+    "[TECHNICAL DETAILS]: Format, layout, data if applicable"
 )
 """Prompt sent to the vision model for each image.
 
-Designed for completeness (covers visual + technical details) and
-conciseness (max 200 words to avoid bloating the context).
+Designed for exhaustive text extraction (including crossed-out/strikethrough text)
+and comprehensive visual description. The model is instructed to preserve exact text
+including annotations and handwritten notes.
 """
 
 MAX_TOKENS_PER_IMAGE: int = 512
@@ -65,7 +78,8 @@ def _extract_image_metadata(url: str) -> dict:
                 b64_data = url.split("base64,")[1]
                 # Each base64 char represents ~6 bits, ~4 chars = 3 bytes
                 estimated_bytes = (len(b64_data) * 3) // 4
-                metadata["estimated_size_kb"] = round(estimated_bytes / 1024, 1)
+                metadata["estimated_size_kb"] = str(round(estimated_bytes / 1024, 1))
+                metadata["source"] = "uploaded_image"
         except Exception:
             pass
     else:
@@ -84,6 +98,16 @@ def _extract_image_metadata(url: str) -> dict:
             elif "gif" in url.lower():
                 metadata["format"] = "GIF"
                 metadata["mime_type"] = "image/gif"
+
+            # Extract filename from URL path
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            path = parsed.path
+            if path:
+                filename = path.split("/")[-1]
+                if filename and "." in filename:
+                    metadata["filename"] = filename
+                    metadata["source"] = "url"
         except Exception:
             pass
 
@@ -313,22 +337,39 @@ async def auto_describe_images(
         from src.service.multimedia.image_processor import degrade_image
 
         # Build instruction with user context
-        instruction = "Describe each image briefly (1-2 sentences)."
+        instruction = (
+            "Analyze each image exhaustively for a text-only AI model. For EACH image you must:\n"
+            "1. Extract ALL visible text verbatim (including crossed out, strikethrough, "
+            "handwritten, annotations, headers, footers, labels, watermarks). "
+            "Preserve exact spelling and original language.\n"
+            "2. Provide rich visual description: scene, objects, people, actions, expressions, "
+            "clothing, environment, lighting, colors, composition, style, spatial relationships.\n"
+            "3. For UI/code/diagrams: layout, structure, hierarchy, interactive elements, "
+            "data values, axes, legends, trends.\n"
+            "4. Note imperfections: blur, glare, artifacts, damage.\n"
+            "5. Multiple panels: describe each separately.\n\n"
+            "Format per image:\n"
+            "[EXTRACTED TEXT]: All visible text\n"
+            "[DESCRIPTION]: Detailed visual description\n"
+            "[TECHNICAL DETAILS]: Format, layout, data"
+        )
         if user_prompt:
-            instruction += f"\n\nUser context: {user_prompt}"
+            instruction += f"\n\nUser context / what the user is asking about: {user_prompt}"
 
         if len(uncached) > 1:
             instruction += (
                 "\n\nReturn a JSON object with:"
-                '\n- "descriptions": array of strings (one per image, in order)'
-                '\n- "summary": brief synthesis (2-3 sentences) noting similarities or patterns'
-                '\n\nExample: {"descriptions": ["A login screen", "A chart"], '
-                '"summary": "Both are UI elements..."}'
+                '\n- "descriptions": array of strings (one per image, in order, each containing '
+                "the full analysis with [EXTRACTED TEXT], [DESCRIPTION], [TECHNICAL DETAILS])"
+                '\n- "summary": synthesis (2-3 sentences) noting relationships, patterns, or comparisons'
+                '\n\nExample: {"descriptions": ["[EXTRACTED TEXT]: ...\\n[DESCRIPTION]: ...", '
+                '"[EXTRACTED TEXT]: ...\\n[DESCRIPTION]: ..."], '
+                '"summary": "Both images show..."}'
             )
         else:
             instruction += (
                 "\n\nReturn a JSON array of strings in the order the images were sent. "
-                'Example: ["A login screen"]'
+                'Example: ["[EXTRACTED TEXT]: ...\\n[DESCRIPTION]: ...\\n[TECHNICAL DETAILS]: ..."]'
             )
 
         batch_content: list[dict] = [
