@@ -109,6 +109,11 @@ jobs:
             pip install --quiet --upgrade pip setuptools wheel
             pip install --quiet --no-cache-dir ".[dev]"
 
+            # ── 4.5. Clean Python cache to force recompilation ──────
+            echo "[deploy] Clearing Python bytecode cache..."
+            find "$REPO_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+            find "$REPO_DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
+
             # ── 5. Write .env (owned by proxy) ────────────────────
             echo "[deploy] Writing .env..."
             sudo tee .env > /dev/null <<-EOF
