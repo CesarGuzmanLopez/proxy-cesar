@@ -27,14 +27,14 @@ from src.domain.types import Result, Ok, Err
 from src.domain.errors import InputExceedsThreshold, ContextUnusable
 from src.api.metrics import metrics
 from src.config.pseudo_models import ProxyConfigSchema, PseudoModelSchema
-from src.domain.capabilities import SessionCapabilities
+from src.domain.capabilities import SessionCapabilities, TurnCapabilities
 from src.service.capability_detector import (
     detect_turn_capabilities,
     estimate_tokens,
     load_session_capabilities,
 )
 from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
-from src.service.compatibility import validate_incoming_content
+from src.service.compatibility import validate_incoming_content, validate_physical_model_content
 from src.service.context_alert import ContextAlert, get_context_alert
 from src.service.model_resolver import (
     build_passthrough_pseudo_model,
@@ -118,16 +118,13 @@ async def process_chat_request(
         stream,
     )
 
-    # Step 1-3: Resolve model + detect capabilities + validate content
-    pseudo_model_name, pm_schema, turn_caps, delegation = _resolve_and_validate(
+    # Step 1-3: Resolve model and detect capabilities (no content validation yet)
+    # Content validation happens AFTER physical model selection
+    pseudo_model_name, pm_schema, turn_caps = _resolve_and_validate(
         model,
         messages,
         tools,
         config,
-    )
-    # Apply image→tool delegation or blob storage for unsupported content
-    messages = await _apply_content_delegation(
-        delegation, messages, conversation_id, affinity, valkey, config
     )
     # Sprint 8: track request metrics
     metrics.record_request(pseudo_model_name)
@@ -140,6 +137,7 @@ async def process_chat_request(
         session_caps,
         physical_model,
         provider,
+        selected_phys_model,
         tools_filter,
         conv,
         is_new,
@@ -151,6 +149,17 @@ async def process_chat_request(
         pseudo_model_name,
         pm_schema,
     )
+
+    # NEW: Validate that the SELECTED physical model can handle the incoming content
+    # (this happens AFTER model selection, not before like the old logic)
+    delegation = validate_physical_model_content(turn_caps, selected_phys_model)
+
+    # Apply image→tool delegation or blob storage for unsupported content
+    # (based on the ACTUAL model's capabilities, not the pseudo-model's)
+    messages = await _apply_content_delegation(
+        delegation, messages, conversation_id, affinity, valkey, config
+    )
+
     # Sprint 5: Auto-describe images on pseudo-model switch
     auto_describe_meta: dict | None = None
     messages_for_llm: list[dict] = messages  # May be replaced by described version
@@ -374,12 +383,14 @@ def _resolve_and_validate(
     messages: list[dict],
     tools: list[dict] | None,
     config: ProxyConfigSchema,
-) -> tuple[str, object, SessionCapabilities, dict | None]:
-    """Steps 1-3: Normalize model, detect capabilities, validate content.
+) -> tuple[str, object, TurnCapabilities]:
+    """Steps 1-3: Normalize model and detect capabilities.
 
-    If the model name is not a known pseudo-model, creates a direct passthrough.
-    Returns (resolved_model, pseudo_model, capabilities, delegation_signal).
-    delegation_signal is None if OK, or dict with "action": "delegate_images" etc.
+    Note: Content validation is deferred until AFTER physical model selection
+    to ensure we validate against the actual model that will handle the request,
+    not just any model in the pseudo-model.
+
+    Returns (resolved_model, pseudo_model_schema, turn_capabilities).
     """
     resolved = normalize_model_name(model, config)
     if resolved not in config.pseudo_models:
@@ -387,8 +398,7 @@ def _resolve_and_validate(
     else:
         pm = config.pseudo_models[resolved]
     caps = detect_turn_capabilities(messages, tools)
-    delegation = validate_incoming_content(caps, pm, resolved, tools)
-    return resolved, pm, caps, delegation
+    return resolved, pm, caps
 
 
 def _parse_uuid(conv_id: str) -> uuid.UUID:
@@ -468,6 +478,7 @@ async def _resolve_session_conv_and_models(
         session_caps,
         physical,
         provider,
+        selected_phys,
         {"applied": tools_filter_applied, "reason": tools_filter_reason},
         conv,
         is_new,

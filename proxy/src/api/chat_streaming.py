@@ -29,7 +29,7 @@ from src.service.capability_detector import (
     estimate_tokens,
     load_session_capabilities,
 )
-from src.service.compatibility import validate_incoming_content
+from src.service.compatibility import validate_physical_model_content
 from src.service.model_resolver import (
     build_passthrough_pseudo_model,
     normalize_model_name,
@@ -152,18 +152,6 @@ async def _handle_streaming_with_db(
     # Detect capabilities in incoming messages
     turn_caps = detect_turn_capabilities(messages, tools)
 
-    # Validate incoming content and get delegation signal
-    delegation = validate_incoming_content(turn_caps, pm_schema, resolved_model, tools)
-
-    # Apply content delegation (images → descriptions, audio → transcriptions, etc.)
-    if delegation:
-        from src.service.tool_detector import replace_base64_with_blob_refs
-
-        valkey_client = getattr(affinity, "_client", None)
-        messages = await replace_base64_with_blob_refs(
-            messages, conversation_id, valkey_client, config
-        )
-
     # Resolve conversation ID
     try:
         conv_uuid = uuid.UUID(conversation_id)
@@ -223,12 +211,25 @@ async def _handle_streaming_with_db(
     # Create or get existing conversation
     existing_affinity = await affinity.get(conversation_id)
 
-    physical_model, provider = _resolve_physical_model(
+    physical_model, provider, selected_phys_model = _resolve_physical_model(
         existing_affinity,
         session_caps,
         eligible_models,
         pm_schema,
     )
+
+    # NEW: Validate that the SELECTED physical model can handle the incoming content
+    # (this happens AFTER model selection, not before like the old logic)
+    delegation = validate_physical_model_content(turn_caps, selected_phys_model)
+
+    # Apply content delegation (images → descriptions, audio → transcriptions, etc.)
+    if delegation:
+        from src.service.tool_detector import replace_base64_with_blob_refs
+
+        valkey_client = getattr(affinity, "_client", None)
+        messages = await replace_base64_with_blob_refs(
+            messages, conversation_id, valkey_client, config
+        )
 
     if is_new:
         conv = Conversation(

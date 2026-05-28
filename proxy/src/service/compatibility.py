@@ -120,3 +120,35 @@ def _check_parallel_tools_support(
         pseudo_model=pseudo_model_name,
         has_parallel_tools=turn_caps.has_parallel_tools,
     )
+
+
+def validate_physical_model_content(
+    turn_caps: TurnCapabilities,
+    physical_model,
+) -> dict | None:
+    """Validate if a SPECIFIC physical model can handle the incoming content.
+
+    Used AFTER physical model selection to determine if content delegation
+    (image description, audio transcription, etc.) is needed.
+
+    Args:
+        turn_caps: Detected capabilities in the turn
+        physical_model: The specific PhysicalModelSchema that will handle the request
+
+    Returns:
+      - None if the physical model can handle all content
+      - {"action": "transform_unsupported"} if content needs delegation
+    """
+    checks = [
+        ("has_images", "vision"),
+        ("has_audio", "audio"),
+        ("has_pdf", "vision"),
+        ("has_video", "video"),
+    ]
+
+    for cap_attr, phys_attr in checks:
+        if getattr(turn_caps, cap_attr, False):
+            if not getattr(physical_model, phys_attr, False):
+                return {"action": "transform_unsupported"}
+
+    return None

@@ -39,8 +39,11 @@ def _resolve_physical_model(
     session_caps,
     eligible_models: list,
     pm_schema,
-) -> tuple[str, str | None]:
-    """Resolve physical model + provider based on affinity, caps, and eligibility."""
+) -> tuple[str, str | None, object]:
+    """Resolve physical model + provider based on affinity, caps, and eligibility.
+
+    Returns: (physical_model_name: str, provider: str | None, selected_phys_obj: PhysicalModelSchema)
+    """
     pinned_model = existing_affinity
     if pinned_model and session_caps.has_parallel_tools:
         from src.service.tool_filter import is_pinned_model_eligible
@@ -56,7 +59,7 @@ def _resolve_physical_model(
         selected_phys = eligible_models[0]
     else:
         selected_phys = pm_schema.physical_models[0]
-    return selected_phys.model, selected_phys.provider
+    return selected_phys.model, selected_phys.provider, selected_phys
 
 
 def _filter_eligible_models(
