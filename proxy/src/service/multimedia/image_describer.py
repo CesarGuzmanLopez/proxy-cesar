@@ -292,6 +292,10 @@ async def auto_describe_images(
     uncached: list[dict] = []
     for ref in unique_refs:
         url_hash = hashlib.sha256(ref["url"].encode()).hexdigest()[:16]
+        # Extract metadata for ALL images (cached or not)
+        metadata = _extract_image_metadata(ref["url"])
+        metadata_cache[ref["url"]] = metadata
+
         cached_desc: str | None = None
         if valkey is not None:
             try:
@@ -346,6 +350,7 @@ async def auto_describe_images(
             metadata_cache[ref["url"]] = metadata
 
         batch_tokens: int = 0
+        general_summary: str | None = None
         try:
             response = await call_litellm(
                 model=vision_model,
@@ -385,7 +390,6 @@ async def auto_describe_images(
                     text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
                 try:
                     parsed = json_mod.loads(text)
-                    general_summary: str | None = None
 
                     if isinstance(parsed, list):
                         # Format: ["desc1", "desc2", ...]
@@ -462,11 +466,17 @@ async def auto_describe_images(
                 url_cache[ref["url"]] = desc
                 total_tokens += tokens
 
-    # Build modified message list (shallow copy list, deep copy only modified msgs)
-    # Optimization: avoid deepcopy of entire list if only a few messages change
+    # Build modified message list - deepcopy all messages that will be modified
+    # to avoid corrupting the caller's original conversation history
     modified_indices: set[int] = {
         ref["msg_idx"] for ref in refs if url_cache.get(ref["url"])
     }
+    # Also include the last image message if general summary will be added
+    if general_summary and len([r for r in refs if url_cache.get(r["url"])]) > 1:
+        last_img_msg_idx = max([ref["msg_idx"] for ref in refs]) if refs else -1
+        if last_img_msg_idx >= 0:
+            modified_indices.add(last_img_msg_idx)
+
     modified: list[dict] = [
         deepcopy(msg) if i in modified_indices else msg
         for i, msg in enumerate(messages)
@@ -483,7 +493,7 @@ async def auto_describe_images(
         tag: str = f"[{TAG_PREFIX} #{described_count} — described by {vision_model}]"
         full_text: str = f"{tag}\n\n{description}"
 
-        # Add metadata if available
+        # Add metadata if available (from cache, works for all images)
         meta = metadata_cache.get(ref["url"])
         if meta:
             meta_lines = []
