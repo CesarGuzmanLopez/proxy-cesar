@@ -702,9 +702,7 @@ async def _stream_response_generator(ctx: StreamContext):
                         )
 
                     # Convert chunk to dict ONCE — reuse for all processing
-                    logger.info("STREAM_DEBUG_1 converting chunk to dict")
                     chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
-                    logger.info("STREAM_DEBUG_2 chunk converted, normalizing")
 
                     if (
                         fr == "length"
@@ -714,17 +712,13 @@ async def _stream_response_generator(ctx: StreamContext):
                         # Suppress "length" — set to null so client continues
                         if chunk_dict.get("choices"):
                             chunk_dict["choices"][0]["finish_reason"] = None
-                        logger.info("STREAM_DEBUG_5 yielding length-suppressed chunk")
                         yield f"data: {json.dumps(chunk_dict)}\n\n"
-                        logger.info("STREAM_DEBUG_6 after yield (length path)")
                         finish_reason = "length"
                         break
 
                     # Normalize chunk: if content is null but reasoning_content exists, copy it
                     normalise_stream_chunk(chunk_dict)
-                    logger.info("STREAM_DEBUG_3 before yield, chunk has content=%s", bool(chunk_dict.get("choices")))
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
-                    logger.info("STREAM_DEBUG_4 after yield")
 
                     if fr:
                         finish_reason = fr
