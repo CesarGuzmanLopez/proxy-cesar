@@ -717,7 +717,7 @@ async def _stream_response_generator(ctx: StreamContext):
                         break
 
                     # Normalize chunk: if content is null but reasoning_content exists, copy it
-                    normalise_stream_chunk(chunk_dict)
+                    # normalise_stream_chunk(chunk_dict)  # TEMP: Disabled to test if this breaks streaming
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
 
                     if fr:
