@@ -156,14 +156,22 @@ async def _handle_streaming_with_db(
         if isinstance(content, list):
             part_types = [part.get("type", "?") for part in content]
             content_details.append(f"msg{i}:list[{','.join(part_types)}]")
+            # Also log first 100 chars of each part to see what's inside
+            for j, part in enumerate(content):
+                text_preview = ""
+                if part.get("type") == "text" and "text" in part:
+                    preview = str(part.get("text", ""))[:100]
+                    text_preview = f" preview='{preview}'"
+                elif part.get("type") == "image":
+                    text_preview = f" image_data_len={len(str(part.get('image', '')))}"
+                logger.info(
+                    "message_part_detail msg=%d part=%d type=%s%s",
+                    i, j, part.get("type", "?"), text_preview
+                )
         elif isinstance(content, str):
             content_details.append(f"msg{i}:str")
         else:
             content_details.append(f"msg{i}:{type(content).__name__}")
-    logger.info(
-        "messages_structure_detailed content_info=%s",
-        " | ".join(content_details)
-    )
     turn_caps = detect_turn_capabilities(messages, tools)
 
     # Resolve conversation ID
