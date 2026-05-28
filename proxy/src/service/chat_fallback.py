@@ -566,10 +566,11 @@ async def call_with_fallback(
                     error=str(e)[:100],
                 )
             logger.warning(
-                "llm_fallback | trace=%s model=%s error=%s elapsed=%.1fs",
+                "llm_fallback | trace=%s model=%s error=%s detail=%s elapsed=%.1fs",
                 _trace_id,
                 phys.model,
                 type(e).__name__,
+                str(e)[:200],
                 elapsed,
             )
             continue
