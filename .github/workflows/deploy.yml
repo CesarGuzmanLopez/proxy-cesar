@@ -126,22 +126,24 @@ jobs:
             find "$REPO_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
             find "$REPO_DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
 
-            # ── 5. Write .env with secrets (use printenv for SSH env vars) ─
+            # ── 5. Write .env with secrets ──────────────────────────
+            # GitHub evaluates ${{ secrets.X }} before sending the script to SSH,
+            # so the actual secret values get embedded directly in the heredoc.
             echo "[deploy] Writing .env..."
-            sudo tee .env > /dev/null <<-EOF
+            sudo tee .env > /dev/null <<-ENVEOF
             PROXY_HOST=0.0.0.0
             PROXY_PORT=9110
-            PROXY_API_KEY=$(printenv PROXY_API_KEY || echo "")
+            PROXY_API_KEY=${{ secrets.PROXY_API_KEY }}
             DATABASE_URL=sqlite+aiosqlite:///./proxy.db
-            VALKEY_URL=$(printenv VALKEY_URL || echo "valkey://localhost:6380")
-            DEEPSEEK_API_KEY=$(printenv DEEPSEEK_API_KEY || echo "")
-            GROQ_API_KEY=$(printenv GROQ_API_KEY || echo "")
-            OPENROUTER_API_KEY=$(printenv OPENROUTER_API_KEY || echo "")
-            OPENCODE_API_KEY=$(printenv OPENCODE_API_KEY || echo "")
-            PRUNA_API_KEY=$(printenv PRUNA_API_KEY || echo "")
-            DISABLED_PROVIDERS=$(printenv DISABLED_PROVIDERS || echo "")
-            LOG_FILE=$(printenv LOG_FILE || echo "/var/log/proxy-cesar/proxy.log")
-            EOF
+            VALKEY_URL=${{ secrets.VALKEY_URL || 'valkey://localhost:6380' }}
+            DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}
+            GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+            OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+            OPENCODE_API_KEY=${{ secrets.OPENCODE_API_KEY }}
+            PRUNA_API_KEY=${{ secrets.PRUNA_API_KEY }}
+            DISABLED_PROVIDERS=${{ vars.DISABLED_PROVIDERS || '' }}
+            LOG_FILE=${{ vars.LOG_FILE || '/var/log/proxy-cesar/proxy.log' }}
+            ENVEOF
 
             sudo chmod 600 .env
             sudo chown "${PROXY_USER}:${PROXY_USER}" .env
