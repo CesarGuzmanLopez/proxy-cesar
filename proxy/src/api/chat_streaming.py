@@ -150,6 +150,11 @@ async def _handle_streaming_with_db(
         pm_schema = config.pseudo_models[resolved_model]
 
     # Detect capabilities in incoming messages
+    logger.info(
+        "messages_format_check count=%d content_types=%s",
+        len(messages),
+        [msg.get("content", {}) if isinstance(msg.get("content"), dict) else "list" if isinstance(msg.get("content"), list) else type(msg.get("content")).__name__ for msg in messages]
+    )
     turn_caps = detect_turn_capabilities(messages, tools)
 
     # Resolve conversation ID
