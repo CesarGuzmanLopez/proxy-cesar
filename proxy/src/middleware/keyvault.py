@@ -449,12 +449,15 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
 
         # ── Re-inject real values ─────────────────────────────────────────
         if isinstance(response, StreamingResponse):
+            headers = dict(response.headers)
+            # Remove Content-Length for streaming responses — FastAPI will use Transfer-Encoding: chunked
+            headers.pop("content-length", None)
             return StreamingResponse(
                 content=_build_re_inject_stream(
                     response.body_iterator, secrets, _trace
                 )(),
                 status_code=response.status_code,
-                headers=dict(response.headers),
+                headers=headers,
                 media_type=response.media_type,
             )
 
