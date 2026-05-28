@@ -262,6 +262,42 @@ async def _try_extract_pdf_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
+async def _try_extract_docx_text(base64_data: str) -> str:
+    """Extract text from a base64-encoded DOCX file (offloaded to thread pool)."""
+
+    def _sync_extract() -> str:
+        try:
+            from docx import Document
+            from io import BytesIO
+
+            docx_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
+            doc = Document(BytesIO(docx_bytes))
+
+            # Extract text from paragraphs
+            text_parts = [para.text for para in doc.paragraphs if para.text.strip()]
+            text = "\n".join(text_parts)
+            text = text.strip()
+
+            size_kb = len(docx_bytes) // 1024
+            para_count = len(doc.paragraphs)
+            table_count = len(doc.tables)
+
+            meta = f"[DOCX: {para_count} paragraphs, {table_count} tables, {size_kb} KB."
+
+            if text:
+                if len(text) > _CONTENT_PREVIEW_MAX:
+                    remainder = len(text) - _CONTENT_PREVIEW_MAX
+                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
+                return f"{meta}\n\n{text}]"
+            return f"{meta} Could not extract text from document.]"
+        except ImportError:
+            return "[DOCX: Could not process — python-docx library not available.]"
+        except Exception as exc:
+            return f"[DOCX could not parse: {str(exc)[:100]}]"
+
+    return await asyncio.to_thread(_sync_extract)
+
+
 def _classify_content_parts(  # noqa: S3776 — multiple content types × multiple formats
     content: list,
 ) -> tuple[
@@ -390,7 +426,13 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
         out.append(_bt(h, mime, sz, "audio", d, extraction))
 
     for (h, _, mime, sz), d in zip(files, fresults):
-        extraction = "PDF text extraction"
+        # Determine extraction method based on MIME type
+        if "pdf" in mime.lower():
+            extraction = "PDF text extraction"
+        elif "wordprocessingml" in mime.lower() or "word" in mime.lower():
+            extraction = "DOCX text extraction"
+        else:
+            extraction = "Document text extraction"
         out.append(_bt(h, mime, sz, "document", d, extraction))
 
     return out
@@ -436,7 +478,9 @@ async def _process_msg_blobs(
         await asyncio.gather(
             *[
                 _describe_pdf(valkey, f"{prefix}:{h}:desc", r)
-                for h, r, _, _ in file_blobs
+                if "pdf" in mime.lower()
+                else _describe_docx(valkey, f"{prefix}:{h}:desc", r)
+                for h, r, mime, _ in file_blobs
             ]
         )
         if file_blobs
@@ -569,6 +613,20 @@ async def _describe_pdf(valkey, desc_key: str, raw: str) -> str:
     return desc
 
 
+async def _describe_docx(valkey, desc_key: str, raw: str) -> str:
+    """Extract DOCX text if not already cached."""
+    try:
+        cached = await valkey.get(desc_key)
+        if cached:
+            return cached
+    except Exception as exc:
+        logger.warning("blob_docx_cache_error key=%s err=%s", desc_key, exc)
+    desc = await _try_extract_docx_text(raw)
+    if desc:
+        await _store_desc(valkey, desc_key, desc)
+    return desc
+
+
 def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     """Inject system message explaining blob extraction and tool availability.
 
@@ -613,11 +671,11 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     system_message = (
         "**Blob Content Processing Guide**\n\n"
         "Some of the content in this conversation was auto-extracted from multimodal files "
-        "(images, audio, PDFs) that the current model cannot process natively. "
+        "(images, audio, PDFs, Word documents) that the current model cannot process natively. "
         "The proxy has automatically:\n"
         "  • Described images using vision models\n"
         "  • Transcribed audio using speech-to-text\n"
-        "  • Extracted text from PDFs\n\n"
+        "  • Extracted text from PDFs and Word documents (DOCX)\n\n"
         "**If you have specialized tools available**, you can:\n"
         "  1. Use the blob reference (format: BLOB:hash:mimetype) to access raw data\n"
         "  2. Apply your own analysis for custom extraction or more detailed processing\n"
