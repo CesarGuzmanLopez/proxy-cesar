@@ -154,8 +154,27 @@ async def process_chat_request(
     # (this happens AFTER model selection, not before like the old logic)
     delegation = validate_physical_model_content(turn_caps, selected_phys_model)
 
+    # Debug logging for content delegation
+    logger.info(
+        "content_validation trace=%s conv=%s model=%s has_images=%s model_vision=%s delegation=%s",
+        _req_id,
+        conversation_id[:12],
+        physical_model,
+        getattr(turn_caps, "has_images", False),
+        getattr(selected_phys_model, "vision", False),
+        bool(delegation),
+    )
+
     # Apply image→tool delegation or blob storage for unsupported content
     # (based on the ACTUAL model's capabilities, not the pseudo-model's)
+    if delegation:
+        logger.info(
+            "content_delegation_applying trace=%s conv=%s model=%s action=%s",
+            _req_id,
+            conversation_id[:12],
+            physical_model,
+            delegation.get("action"),
+        )
     messages = await _apply_content_delegation(
         delegation, messages, conversation_id, affinity, valkey, config
     )
