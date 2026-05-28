@@ -112,6 +112,7 @@ jobs:
             # ── 5. Write .env (owned by proxy) ────────────────────
             echo "[deploy] Writing .env..."
             sudo tee .env > /dev/null <<-EOF
+            PROXY_HOST=0.0.0.0
             PROXY_PORT=9110
             PROXY_API_KEY=${PROXY_API_KEY}
             DATABASE_URL=sqlite+aiosqlite:///./proxy.db
