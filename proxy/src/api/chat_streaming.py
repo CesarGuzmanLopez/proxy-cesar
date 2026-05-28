@@ -727,13 +727,10 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                         finish_reason = "length"
                         break
 
-                    # Normalize chunk: if content is null but reasoning_content exists, copy it
+                    # Pass reasoning_content through as-is — clients that support it
+                    # (opencode, Continue) display it in a separate thinking section.
+                    # The normalise_stream_chunk is intentionally a no-op for this reason.
                     normalise_stream_chunk(chunk_dict)
-
-                    # Remove reasoning_content after normalization
-                    for choice in chunk_dict.get("choices", []):
-                        if isinstance(choice, dict) and "delta" in choice:
-                            choice["delta"].pop("reasoning_content", None)
 
                     # Re-inject secrets: replace [KEYVAULT:hash] with real values
                     if keyvault_secrets:
@@ -744,10 +741,8 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                 chunk_json = chunk_json.replace(placeholder, real_value)
                         chunk_dict = json.loads(chunk_json)
 
-                    # Final safeguard: remove reasoning_content with regex before sending
-                    chunk_json = json.dumps(chunk_dict)
-                    chunk_json = re.sub(r', "reasoning_content": "[^"]*"', '', chunk_json)
-                    yield f"data: {chunk_json}\n\n"
+                    # Use chunk_dict (may have keyvault secrets re-injected)
+                    yield f"data: {json.dumps(chunk_dict)}\n\n"
 
                     if fr:
                         finish_reason = fr

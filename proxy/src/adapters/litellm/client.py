@@ -132,35 +132,15 @@ def _extract_response_headers(response) -> dict:
 
 
 def normalise_stream_chunk(chunk) -> None:
-    """Normalise a streaming chunk in-place so that ``content`` is never empty.
+    """No-op: reasoning_content stays in its own field, content stays clean.
 
-    Some providers (GLM via OpenRouter, DeepSeek, Kimi K2.5 in chain-of-thought mode)
-    emit the assistant response in ``delta.reasoning_content`` instead of
-    ``delta.content``, leaving ``delta.content`` as ``None`` for every chunk.
-
-    If content is None but reasoning_content has a value, copy it to content
-    so the client receives visible response instead of empty content.
-    Always remove reasoning_content from the response so the client never sees it.
-
-    The function is a no-op for chunks that lack ``reasoning_content``.
+    Previously this function copied reasoning_content into content and removed it,
+    which caused reasoning and response text to be mixed together in the client.
+    
+    Now we keep the chunk as-is: reasoning_content stays separate so clients that
+    support it (opencode, Continue, etc.) display it in a thinking/expander section.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    if not chunk or "choices" not in chunk:
-        return
-
-    for choice in chunk.get("choices", []):
-        delta = choice.get("delta", {})
-        if "reasoning_content" in delta:
-            logger.debug(f"normalise_stream_chunk: found reasoning_content={delta.get('reasoning_content')[:50]}")
-            # If content is empty but reasoning_content has value, copy it
-            if delta.get("content") is None and delta.get("reasoning_content"):
-                delta["content"] = delta["reasoning_content"]
-            # Always remove reasoning_content so client never sees it
-            if "reasoning_content" in delta:
-                del delta["reasoning_content"]
-                logger.debug("normalise_stream_chunk: deleted reasoning_content")
+    pass
 
 
 def setup_litellm(settings: Settings) -> None:
