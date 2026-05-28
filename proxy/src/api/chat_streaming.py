@@ -483,7 +483,7 @@ async def _handle_streaming_with_db(
                 pseudo_model=resolved_model,
                 physical_model=physical_model,
                 fallback_info=fallback_info,
-                affinity_maintained=not is_new and existing_affinity == physical_model,
+                affinity_maintained=not is_new and existing_affinity == physical_model and not fallback_info.applied,
                 context_window=pm_schema.context_window,
                 session_caps=session_caps,
                 compatibility_warning=None,

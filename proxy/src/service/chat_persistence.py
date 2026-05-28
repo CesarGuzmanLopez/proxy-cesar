@@ -230,8 +230,14 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
     if ctx.fallback_info.applied:
         metrics.record_fallback(ctx.fallback_info.reason or "unknown")
 
+    # Affinity maintained only if:
+    # 1. Not a new conversation
+    # 2. Existing affinity model matches current physical model
+    # 3. No fallback occurred (fallback breaks affinity even if end result matches)
     affinity_maintained = (
-        not ctx.is_new_conversation and ctx.existing_affinity == ctx.physical_model
+        not ctx.is_new_conversation
+        and ctx.existing_affinity == ctx.physical_model
+        and not ctx.fallback_info.applied
     )
 
     return ChatResult(
