@@ -427,6 +427,8 @@ async def _stream_response_generator(ctx: StreamContext):
     appends the accumulated content as an assistant message, and seamlessly
     continues streaming from the next model.
     """
+    import uuid
+    stream_id = str(uuid.uuid4())[:8]  # Unique ID for this streaming session
     chunks: list = []
     db = ctx.db
 
@@ -440,7 +442,8 @@ async def _stream_response_generator(ctx: StreamContext):
     tool_calls_by_index: dict[int, dict] = {}
 
     logger.info(
-        "stream_gen_start conv=%s physical=%s models_available=%d",
+        "stream_gen_start stream_id=%s conv=%s physical=%s models_available=%d",
+        stream_id,
         ctx.conversation_id[:12],
         ctx.physical_model,
         len(phys_models),
@@ -760,7 +763,17 @@ async def _stream_response_generator(ctx: StreamContext):
     finally:
         # Always send [DONE] to signal end of stream, even if metadata failed
         try:
+            logger.info(
+                "stream_sending_done_marker conv=%s physical=%s stream_id=%s",
+                ctx.conversation_id[:12],
+                ctx.physical_model,
+                stream_id,
+            )
             yield "data: [DONE]\n\n"
+            logger.debug(
+                "stream_done_marker_sent conv=%s",
+                ctx.conversation_id[:12],
+            )
         except Exception as e:
             logger.warning(
                 "stream_done_yield_error conv=%s error=%s",

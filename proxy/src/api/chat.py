@@ -95,9 +95,20 @@ async def chat_completions(
 
     # Determine conversation ID
     conversation_id = request.conversation_id or str(uuid.uuid4())
+    request_id = str(uuid.uuid4())[:8]  # Unique ID for this request
 
     # Create request trace for observability
     trace = PipelineTrace.create(conversation_id, request.model)
+
+    logger.info(
+        "chat_request_received request_id=%s conv=%s model=%s stream=%s messages=%d",
+        request_id,
+        conversation_id[:12],
+        request.model,
+        request.stream,
+        len(request.messages),
+    )
+
     trace.proxy_in(
         messages_count=len(request.messages),
         tools_count=len(request.tools) if request.tools else 0,
@@ -143,7 +154,13 @@ async def chat_completions(
         # Streaming path: session lifecycle is managed inside _handle_streaming
         # because _stream_response_generator runs lazily after this function returns.
         # The generator needs the session to persist the turn after streaming ends.
-        return await _handle_streaming(
+        logger.info(
+            "chat_request_streaming request_id=%s conv=%s model=%s returning_generator",
+            request_id,
+            conversation_id[:12],
+            request.model,
+        )
+        result = await _handle_streaming(
             config=config,
             affinity=affinity,
             db_session_factory=app_state.db_session_factory,
@@ -159,6 +176,12 @@ async def chat_completions(
             thinking=request.thinking,
             trace=trace,
         )
+        logger.info(
+            "chat_request_streaming_returned request_id=%s conv=%s",
+            request_id,
+            conversation_id[:12],
+        )
+        return result
 
     # Non-streaming path: session lifecycle managed here with try/finally
     try:
