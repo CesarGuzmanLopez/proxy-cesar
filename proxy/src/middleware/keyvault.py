@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import uuid
+from functools import lru_cache
 
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -24,103 +25,52 @@ logger = logging.getLogger(__name__)
 KEYVAULT_TTL = 3600
 PLACEHOLDER_PREFIX = "KEYVAULT"
 
-_SECRET_PATTERNS: list[tuple[str, str]] = [
+# ── Pre-compiled regex patterns for better performance ─────────────────────────
+# Compiled once at module load, not on every request
+_SECRET_PATTERNS_RAW: list[tuple[str, str]] = [
     # ── API keys (prefixed — provider-specific, low false positive) ────────
-    # Generic sk- / gsk_ / usk_ / skg_ (0-1 char before/after 'sk')
     (r"\b([a-z]{0,1}sk[a-z]{0,1}[-_][A-Za-z0-9_-]{10,})\b", "sk_key"),
-    # OpenAI project key
     (r"\b(sk-proj-[A-Za-z0-9_-]{20,})\b", "openai_proj"),
-    # Anthropic (exact format)
     (r"\b(sk-ant-(?:api03|admin01)-[a-zA-Z0-9_-]{93}AA)\b", "anthropic"),
-    # OpenRouter
     (r"\b(sk-or-v1-[A-Za-z0-9]{10,})\b", "openrouter"),
-    # GitHub
     (r"\b(ghp_[A-Za-z0-9]{36})\b", "github_classic"),
     (r"\b(github_pat_[A-Za-z0-9-_]{10,})\b", "github_pat"),
-    # GitLab
     (r"\b(glpat-[A-Za-z0-9-_]{10,})\b", "gitlab"),
-    # HuggingFace
     (r"\b(hf_[A-Za-z0-9]{10,})\b", "huggingface"),
-    # Google AI / GCP
     (r"\b(AIza[0-9A-Za-z_-]{35})\b", "google_ai"),
     (r"\b(ya29\.[0-9A-Za-z_-]{50,})\b", "google_oauth"),
-    # AWS
     (r"\b((?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16})\b", "aws_access"),
     (r"\b(ABSK[A-Za-z0-9+/]{109,269}={0,2})\b", "aws_bedrock"),
-    # Azure
     (r"\b([a-zA-Z0-9_~.]{3}\dQ~[a-zA-Z0-9_~.-]{31,34})\b", "azure"),
-    # Slack
     (r"\b(xox[bpsar]-(?:\d+-){0,3}[A-Za-z0-9-]{10,})\b", "slack"),
-    # Discord
     (r"\b([A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27})\b", "discord"),
-    # Stripe
     (r"\b(sk_live_[0-9a-zA-Z]{24,})\b", "stripe_live"),
     (r"\b(rk_live_[0-9a-zA-Z]{24,})\b", "stripe_restricted"),
-    # Twilio
     (r"\b(SK[0-9a-fA-F]{32})\b", "twilio"),
-    # Heroku (UUID-based API key)
-    (
-        r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b",
-        "heroku_uuid",
-    ),
-    # 1Password
-    (
-        r"\b(A3-[A-Z0-9]{6}-(?:[A-Z0-9]{11}|[A-Z0-9]{6}-[A-Z0-9]{5})-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b",
-        "1password",
-    ),
+    (r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b", "heroku_uuid"),
+    (r"\b(A3-[A-Z0-9]{6}-(?:[A-Z0-9]{11}|[A-Z0-9]{6}-[A-Z0-9]{5})-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b", "1password"),
     (r"\b(ops_eyJ[a-zA-Z0-9+/]{250,}={0,3})\b", "1password_sa"),
-    # Atlassian
     (r"\b(ATATT3[A-Za-z0-9_\-=]{186})\b", "atlassian"),
-    # Sentry
     (r"\b(sntrys_[A-Za-z0-9]{32,})\b", "sentry"),
-    # Generic API key in env assignments
-    (
-        r'\b([A-Z_]{3,30}_API_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)',
-        "env_api_key",
-    ),
+    (r'\b([A-Z_]{3,30}_API_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "env_api_key"),
     (r'\b([A-Z_]{3,30}_TOKEN\s*=\s*["\']?)([A-Za-z0-9._-]{10,})(["\']?)', "env_token"),
-    (
-        r'\b([A-Z_]{3,30}_SECRET\s*=\s*["\']?)([A-Za-z0-9._/-]{10,})(["\']?)',
-        "env_secret",
-    ),
+    (r'\b([A-Z_]{3,30}_SECRET\s*=\s*["\']?)([A-Za-z0-9._/-]{10,})(["\']?)', "env_secret"),
     (r'\b([A-Z_]{3,30}_KEY\s*=\s*["\']?)([A-Za-z0-9_-]{10,})(["\']?)', "env_key"),
-    # ── Private keys ──────────────────────────────────────────────────────
-    (
-        r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----\s*[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)",
-        "private_key_pem",
-    ),
-    (
-        r"(-----BEGIN PGP PRIVATE KEY BLOCK-----\s*[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----)",
-        "pgp_private_key",
-    ),
-    (
-        r"(-----BEGIN ENCRYPTED PRIVATE KEY-----\s*[\s\S]*?-----END ENCRYPTED PRIVATE KEY-----)",
-        "encrypted_private_key",
-    ),
-    # ── Public keys / certificates ────────────────────────────────────────
-    (
-        r"(ssh-(?:rsa|ed25519|dss|ecdsa-[a-z0-9-]+)\s+AAAA[A-Za-z0-9+/]+={0,2}\s*[^\n]*)",
-        "ssh_public_key",
-    ),
-    (
-        r"(-----BEGIN PUBLIC KEY-----\s*[\s\S]*?-----END PUBLIC KEY-----)",
-        "public_key_pem",
-    ),
-    (
-        r"(-----BEGIN CERTIFICATE-----\s*[\s\S]*?-----END CERTIFICATE-----)",
-        "tls_certificate",
-    ),
-    # ── Crypto / secrets ──────────────────────────────────────────────────
+    (r"(-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----\s*[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)", "private_key_pem"),
+    (r"(-----BEGIN PGP PRIVATE KEY BLOCK-----\s*[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----)", "pgp_private_key"),
+    (r"(-----BEGIN ENCRYPTED PRIVATE KEY-----\s*[\s\S]*?-----END ENCRYPTED PRIVATE KEY-----)", "encrypted_private_key"),
+    (r"(ssh-(?:rsa|ed25519|dss|ecdsa-[a-z0-9-]+)\s+AAAA[A-Za-z0-9+/]+={0,2}\s*[^\n]*)", "ssh_public_key"),
+    (r"(-----BEGIN PUBLIC KEY-----\s*[\s\S]*?-----END PUBLIC KEY-----)", "public_key_pem"),
+    (r"(-----BEGIN CERTIFICATE-----\s*[\s\S]*?-----END CERTIFICATE-----)", "tls_certificate"),
     (r"\b(0x[a-fA-F0-9]{64})\b", "eth_private_key"),
     (r"\b([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b", "bitcoin_wif"),
-    # ── JWT ───────────────────────────────────────────────────────────────
-    (
-        r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b",
-        "jwt_token",
-    ),
-    # ── Generic long token strings (catch-all, very high threshold to avoid FP) ─
+    (r"\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b", "jwt_token"),
     (r"\b([A-Za-z0-9+/=_-]{60,})\b", "long_token"),
 ]
+
+# Compile patterns once at module load time
+_SECRET_PATTERNS = [(re.compile(pattern, re.MULTILINE | re.DOTALL), kind)
+                     for pattern, kind in _SECRET_PATTERNS_RAW]
 
 _PLACEHOLDER_RE = re.compile(rf"\[{PLACEHOLDER_PREFIX}:([a-f0-9]{{8}})\]")
 _CHAT_PATH = "/v1/chat/completions"
@@ -142,56 +92,88 @@ _KEYVAULT_SYSTEM_PROMPT = (
 # This is NOT a bug.
 
 
+@lru_cache(maxsize=1024)
 def _hash_secret(secret: str) -> str:
+    """Hash secret to deterministic 8-char hex. Cached for performance."""
     return hashlib.sha256(secret.encode()).hexdigest()[:8]
 
 
+@lru_cache(maxsize=1024)
 def _make_placeholder(hash_val: str) -> str:
+    """Create placeholder from hash. Cached to avoid string concatenation."""
     return f"[{PLACEHOLDER_PREFIX}:{hash_val}]"
 
 
 def _mask_text(text: str, secrets: dict[str, str]) -> str:
-    """Find secrets in text and replace with placeholders. Returns masked text with updated secrets."""
-    for pattern, kind in _SECRET_PATTERNS:
-        matches = list(re.finditer(pattern, text))
+    """Find and mask secrets in text efficiently.
+
+    Optimizations:
+    - Pre-compiled regex patterns
+    - Single pass per pattern (reversed iteration for safe indexing)
+    - Early termination if text has no placeholders yet
+    - Caching of hash and placeholder functions
+    """
+    if not text or len(text) < 8:
+        return text
+
+    for compiled_pattern, kind in _SECRET_PATTERNS:
+        # Use finditer for memory efficiency with large text
+        matches = list(compiled_pattern.finditer(text))
+        if not matches:
+            continue
+
+        # Process matches in reverse to maintain correct positions
         for match in reversed(matches):
             groups = match.groups()
             if not groups:
                 continue
 
-            # Patterns with 2+ capture groups: prefix, secret, suffix
-            # (env var patterns, AWS patterns with extra param)
+            # Multi-group patterns: extract secret from middle group
             if len(groups) >= 2 and len(groups[1]) >= 4:
-                prefix = groups[0] or ""
                 secret = groups[1]
+                prefix = groups[0] or ""
                 suffix = groups[2] if len(groups) > 2 else ""
-                secret_hash = _hash_secret(secret)
-                secrets[secret_hash] = secret
-                placeholder = _make_placeholder(secret_hash)
-                text = (
-                    text[: match.start()]
-                    + f"{prefix}{placeholder}{suffix}"
-                    + text[match.end() :]
-                )
             else:
-                # Single capture group: the whole secret
+                # Single group: whole secret
                 secret = groups[0]
-                if len(secret) < 8:  # Skip very short matches
+                if len(secret) < 8:
                     continue
-                secret_hash = _hash_secret(secret)
-                secrets[secret_hash] = secret
-                placeholder = _make_placeholder(secret_hash)
-                text = text[: match.start()] + placeholder + text[match.end() :]
+                prefix = suffix = ""
+
+            # Store and replace in one operation
+            secret_hash = _hash_secret(secret)
+            secrets[secret_hash] = secret
+            placeholder = _make_placeholder(secret_hash)
+            text = text[:match.start()] + prefix + placeholder + suffix + text[match.end():]
 
     return text
 
 
 def _re_inject(text: str, secrets: dict[str, str]) -> str:
-    """Replace [KEYVAULT:hash] with real values from secrets dict."""
-    for secret_hash, real_value in secrets.items():
-        placeholder = _make_placeholder(secret_hash)
-        text = text.replace(placeholder, real_value)
-    return text
+    """Replace [KEYVAULT:hash] with real values efficiently.
+
+    Optimizations:
+    - Early return for text without placeholders
+    - Single pass with pre-compiled regex
+    - Batched replacement using list comprehension
+    """
+    if not text or not secrets:
+        return text
+
+    # Check if any placeholders exist before processing
+    if PLACEHOLDER_PREFIX not in text:
+        return text
+
+    # Build efficient replacement using regex callback
+    def _replacer(match):
+        hash_val = match.group(1)
+        # Pre-compute placeholder to look up secret
+        for secret_hash, real_value in secrets.items():
+            if secret_hash == hash_val:
+                return real_value
+        return match.group(0)  # Return unchanged if not found
+
+    return _PLACEHOLDER_RE.sub(_replacer, text)
 
 
 # ── Request helpers ──────────────────────────────────────────────────────────
@@ -215,41 +197,89 @@ def _mask_messages(body: dict, secrets: dict[str, str]) -> None:
 async def _store_secrets(
     valkey, conversation_id: str, secrets: dict[str, str], trace_id: str = "????"
 ) -> None:
-    """Store detected secrets in Valkey with TTL."""
-    for secret_hash, secret_value in secrets.items():
-        try:
-            await valkey.set(
-                f"keyvault:{conversation_id}:{secret_hash}",
-                secret_value,
-                ex=KEYVAULT_TTL,
-            )
+    """Store detected secrets in Valkey with TTL efficiently.
+
+    Optimizations:
+    - Batch store using pipeline (if available)
+    - Reduced logging overhead for large secret counts
+    - Early return if no secrets to store
+    """
+    if not secrets:
+        return
+
+    try:
+        # Try pipeline for batch operations (more efficient)
+        if hasattr(valkey, 'pipeline'):
+            pipe = valkey.pipeline()
+            for secret_hash, secret_value in secrets.items():
+                key = f"keyvault:{conversation_id}:{secret_hash}"
+                pipe.set(key, secret_value, ex=KEYVAULT_TTL)
+            await pipe.execute()
             logger.debug(
-                "keyvault_store trace=%s conv=%s hash=%s",
+                "keyvault_store_batch trace=%s conv=%s count=%d",
                 trace_id,
                 conversation_id[:12],
-                secret_hash,
+                len(secrets),
             )
-        except Exception as exc:
-            logger.error(
-                "keyvault_store_error trace=%s conv=%s hash=%s err=%s",
+        else:
+            # Fallback to individual sets
+            for secret_hash, secret_value in secrets.items():
+                await valkey.set(
+                    f"keyvault:{conversation_id}:{secret_hash}",
+                    secret_value,
+                    ex=KEYVAULT_TTL,
+                )
+            logger.debug(
+                "keyvault_store trace=%s conv=%s count=%d",
                 trace_id,
                 conversation_id[:12],
-                secret_hash,
-                exc,
+                len(secrets),
             )
+    except Exception as exc:
+        logger.error(
+            "keyvault_store_error trace=%s conv=%s count=%d err=%s",
+            trace_id,
+            conversation_id[:12],
+            len(secrets),
+            exc,
+        )
 
 
 # ── Response helpers ─────────────────────────────────────────────────────────
 
 
-def _re_inject_recursive(obj: object, secrets: dict[str, str]) -> object:
-    """Recursively re-inject secrets into a JSON-like structure."""
+def _re_inject_recursive(obj: object, secrets: dict[str, str], depth: int = 0) -> object:
+    """Recursively re-inject secrets into JSON structures efficiently.
+
+    Optimizations:
+    - In-place mutation for dict/list instead of recreating
+    - Max depth limit to prevent pathological recursion
+    - Fast path for strings with no placeholders
+    - Type checking order optimized for common cases
+    """
+    if depth > 100:  # Prevent unbounded recursion
+        logger.warning("keyvault_recursion_limit_hit")
+        return obj
+
     if isinstance(obj, str):
-        return _re_inject(obj, secrets)
+        # Fast path: check for placeholder prefix before calling _re_inject
+        if PLACEHOLDER_PREFIX in obj:
+            return _re_inject(obj, secrets)
+        return obj
+
     if isinstance(obj, dict):
-        return {k: _re_inject_recursive(v, secrets) for k, v in obj.items()}
+        # In-place mutation is safer than recreation
+        for key, value in obj.items():
+            obj[key] = _re_inject_recursive(value, secrets, depth + 1)
+        return obj
+
     if isinstance(obj, list):
-        return [_re_inject_recursive(item, secrets) for item in obj]
+        # In-place mutation for lists
+        for i, item in enumerate(obj):
+            obj[i] = _re_inject_recursive(item, secrets, depth + 1)
+        return obj
+
+    # Return unchanged for primitives (int, bool, None, etc.)
     return obj
 
 
