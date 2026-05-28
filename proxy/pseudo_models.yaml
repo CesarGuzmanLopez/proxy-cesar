@@ -27,7 +27,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Go primary: Qwen3.7 Max vía Anthropic /messages. Premium reasoning (~4.770 req/mes)."
       - provider: deepseek
@@ -35,7 +35,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Fallback: DeepSeek V4 Pro directo. Razonamiento profundo."
     fallback_strategy: sequential
@@ -58,7 +58,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Go primary: Qwen3.6 Plus. Razonamiento ligero (~16.300 req/mes)."
       - provider: deepseek
@@ -66,7 +66,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Fallback: DeepSeek V4 Flash directo."
     fallback_strategy: sequential
@@ -89,7 +89,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 128000
         note: "Go primary: Kimi K2.6. Coding avanzado (~5.750 req/mes)."
       - provider: deepseek
@@ -97,7 +97,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Fallback 1: DeepSeek V4 Pro directo."
       - provider: deepseek
@@ -105,7 +105,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Fallback 2: DeepSeek V4 Flash directo."
     fallback_strategy: sequential
@@ -128,7 +128,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 128000
         note: "Go primary: MiMo V2.5 Pro. Especializado en código (~6.450 req/mes)."
       - provider: opencode-go
@@ -138,7 +138,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 128000
         note: "Go fallback: MiMo V2 Pro."
       - provider: deepseek
@@ -146,7 +146,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Fallback: DeepSeek V4 Flash directo."
     fallback_strategy: sequential
@@ -200,7 +200,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 128000
         note: "Go primary: Kimi K2.5. Rápido, tools estrictas (~9.250 req/mes)."
       - provider: deepseek
@@ -208,7 +208,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
     fallback_strategy: sequential
@@ -229,7 +229,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: false
-        vision: true
+        vision: false
         note: "Gratuito vía OpenRouter. 1M contexto. Primary."
         context_window: 1000000
       - provider: groq
@@ -237,7 +237,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         note: "Fallback rápido vía Groq. 32B, 131K contexto. Bajo costo."
         context_window: 131072
     fallback_strategy: sequential
@@ -260,7 +260,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 200000
         note: "Go primary: MiniMax M2.7. Velocidad extrema (~17.000 req/mes)."
       - provider: groq
@@ -269,7 +269,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         note: "Fallback: GPT-OSS 20B vía Groq (1000+ t/s)."
     fallback_strategy: sequential
 
@@ -291,7 +291,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Go primary: Qwen3.5 Plus. El más barato de Go (~50.500 req/mes)."
       - provider: deepseek
@@ -299,7 +299,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 1000000
         note: "Fallback: DeepSeek V4 Flash directo."
     fallback_strategy: sequential
@@ -322,20 +322,20 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: true
+        vision: false
         context_window: 128000
         note: "Go primary: GLM-5.1. Compactación vía Go (~4.300 req/mes)."
       - provider: groq
         model: groq/openai/gpt-oss-20b
         context_window: 131072
         openai_tools_compatible: true
-        vision: true
+        vision: false
         note: "Fallback 1: 20B vía Groq (1000+ t/s). Texto puro para <131K."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         context_window: 1000000
         openai_tools_compatible: true
-        vision: true
+        vision: false
         note: "Fallback 2: 1M contexto. Para historias grandes (>131K tokens)."
       # Modelos helper (no participan en fallback de chat)
       - provider: groq
@@ -343,7 +343,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: false
-        vision: true
+        vision: false
         audio: true
         context_window: 131072
         note: "Whisper Large V3 — transcripción de audio (helper interno)."
@@ -352,7 +352,7 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: false
-        vision: true
+        vision: false
         audio: true
         context_window: 131072
         note: "Whisper Large V3 Turbo — transcripción de audio rápida (helper interno)."
