@@ -80,17 +80,17 @@ jobs:
             # ── 2. Clean clone (always fresh, always writable) ────
             echo "[deploy] Cloning repository..."
             sudo rm -rf "$REPO_DIR" || true
-            git clone --branch "$BRANCH" --depth 1 \
-              https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR" 2>&1
+            GIT_TERMINAL_PROMPT=0 git clone --branch "$BRANCH" --depth 1 \
+              https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR" \
+              || { echo "[deploy] GIT CLONE FAILED"; ls -la "$REPO_DIR" 2>/dev/null || echo "(dir missing)"; exit 1; }
 
             # Verify clone succeeded
             if [ ! -d "${REPO_DIR}/proxy" ]; then
               echo "[deploy] FATAL: Clone incomplete — listing ${REPO_DIR}:"
-              ls -la "$REPO_DIR" 2>&1 || echo "(directory missing)"
+              ls -la "$REPO_DIR" 2>/dev/null || echo "(directory missing)"
               exit 1
             fi
-            echo "[deploy] Clone OK — contents:"
-            ls -la "${REPO_DIR}/proxy/src/" 2>&1 | head -10
+            echo "[deploy] Clone OK"
 
             # Restore database
             if [ -f "$DB_BAK" ]; then
