@@ -23,7 +23,7 @@ from src.domain.types import Ok, Err
 from src.service.chat_models import StreamContext
 from src.service.context_alert import get_context_alert
 from src.service.chat_fallback import _try_physical_model, call_with_fallback
-from src.service.chat_messages import build_conversation_messages, handle_auto_describe
+from src.service.chat_messages import handle_auto_describe
 from src.service.chat_service import evaluate_router_suggestion
 from src.service.capability_detector import (
     detect_turn_capabilities,
@@ -370,21 +370,14 @@ async def _handle_streaming_with_db(
             messages_for_llm = desc_in_flight
 
     # ── Load conversation history for streaming context ──────────
+    # NOTE: build_conversation_messages is NOT called here because the client
+    # (opencode, Continue, etc.) already sends the full conversation context
+    # in every request. Loading history from DB doubles the token count
+    # (e.g., 6 client messages → 59 after loading DB history = 128K tokens).
+    # History is still stored in DB for auditing, compaction, and affinity.
     if not is_new and conv is not None and conv.turns:
-        messages_for_llm = build_conversation_messages(conv, messages_for_llm)
-
-    # NEW: Transform images in the full conversation history when the current
-    # physical model lacks vision. Previous turns may contain raw image data
-    # if they were processed by a vision-capable model.
-    if delegation and messages_for_llm:
-        from src.service.tool_detector import replace_base64_with_blob_refs, inject_blob_extraction_guidance
-
-        valkey_client = getattr(affinity, "_client", None)
-        messages_for_llm = await replace_base64_with_blob_refs(
-            messages_for_llm, conversation_id, valkey_client, config
-        )
-        messages_for_llm = inject_blob_extraction_guidance(messages_for_llm)
-
+        logger.debug("DBG conv=%s step=skip_build_msgs client_msgs=%d db_turns=%d",
+                     conversation_id[:12], len(messages), len(conv.turns))
     # No automatic compaction — if threshold is exceeded, error is returned.
     active_messages = messages_for_llm
 

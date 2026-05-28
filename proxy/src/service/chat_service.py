@@ -34,7 +34,7 @@ from src.service.capability_detector import (
     load_session_capabilities,
 )
 from src.service.chat_models import ChatResult, FallbackInfo, SaveContext
-from src.service.compatibility import validate_incoming_content, validate_physical_model_content
+from src.service.compatibility import validate_physical_model_content
 from src.service.context_alert import ContextAlert, get_context_alert
 from src.service.model_resolver import (
     build_passthrough_pseudo_model,
@@ -202,8 +202,12 @@ async def process_chat_request(
             messages_for_llm = desc_in_flight
 
     # ── Load conversation history from previous turns ────────────
+    # NOTE: Skipped intentionally — the client already sends the full
+    # conversation context in every request. Loading history from DB
+    # duplicates messages and blows up token count.
     if not is_new and conv is not None and conv.turns:
-        messages_for_llm = build_conversation_messages(conv, messages_for_llm)
+        logger.debug("chat_skip_build_msgs conv=%s client_msgs=%d db_turns=%d",
+                     conv_id[:12], len(messages), len(conv.turns))
 
     # NEW: Transform images in the full conversation history (including previous
     # turns) when the current physical model lacks vision. Previous turns may
