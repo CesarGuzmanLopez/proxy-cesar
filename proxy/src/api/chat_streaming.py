@@ -533,16 +533,21 @@ async def _handle_streaming_with_db(
 
 
 def _dump_chunk_for_sse(chunk) -> str:
-    """Serialize a streaming chunk to JSON.
+    """Serialize a streaming chunk to JSON, removing reasoning_content early.
 
-    Do NOT add reasoning_content to the serialized output — it will be removed
-    by normalise_stream_chunk() later, so including it here just causes confusion.
-    Let the normalizer handle all reasoning_content logic.
+    LiteLLM's model_dump_json() includes reasoning_content from the provider.
+    We remove it here at serialization time so it never reaches the client.
     """
     try:
         d = json.loads(chunk.model_dump_json())
     except (AttributeError, TypeError, ValueError):
         return chunk.model_dump_json() if hasattr(chunk, "model_dump_json") else "{}"
+
+    # Remove reasoning_content from all deltas before sending to client
+    for choice in d.get("choices", []):
+        if "delta" in choice:
+            choice["delta"].pop("reasoning_content", None)
+
     return json.dumps(d)
 
 
