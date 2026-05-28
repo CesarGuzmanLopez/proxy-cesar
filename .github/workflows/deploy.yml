@@ -77,20 +77,24 @@ jobs:
               cp "$DB_PATH" "$DB_BAK"
             fi
 
-            # ── 2. Clean clone (always fresh, always writable) ────
-            echo "[deploy] Cloning repository..."
-            sudo rm -rf "$REPO_DIR" || true
-            GIT_TERMINAL_PROMPT=0 git clone --branch "$BRANCH" --depth 1 \
-              https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR" \
-              || { echo "[deploy] GIT CLONE FAILED"; ls -la "$REPO_DIR" 2>/dev/null || echo "(dir missing)"; exit 1; }
+            # ── 2. Git pull (incremental, preserves .env) ───────────
+            echo "[deploy] Updating repository..."
+            if [ -d "$REPO_DIR/.git" ]; then
+              cd "$REPO_DIR"
+              git fetch origin "$BRANCH" --depth 1 2>&1
+              git reset --hard "origin/$BRANCH" 2>&1
+            else
+              sudo rm -rf "$REPO_DIR" 2>/dev/null || true
+              git clone --branch "$BRANCH" --depth 1 \
+                https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
+            fi
 
-            # Verify clone succeeded
-            if [ ! -d "${REPO_DIR}/proxy" ]; then
-              echo "[deploy] FATAL: Clone incomplete — listing ${REPO_DIR}:"
-              ls -la "$REPO_DIR" 2>/dev/null || echo "(directory missing)"
+            if [ ! -f "${REPO_DIR}/proxy/src/main.py" ]; then
+              echo "[deploy] FATAL: Missing src/main.py after update"
+              ls -la "$REPO_DIR" 2>/dev/null || echo "(dir missing)"
               exit 1
             fi
-            echo "[deploy] Clone OK"
+            echo "[deploy] Repo OK"
 
             # Restore database
             if [ -f "$DB_BAK" ]; then
