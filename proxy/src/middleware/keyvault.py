@@ -17,7 +17,8 @@ import uuid
 from functools import lru_cache
 
 
-from starlette.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -368,44 +369,30 @@ def _build_re_inject_stream(
 # ── ASGI Middleware (not BaseHTTPMiddleware — breaks streaming) ───────────────
 
 
-class KeyVaultMiddleware:
-    """Transparent secret vault middleware — pure ASGI.
+class KeyVaultMiddleware(BaseHTTPMiddleware):
+    """Transparent secret vault middleware.
 
     Only activates for POST /v1/chat/completions.
     Always masks secrets in-memory. Persists to Valkey when available.
-    Re-injects real values in both streaming and non-streaming responses.
+    Re-injects real values in non-streaming responses.
 
-    Implemented as pure ASGI middleware (not inheriting from BaseHTTPMiddleware)
-    because BaseHTTPMiddleware is incompatible with streaming responses when
-    the request body is modified.
+    Uses request._receive override instead of request._body to avoid
+    breaking streaming responses with BaseHTTPMiddleware.
     """
 
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope.get("path") != _CHAT_PATH:
-            await self.app(scope, receive, send)
-            return
-
+    async def dispatch(self, request, call_next):
         _trace = str(uuid.uuid4())[:8]
 
-        # ── Read request body ─────────────────────────────────────────────
-        body_bytes = b""
-        more_body = True
-        while more_body:
-            message = await receive()
-            if message["type"] == "http.request":
-                body_bytes += message.get("body", b"")
-                more_body = message.get("more_body", False)
+        if request.url.path != _CHAT_PATH:
+            return await call_next(request)
 
-        # ── Parse JSON body ───────────────────────────────────────────────
+        # ── Parse body ───────────────────────────────────────────────────
         try:
+            body_bytes = await request.body()
             body = json.loads(body_bytes)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            # Not valid JSON — pass through
-            await self._passthrough(scope, body_bytes, receive, send)
-            return
+        except Exception as exc:
+            logger.debug("keyvault_parse_error trace=%s err=%s", _trace, exc)
+            return await call_next(request)
 
         # ── Detect + mask secrets (always, in-memory) ─────────────────────
         raw_cid = body.get("conversation_id")
@@ -416,18 +403,13 @@ class KeyVaultMiddleware:
         _mask_messages(body, secrets)
 
         if not secrets:
-            # No secrets → pass through unmodified
-            await self._passthrough(scope, body_bytes, receive, send)
-            return
+            return await call_next(request)
 
-        # ── Persist to Valkey (best-effort, fire-and-forget) ───────────────
-        valkey = getattr(self, "_valkey", None)
-        if valkey is None:
-            # Try to get valkey from app state (only possible after startup)
-            pass
+        # ── Persist to Valkey (best-effort, non-blocking) ─────────────────
+        valkey = getattr(request.app.state, "valkey", None)
         if valkey:
             import asyncio
-            asyncio.ensure_future(
+            asyncio.create_task(
                 _store_secrets(valkey, conversation_id, secrets, _trace)
             )
 
@@ -447,46 +429,31 @@ class KeyVaultMiddleware:
             "yes" if valkey else "no",
         )
 
-        # ── Build modified request ────────────────────────────────────────
+        # ── Override receive to return modified body, avoid request._body ─
+        # Setting request._body breaks streaming with BaseHTTPMiddleware.
+        # Instead, we clear the cached body and override the receive function
+        # so the handler reads the modified version fresh.
         modified_body = json.dumps(body).encode()
+        request._body = b""  # Clear cache so next call won't use old body
+        _used = False
 
-        # Update content-length in scope headers to match modified body
-        new_headers = []
-        for k, v in scope.get("headers", []):
-            if k.lower() == b"content-length":
-                new_headers.append((k, str(len(modified_body)).encode()))
-            else:
-                new_headers.append((k, v))
-        scope["headers"] = new_headers
+        async def _override_receive():
+            nonlocal _used
+            if _used:
+                return {"type": "http.disconnect"}
+            _used = True
+            return {
+                "type": "http.request",
+                "body": modified_body,
+                "more_body": False,
+            }
 
-        _body_sent = False
+        request._receive = _override_receive
 
-        async def _modified_receive():
-            nonlocal _body_sent
-            if not _body_sent:
-                _body_sent = True
-                return {
-                    "type": "http.request",
-                    "body": modified_body,
-                    "more_body": False,
-                }
-            return {"type": "http.disconnect"}
+        # ── Call handler ──────────────────────────────────────────────────
+        response = await call_next(request)
 
-        await self.app(scope, _modified_receive, send)
-
-    async def _passthrough(self, scope, body_bytes, original_receive, send):
-        """Pass the request through unmodified when no secrets are detected."""
-        _sent = False
-
-        async def _replay_receive():
-            nonlocal _sent
-            if not _sent:
-                _sent = True
-                return {
-                    "type": "http.request",
-                    "body": body_bytes,
-                    "more_body": False,
-                }
-            return {"type": "http.disconnect"}
-
-        await self.app(scope, _replay_receive, send)
+        # ── Re-inject for non-streaming ───────────────────────────────────
+        if isinstance(response, StreamingResponse):
+            return response
+        return await _re_inject_non_streaming(response, secrets, _trace)
