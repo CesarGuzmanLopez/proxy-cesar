@@ -403,7 +403,20 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
     """
     out: list[dict[str, object]] = list(others)
 
+    def _truncate_desc(desc: str, sz_kb: int) -> str:
+        """Truncate description so the full blob text ≤ original file size in tokens."""
+        if not desc:
+            return desc
+        # Original file: sz_kb * 1024 bytes ≈ sz_kb * 1024 chars ≈ sz_kb * 256 tokens.
+        # Overhead per blob (header + instructions) is ~400 chars.
+        # Max desc = original_chars - overhead, min 500 chars for useful output.
+        max_desc_chars = max(sz_kb * 1024 - 400, 500)
+        if len(desc) > max_desc_chars:
+            return desc[:max_desc_chars] + "..."
+        return desc
+
     def _bt(h, mime, sz, label, desc="", extraction_method="", filename=""):
+        desc = _truncate_desc(desc, sz)
         # Header: what was sent and how to access it
         t = f"[Content provided: {label}\n"
         t += f"  blob_ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"

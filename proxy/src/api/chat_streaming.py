@@ -277,33 +277,6 @@ async def _handle_streaming_with_db(
         session_caps=session_caps,
     )
 
-    # Check input threshold
-    estimated_input = estimate_tokens(messages)
-    threshold_check = check_input_threshold(
-        pseudo_model_name=resolved_model,
-        input_token_threshold=pm_schema.input_token_threshold,
-        estimated_tokens=estimated_input,
-        pre_compaction_enabled=False,
-    )
-    if not threshold_check.success:
-        error = threshold_check.error
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {
-                    "message": (
-                        f"This model's maximum context length is "
-                        f"{error.threshold} tokens. However, your messages "
-                        f"resulted in {error.estimated} tokens. Please reduce "
-                        f"the length of the messages."
-                    ),
-                    "type": "invalid_request_error",
-                    "param": None,
-                    "code": "context_length_exceeded",
-                },
-            },
-        )
-
     # Create or get existing conversation
     existing_affinity = await affinity.get(conversation_id)
 
@@ -392,6 +365,38 @@ async def _handle_streaming_with_db(
                      conversation_id[:12], len(messages), len(conv.turns))
     # No automatic compaction — if threshold is exceeded, error is returned.
     active_messages = messages_for_llm
+
+    # ── Token estimation AFTER content delegation ─────────────────────
+    # estimate_tokens must run AFTER replace_base64_with_blob_refs so the
+    # count reflects what the LLM actually receives (text descriptions
+    # can be much larger than the original base64 blobs).
+    estimated_input = estimate_tokens(active_messages)
+
+    # ── Check input threshold (post-delegation) ───────────────────────
+    threshold_check = check_input_threshold(
+        pseudo_model_name=resolved_model,
+        input_token_threshold=pm_schema.input_token_threshold,
+        estimated_tokens=estimated_input,
+        pre_compaction_enabled=False,
+    )
+    if not threshold_check.success:
+        error = threshold_check.error
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "message": (
+                        f"This model's maximum context length is "
+                        f"{error.threshold} tokens. However, your messages "
+                        f"resulted in {error.estimated} tokens. Please reduce "
+                        f"the length of the messages."
+                    ),
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "context_length_exceeded",
+                },
+            },
+        )
 
     # ── Sprint 6: Context alerts (total = history + current request) ────
     _total_for_alert = (conv.total_tokens if conv else 0) + estimated_input
