@@ -927,15 +927,15 @@ async def _stream_response_generator(ctx: StreamContext):
             ctx.conversation_id[:12],
             ctx.physical_model,
         )
-    finally:
-        # Always send [DONE] to signal end of stream, even if metadata failed
+
+        # Send [DONE] marker ONCE to signal end of stream
+        logger.info(
+            "stream_sending_done_marker conv=%s physical=%s stream_id=%s",
+            ctx.conversation_id[:12],
+            ctx.physical_model,
+            stream_id,
+        )
         try:
-            logger.info(
-                "stream_sending_done_marker conv=%s physical=%s stream_id=%s",
-                ctx.conversation_id[:12],
-                ctx.physical_model,
-                stream_id,
-            )
             yield "data: [DONE]\n\n"
             logger.debug(
                 "stream_done_marker_sent conv=%s",
@@ -947,7 +947,8 @@ async def _stream_response_generator(ctx: StreamContext):
                 ctx.conversation_id,
                 str(e),
             )
-
+    finally:
+        # Close DB session, but DO NOT yield [DONE] again (already sent above)
         # Ensure DB session is closed even on client disconnect (GeneratorExit)
         if db is not None:
             try:
