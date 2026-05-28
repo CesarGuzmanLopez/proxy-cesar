@@ -140,6 +140,7 @@ def normalise_stream_chunk(chunk) -> None:
 
     If content is None but reasoning_content has a value, copy it to content
     so the client receives visible response instead of empty content.
+    Always remove reasoning_content from the response so the client never sees it.
 
     The function is a no-op for chunks that lack ``reasoning_content``.
     """
@@ -152,6 +153,8 @@ def normalise_stream_chunk(chunk) -> None:
             # If content is empty but reasoning_content has value, copy it
             if delta.get("content") is None and delta.get("reasoning_content"):
                 delta["content"] = delta["reasoning_content"]
+            # Always remove reasoning_content so client never sees it
+            delta.pop("reasoning_content", None)
     except Exception:
         pass  # Silently ignore if normalization fails
 
