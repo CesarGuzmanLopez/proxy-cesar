@@ -42,6 +42,9 @@ class StreamContext:
     tools_filter_reason: str | None = None
     images_described: int = 0
     images_described_by: str | None = None
+    pdfs_analyzed: int = 0
+    audios_transcribed: int = 0
+    documents_processed: int = 0
     router_suggestion: dict | None = None
     context_alert: ContextAlert | None = None
     cache_metadata: dict | None = None

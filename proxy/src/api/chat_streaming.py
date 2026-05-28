@@ -48,6 +48,56 @@ from src.api.chat_stream_persistence import (
 logger = logging.getLogger(__name__)
 
 
+def _count_content_types(messages: list[dict]) -> dict[str, int]:
+    """Count images, PDFs, audios, and other content types in messages."""
+    counts = {"images": 0, "pdfs": 0, "audios": 0, "documents": 0}
+
+    for msg in messages or []:
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "image_url":
+                    counts["images"] += 1
+                elif item.get("type") == "image":
+                    counts["images"] += 1
+                elif item.get("type") == "file":
+                    mime_type = item.get("file", {}).get("mime_type", "").lower()
+                    if "pdf" in mime_type:
+                        counts["pdfs"] += 1
+                    elif "audio" in mime_type or "wav" in mime_type or "mp3" in mime_type:
+                        counts["audios"] += 1
+                    elif "word" in mime_type or "docx" in mime_type:
+                        counts["documents"] += 1
+                    elif "text" in mime_type or "csv" in mime_type or "excel" in mime_type:
+                        counts["documents"] += 1
+                    else:
+                        counts["documents"] += 1
+
+    return counts
+
+
+def _build_analysis_message(counts: dict[str, int], images_described: int) -> str:
+    """Build analysis message based on content types being processed."""
+    parts = []
+
+    if images_described > 0:
+        parts.append(f"imagen{'s' if images_described > 1 else ''}")
+    if counts.get("pdfs", 0) > 0:
+        parts.append(f"PDF{'s' if counts['pdfs'] > 1 else ''}")
+    if counts.get("audios", 0) > 0:
+        parts.append(f"audio{'s' if counts['audios'] > 1 else ''}")
+    if counts.get("documents", 0) > 0:
+        parts.append(f"documento{'s' if counts['documents'] > 1 else ''}")
+
+    if not parts:
+        return "Procesando contenido..."
+
+    return f"Analizando {', '.join(parts)}..."
+
+
 async def _handle_streaming(
     config,
     affinity,
@@ -534,21 +584,27 @@ async def _stream_response_generator(ctx: StreamContext):
         while True:
             finish_reason: str | None = None
             try:
-                # Send initial message if images are being analyzed (first iteration only)
-                if not _analysis_message_sent and current_idx == 0 and ctx.images_described > 0:
-                    _analysis_message_sent = True
-                    analysis_msg = f"Analizando {ctx.images_described} imagen{'s' if ctx.images_described > 1 else ''}..."
-                    analysis_chunk = {
-                        "id": f"chatcmpl-{ctx.conversation_id[:12]}",
-                        "object": "chat.completion.chunk",
-                        "choices": [{"delta": {"content": analysis_msg}, "finish_reason": None}],
-                    }
-                    yield f"data: {json.dumps(analysis_chunk)}\n\n"
-                    logger.info(
-                        "stream_analysis_msg conv=%s images=%d",
-                        ctx.conversation_id[:12],
-                        ctx.images_described,
-                    )
+                # Send initial message if content is being analyzed (first iteration only)
+                if not _analysis_message_sent and current_idx == 0:
+                    content_counts = _count_content_types(ctx.messages)
+                    has_content = ctx.images_described > 0 or any(content_counts.values())
+                    if has_content:
+                        _analysis_message_sent = True
+                        analysis_msg = _build_analysis_message(content_counts, ctx.images_described)
+                        analysis_chunk = {
+                            "id": f"chatcmpl-{ctx.conversation_id[:12]}",
+                            "object": "chat.completion.chunk",
+                            "choices": [{"delta": {"content": analysis_msg}, "finish_reason": None}],
+                        }
+                        yield f"data: {json.dumps(analysis_chunk)}\n\n"
+                        logger.info(
+                            "stream_analysis_msg conv=%s images=%d pdfs=%d audios=%d docs=%d",
+                            ctx.conversation_id[:12],
+                            ctx.images_described,
+                            content_counts.get("pdfs", 0),
+                            content_counts.get("audios", 0),
+                            content_counts.get("documents", 0),
+                        )
 
                 async for chunk in current_stream:
                     chunks.append(chunk)
