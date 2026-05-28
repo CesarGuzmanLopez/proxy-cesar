@@ -220,7 +220,7 @@ async def _handle_streaming_with_db(
 
     logger.info(
         "DIAGNOSTIC_1_after_physical_model_resolution trace=%s phys=%s has_vision=%s",
-        trace.request_id if trace else "?",
+        trace.trace_id if trace else "?",
         physical_model,
         getattr(selected_phys_model, "vision", "?"),
     )
@@ -232,7 +232,7 @@ async def _handle_streaming_with_db(
     # Debug logging for content delegation
     logger.info(
         "content_validation_stream trace=%s conv=%s model=%s has_images=%s model_vision=%s delegation=%s",
-        trace.request_id if trace else "?",
+        trace.trace_id if trace else "?",
         conversation_id[:12],
         physical_model,
         getattr(turn_caps, "has_images", False),
@@ -244,7 +244,7 @@ async def _handle_streaming_with_db(
     if delegation:
         logger.info(
             "content_delegation_applying_stream trace=%s conv=%s model=%s action=%s",
-            trace.request_id if trace else "?",
+            trace.trace_id if trace else "?",
             conversation_id[:12],
             physical_model,
             delegation.get("action"),
