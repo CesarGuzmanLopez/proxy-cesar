@@ -429,18 +429,12 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             "yes" if valkey else "no",
         )
 
-        # ── Create a new Request with modified body ────────────────────────
+        # ── Trick Starlette: set _body to modified, mark as already read ──
         modified_body = json.dumps(body).encode()
-        from starlette.requests import Request as StarletteRequest
-        modified_request = StarletteRequest(
-            scope=request.scope,
-            receive=request._receive,
-        )
-        # Set the modified body as the cached body
-        modified_request._body = modified_body
+        request._body = modified_body
 
         # ── Call handler ──────────────────────────────────────────────────
-        response = await call_next(modified_request)
+        response = await call_next(request)
 
         # ── Re-inject for non-streaming ───────────────────────────────────
         if isinstance(response, StreamingResponse):
