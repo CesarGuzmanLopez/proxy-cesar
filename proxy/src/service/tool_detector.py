@@ -262,7 +262,7 @@ async def _try_extract_pdf_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
-def _classify_content_parts(  # noqa: S3776 — 3 content types × multiple checks
+def _classify_content_parts(  # noqa: S3776 — multiple content types × multiple formats
     content: list,
 ) -> tuple[
     list[str],
@@ -271,7 +271,13 @@ def _classify_content_parts(  # noqa: S3776 — 3 content types × multiple chec
     list[tuple[str, str, str, str]],
     list[dict],
 ]:
-    """Classify content parts into images, audio, files, and others."""
+    """Classify content parts into images, audio, files, and others.
+
+    Supports multiple image formats:
+    - OpenAI: {"type": "image_url", "image_url": {"url": "..."}}
+    - Base64: {"type": "image", "image": "data:image/..."}
+    - Text with data URL: {"type": "text", "text": "data:image/..."}
+    """
     user_text = _extract_user_text(content)
     images: list[tuple[str, str, str, str]] = []
     audios: list[tuple[str, str, str, str]] = []
@@ -282,30 +288,58 @@ def _classify_content_parts(  # noqa: S3776 — 3 content types × multiple chec
         if not isinstance(part, dict):
             others.append(part)
             continue
+
         ptype = part.get("type", "")
         raw = ""
+        content_type = None
+
+        # Extract raw data from various formats
         if ptype == "image_url":
+            # OpenAI standard format
             raw = part.get("image_url", {}).get("url", "")
+            content_type = "image"
+        elif ptype == "image":
+            # Base64 inline format (used by Anthropic, others)
+            raw = part.get("image", "")
+            content_type = "image"
+        elif ptype == "text":
+            # Some clients send images as text with data: URL
+            text_content = part.get("text", "")
+            if isinstance(text_content, str) and text_content.startswith("data:image/"):
+                raw = text_content
+                content_type = "image"
+            else:
+                # Regular text, not an image
+                others.append(part)
+                continue
         elif ptype == "input_audio":
             raw = (part.get("input_audio", {}) or {}).get("data", "")
+            content_type = "audio"
         elif ptype == "file":
             raw = (part.get("file", {}) or {}).get("data", "")
+            content_type = "file"
         else:
             others.append(part)
             continue
+
+        # Validate and process extracted data
         if not raw or not raw.startswith("data:"):
             others.append(part)
             continue
+
         h = _hash_content(raw)
-        mime = _extract_mime(raw) or f"{ptype}/unknown"
+        mime = _extract_mime(raw) or f"{content_type}/unknown"
         sz = str(len(raw) // 1024)
         info = (h, raw, mime, sz)
-        if ptype == "image_url":
+
+        # Classify into appropriate category
+        if content_type == "image":
             images.append(info)
-        elif ptype == "input_audio":
+        elif content_type == "audio":
             audios.append(info)
-        elif ptype == "file":
+        elif content_type == "file":
             files.append(info)
+
     return user_text, images, audios, files, others
 
 

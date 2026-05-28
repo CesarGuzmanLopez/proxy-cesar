@@ -45,7 +45,12 @@ TAG_PREFIX: str = "IMAGE_DESCRIBED"
 
 
 def find_image_refs(messages: list[dict]) -> list[dict]:
-    """Find all ``image_url`` references in a message list.
+    """Find all image references in a message list (supports multiple formats).
+
+    Detects images in all common formats:
+    - OpenAI standard: {"type": "image_url", "image_url": {"url": "..."}}
+    - Base64: {"type": "image", "image": "data:image/...;base64,..."}
+    - Text with data URL: {"type": "text", "text": "data:image/..."}
 
     Deduplicates identical URLs — the same image in multiple turns or
     multiple parts produces a single description call.
@@ -57,7 +62,7 @@ def find_image_refs(messages: list[dict]) -> list[dict]:
         List of ref dicts with keys:
         - ``msg_idx``: index in messages array
         - ``part_idx``: index in content parts array
-        - ``url``: the image URL
+        - ``url``: the image URL or base64 data
         - ``detail``: detail level (auto/low/high)
         - ``is_duplicate``: ``True`` if this exact URL was seen before
     """
@@ -72,25 +77,40 @@ def find_image_refs(messages: list[dict]) -> list[dict]:
         for part_idx, part in enumerate(content):
             if not isinstance(part, dict):
                 continue
-            if part.get("type") != "image_url":
-                continue
 
-            url = part.get("image_url", {}).get("url", "")
-            if not url:
-                continue
+            part_type = part.get("type", "")
+            url = None
+            detail = "auto"
 
-            is_duplicate = url in seen_urls
-            seen_urls.add(url)
+            # Format 1: OpenAI standard image_url
+            if part_type == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                detail = part.get("image_url", {}).get("detail", "auto")
 
-            refs.append(
-                {
-                    "msg_idx": msg_idx,
-                    "part_idx": part_idx,
-                    "url": url,
-                    "detail": part.get("image_url", {}).get("detail", "auto"),
-                    "is_duplicate": is_duplicate,
-                }
-            )
+            # Format 2: Base64 inline image (type="image")
+            elif part_type == "image":
+                url = part.get("image", "")
+
+            # Format 3: Text field containing data URL (some clients send it this way)
+            elif part_type == "text":
+                text_content = part.get("text", "")
+                if isinstance(text_content, str) and text_content.startswith("data:image/"):
+                    url = text_content
+
+            # If we found an image URL, track it
+            if url:
+                is_duplicate = url in seen_urls
+                seen_urls.add(url)
+
+                refs.append(
+                    {
+                        "msg_idx": msg_idx,
+                        "part_idx": part_idx,
+                        "url": url,
+                        "detail": detail,
+                        "is_duplicate": is_duplicate,
+                    }
+                )
 
     return refs
 

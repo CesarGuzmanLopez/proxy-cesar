@@ -40,14 +40,38 @@ def _get_encoding():
 
 
 def _scan_multimodal_content(content: list, caps: TurnCapabilities) -> None:
-    """Scan multimodal content parts for images, audio, PDF, video."""
+    """Scan multimodal content parts for images, audio, PDF, video.
+
+    Supports multiple image formats:
+    - OpenAI standard: {"type": "image_url", "image_url": {"url": "..."}}
+    - Base64: {"type": "image", "image": "data:image/...;base64,..."}
+    - Text with base64: {"type": "text", "text": "data:image/...;base64,..."}
+    - LibreChat/Anthropic: variations of above
+    """
     for part in content:
         part_type = part.get("type", "")
 
+        # OpenAI image_url format (with nested image_url object)
         if part_type == "image_url":
             caps.has_images = True
+
+        # Base64 inline image format (type="image")
+        elif part_type == "image":
+            # Could be base64 string, data URL, or reference
+            if part.get("image"):
+                caps.has_images = True
+
+        # Some clients send images as text with data: URL
+        elif part_type == "text":
+            text_content = part.get("text", "")
+            if isinstance(text_content, str) and text_content.startswith("data:image/"):
+                caps.has_images = True
+
+        # Audio input
         elif part_type == "input_audio":
             caps.has_audio = True
+
+        # File uploads (PDF, video, etc.)
         elif part_type == "file":
             mime = part.get("mime_type", part.get("mimetype", ""))
             mime_lower = mime.lower()
@@ -55,6 +79,8 @@ def _scan_multimodal_content(content: list, caps: TurnCapabilities) -> None:
                 caps.has_pdf = True
             elif any(v in mime_lower for v in ("video/", "mp4", "webm", "avi")):
                 caps.has_video = True
+
+        # Video URLs/references
         elif part_type in ("video_url", "video"):
             caps.has_video = True
 
