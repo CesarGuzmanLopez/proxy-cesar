@@ -218,6 +218,13 @@ async def _handle_streaming_with_db(
         pm_schema,
     )
 
+    logger.info(
+        "DIAGNOSTIC_1_after_physical_model_resolution trace=%s phys=%s has_vision=%s",
+        trace.request_id if trace else "?",
+        physical_model,
+        getattr(selected_phys_model, "vision", "?"),
+    )
+
     # NEW: Validate that the SELECTED physical model can handle the incoming content
     # (this happens AFTER model selection, not before like the old logic)
     delegation = validate_physical_model_content(turn_caps, selected_phys_model)
