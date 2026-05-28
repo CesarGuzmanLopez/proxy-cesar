@@ -527,12 +527,29 @@ async def _stream_response_generator(ctx: StreamContext):
         len(phys_models),
     )
     _first_chunk_logged = False
+    _analysis_message_sent = False
 
     try:
         # ── Multi-stream loop (continues when a model hits token limit) ──
         while True:
             finish_reason: str | None = None
             try:
+                # Send initial message if images are being analyzed (first iteration only)
+                if not _analysis_message_sent and current_idx == 0 and ctx.images_described > 0:
+                    _analysis_message_sent = True
+                    analysis_msg = f"Analizando {ctx.images_described} imagen{'s' if ctx.images_described > 1 else ''}..."
+                    analysis_chunk = {
+                        "id": f"chatcmpl-{ctx.conversation_id[:12]}",
+                        "object": "chat.completion.chunk",
+                        "choices": [{"delta": {"content": analysis_msg}, "finish_reason": None}],
+                    }
+                    yield f"data: {json.dumps(analysis_chunk)}\n\n"
+                    logger.info(
+                        "stream_analysis_msg conv=%s images=%d",
+                        ctx.conversation_id[:12],
+                        ctx.images_described,
+                    )
+
                 async for chunk in current_stream:
                     chunks.append(chunk)
 
