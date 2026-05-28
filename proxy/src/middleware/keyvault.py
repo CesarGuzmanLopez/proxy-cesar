@@ -429,9 +429,26 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             "yes" if valkey else "no",
         )
 
-        # ── Modified body via request._body — test if this breaks streaming ─
+        # ── Override body via request._receive (don't set request._body!) ──
+        # Setting request._body directly breaks streaming responses.
+        # Instead, we reset the cached body to None and override _receive
+        # so the handler reads the modified body fresh from our function.
         modified_body = json.dumps(body).encode()
-        request._body = modified_body
+        request._body = None  # Reset cache so request.body() calls _receive
+        _used = False
+
+        async def _override_receive():
+            nonlocal _used
+            if _used:
+                return {"type": "http.disconnect"}
+            _used = True
+            return {
+                "type": "http.request",
+                "body": modified_body,
+                "more_body": False,
+            }
+
+        request._receive = _override_receive
 
         # ── Call handler ──────────────────────────────────────────────────
         response = await call_next(request)
