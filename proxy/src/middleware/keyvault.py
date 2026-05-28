@@ -430,11 +430,12 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         )
 
         # ── Override body via request._receive (don't set request._body!) ──
-        # Setting request._body directly breaks streaming responses.
-        # Instead, we reset the cached body to None and override _receive
-        # so the handler reads the modified body fresh from our function.
         modified_body = json.dumps(body).encode()
-        request._body = None  # Reset cache so request.body() calls _receive
+        # Remove cached body so next call reads from our overridden _receive
+        try:
+            del request._body
+        except AttributeError:
+            pass
         _used = False
 
         async def _override_receive():
