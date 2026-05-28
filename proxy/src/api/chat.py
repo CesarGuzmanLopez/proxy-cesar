@@ -118,17 +118,17 @@ async def chat_completions(
     # Prepare messages as dicts
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
-    # Log full request details including message content (truncated for safety)
+    # Log full request details including message content
     _msg_summaries = []
     for m in messages:
         _role = m.get("role", "?")
         _c = m.get("content", "")
         if isinstance(_c, str):
-            _preview = _c[:80].replace("\n", " ")
+            _preview = _c[:2000].replace("\n", " ")
         elif isinstance(_c, list):
             _preview = f"[{len(_c)} parts]"
         else:
-            _preview = str(_c)[:80]
+            _preview = str(_c)[:2000]
         _msg_summaries.append(f"{_role}={_preview}")
     logger.info(
         "chat_request_full request_id=%s conv=%s model=%s stream=%s "
@@ -317,7 +317,7 @@ async def _handle_non_streaming(
         len(resp_content),
         response_dict.get("choices", [{}])[0].get("finish_reason", "?"),
         bool(response_dict.get("choices", [{}])[0].get("message", {}).get("reasoning_content")),
-        resp_content[:100],
+        resp_content[:2000],
     )
 
     return JSONResponse(content=response_dict, headers=headers)

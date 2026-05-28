@@ -695,7 +695,7 @@ async def _stream_response_generator(ctx: StreamContext):
             len(_content),
             len(_reasoning),
             response_dict.get("choices", [{}])[0].get("finish_reason", "?"),
-            _content[:100],
+            _content[:2000],
         )
 
         # Sprint 7: extract cache metadata from streaming response
