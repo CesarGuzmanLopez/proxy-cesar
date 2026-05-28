@@ -450,8 +450,10 @@ class KeyVaultMiddleware:
         # ── Build modified request ────────────────────────────────────────
         modified_body = json.dumps(body).encode()
         modified_headers = [
-            (k.encode(), v.encode()) for k, v in scope.get("headers", [])
-            if k.lower() != b"content-length"
+            (k if isinstance(k, bytes) else k.encode(),
+             v if isinstance(v, bytes) else v.encode())
+            for k, v in scope.get("headers", [])
+            if (k.lower() if isinstance(k, bytes) else k.encode().lower()) != b"content-length"
         ]
         modified_headers.append((b"content-length", str(len(modified_body)).encode()))
 
