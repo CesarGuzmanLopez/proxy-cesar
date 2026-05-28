@@ -702,7 +702,9 @@ async def _stream_response_generator(ctx: StreamContext):
                         )
 
                     # Convert chunk to dict ONCE — reuse for all processing
+                    logger.info("STREAM_DEBUG_1 converting chunk to dict")
                     chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
+                    logger.info("STREAM_DEBUG_2 chunk converted, normalizing")
 
                     if (
                         fr == "length"
