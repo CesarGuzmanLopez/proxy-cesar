@@ -164,10 +164,17 @@ async def _handle_streaming_with_db(
                     text_preview = f" preview='{preview}'"
                 elif part.get("type") == "image":
                     text_preview = f" image_data_len={len(str(part.get('image', '')))}"
-                logger.info(
-                    "message_part_detail msg=%d part=%d type=%s%s",
-                    i, j, part.get("type", "?"), text_preview
-                )
+                if part.get("type") == "text":
+                    full_text = str(part.get("text", ""))[:200]
+                    logger.info(
+                        "message_part_detail msg=%d part=%d type=%s text_len=%d preview=%s",
+                        i, j, part.get("type", "?"), len(str(part.get("text", ""))), full_text
+                    )
+                else:
+                    logger.info(
+                        "message_part_detail msg=%d part=%d type=%s%s",
+                        i, j, part.get("type", "?"), text_preview
+                    )
         elif isinstance(content, str):
             content_details.append(f"msg{i}:str")
         else:
