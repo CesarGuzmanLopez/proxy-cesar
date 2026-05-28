@@ -159,12 +159,12 @@ async def _handle_streaming(
         except Exception as exc:
             logger.debug("stream_db_close_error err=%s", exc)
         error_msg = str(e)
-        status_code, error_type = _map_stream_domain_error(error_msg)
+        status_code, error_detail = _map_stream_domain_error(error_msg)
         if trace:
             trace.proxy_out(http_status=status_code, stream=True)
         raise HTTPException(
             status_code=status_code,
-            detail={"error": error_type, "message": error_msg},
+            detail=error_detail,
         ) from e
     except Exception as e:
         try:
@@ -176,7 +176,14 @@ async def _handle_streaming(
             trace.proxy_out(http_status=502, stream=True)
         raise HTTPException(
             status_code=502,
-            detail={"error": "PROXY_ERROR", "message": str(e)},
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "server_error",
+                    "param": None,
+                    "code": "server_error",
+                },
+            },
         ) from e
 
 
@@ -283,12 +290,17 @@ async def _handle_streaming_with_db(
         raise HTTPException(
             status_code=400,
             detail={
-                "error": "INPUT_EXCEEDS_THRESHOLD",
-                "message": (
-                    f"Input ({error.estimated} tokens) exceeds threshold "
-                    f"({error.threshold} tokens) for pseudo-model "
-                    f"'{pm_schema.display_name}'."
-                ),
+                "error": {
+                    "message": (
+                        f"This model's maximum context length is "
+                        f"{error.threshold} tokens. However, your messages "
+                        f"resulted in {error.estimated} tokens. Please reduce "
+                        f"the length of the messages."
+                    ),
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "context_length_exceeded",
+                },
             },
         )
 
@@ -381,9 +393,10 @@ async def _handle_streaming_with_db(
     # No automatic compaction — if threshold is exceeded, error is returned.
     active_messages = messages_for_llm
 
-    # ── Sprint 6: Context alerts ──────────────────────────────────────────
+    # ── Sprint 6: Context alerts (total = history + current request) ────
+    _total_for_alert = (conv.total_tokens if conv else 0) + estimated_input
     context_alert = get_context_alert(
-        total_tokens=conv.total_tokens if conv else 0,
+        total_tokens=_total_for_alert,
         context_window=pm_schema.context_window,
         conversation_id=conversation_id,
     )
@@ -391,17 +404,11 @@ async def _handle_streaming_with_db(
         raise HTTPException(
             status_code=400,
             detail={
-                "error": "CONTEXT_UNUSABLE",
-                "message": context_alert.warning,
-                "context_tokens": conv.total_tokens if conv else 0,
-                "context_window": pm_schema.context_window,
-                "remediation": {
-                    "action": "compact",
-                    "endpoint": f"POST /conversations/{conversation_id}/compact",
-                    "description": (
-                        "Compact the conversation history into a snapshot. "
-                        "Original history is preserved."
-                    ),
+                "error": {
+                    "message": context_alert.warning,
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "context_length_exceeded",
                 },
             },
         )
@@ -1013,16 +1020,28 @@ def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
     return should_apply_cache_control(cache_provider)
 
 
-def _map_stream_domain_error(error_msg: str) -> tuple[int, str]:
-    """Map domain error ValueError messages to HTTP status codes for streaming path."""
+def _map_stream_domain_error(error_msg: str) -> tuple[int, dict]:
+    """Map domain error ValueError messages to OpenAI-compatible error detail for streaming path."""
     if error_msg.startswith("AllModelsFailed:"):
-        return 503, "ALL_MODELS_FAILED"
+        return 503, _openai_error_detail("All physical models in the fallback chain failed.", "server_error")
     if error_msg.startswith("ContextTooLargeForAllModels:"):
-        return 400, "CONTEXT_TOO_LARGE"
+        return 400, _openai_error_detail(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
     if error_msg.startswith("ContextUnusable:"):
-        return 400, "CONTEXT_UNUSABLE"
+        return 400, _openai_error_detail(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
     if error_msg.startswith("InputExceedsThreshold:"):
-        return 400, "INPUT_EXCEEDS_THRESHOLD"
+        return 400, _openai_error_detail(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
     if error_msg.startswith("ParallelToolsNotSupported:"):
-        return 400, "PARALLEL_TOOLS_NOT_SUPPORTED"
-    return 502, "PROXY_ERROR"
+        return 400, _openai_error_detail("Parallel tool calls are not supported by any physical model.", "unsupported_parameters")
+    return 502, _openai_error_detail(str(error_msg), "server_error")
+
+
+def _openai_error_detail(message: str, code: str) -> dict:
+    """Build OpenAI-compatible error detail dict."""
+    return {
+        "error": {
+            "message": message,
+            "type": "invalid_request_error",
+            "param": None,
+            "code": code,
+        },
+    }

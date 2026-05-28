@@ -244,9 +244,9 @@ async def process_chat_request(
 
     active_messages = messages_for_llm
 
-    # Sprint 6: Context alerts — warn before context becomes unusable
+    # Sprint 6: Context alerts (total = history + current request)
     context_alert = get_context_alert(
-        total_tokens=conv.total_tokens if conv else 0,
+        total_tokens=(conv.total_tokens if conv else 0) + est_input,
         context_window=pm_schema.context_window,
         conversation_id=conv_id,
     )

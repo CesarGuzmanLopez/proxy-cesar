@@ -103,9 +103,19 @@ async def _describe_image_batch(
 
     system = (
         "You receive images that the user sent to a model without vision. "
-        "Describe each briefly (1-2 sentences). "
-        "Return a JSON array of strings in image order. "
-        'Example: ["A login screen", "A bar chart of Q1 sales"]'
+        "For EACH image, analyze exhaustively for a text-only AI model:\n"
+        "1. Extract ALL visible text exactly as it appears (including crossed out, "
+        "strikethrough, handwritten, annotations, headers, footers, labels, watermarks). "
+        "Preserve exact spelling and original language.\n"
+        "2. Describe the image in rich detail: scene, objects, people, actions, "
+        "expressions, clothing, environment, lighting, colors, composition, style, "
+        "spatial relationships, perspective.\n"
+        "3. For UI/code/diagrams: describe layout, structure, hierarchy, "
+        "interactive elements, data values, axes, legends, trends.\n"
+        "4. Note imperfections: blur, glare, artifacts, damage, low resolution areas.\n"
+        "5. If multiple panels/sections, describe each separately.\n\n"
+        "Return a JSON array of strings in image order, one full analysis per image. "
+        'Format per element: "[EXTRACTED TEXT]: ...\\n[DESCRIPTION]: ...\\n[TECHNICAL DETAILS]: ..."'
     )
 
     # Estimate if all images fit in one batch
@@ -130,7 +140,7 @@ async def _describe_image_batch(
                 )
                 results.extend(
                     [
-                        "[ERROR: Esta imagen es demasiado grande para ser procesada. Redúcela o usa el modelo Visión directamente.]"
+                        "[ERROR: Image too large to process. Reduce size or use a vision-capable model directly.]"
                     ]
                     * len(batch)
                 )
@@ -182,7 +192,7 @@ async def _describe_single_batch(
             ],
             api_base=vision_phys.api_base or None,
             api_key=_resolve_api_key(vision_phys),
-            max_tokens=500 * len(images),
+            max_tokens=2048 * len(images),
             temperature=0.1,
         )
         resp = response.model_dump() if hasattr(response, "model_dump") else response
@@ -196,7 +206,7 @@ async def _describe_single_batch(
 
                 parsed = json.loads(text)
                 if isinstance(parsed, list):
-                    return [str(d)[:500] for d in parsed]
+                    return [str(d) for d in parsed]
     except Exception as exc:
         logger.warning(
             "batch_describe_failed model=%s images=%d error=%s",
@@ -301,7 +311,7 @@ async def _try_extract_docx_text(base64_data: str) -> str:
 def _classify_content_parts(  # noqa: S3776 — multiple content types × multiple formats
     content: list,
 ) -> tuple[
-    list[str],
+    str,
     list[tuple[str, str, str, str]],
     list[tuple[str, str, str, str]],
     list[tuple[str, str, str, str]],
@@ -393,10 +403,12 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
     """
     out: list[dict[str, object]] = list(others)
 
-    def _bt(h, mime, sz, label, desc="", extraction_method=""):
+    def _bt(h, mime, sz, label, desc="", extraction_method="", filename=""):
         # Header: what was sent and how to access it
         t = f"[Content provided: {label}\n"
         t += f"  blob_ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"
+        if filename:
+            t += f" | filename: {filename}"
 
         # Extraction info: how it was processed
         if extraction_method:

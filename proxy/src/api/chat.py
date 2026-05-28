@@ -267,12 +267,11 @@ async def chat_completions(
     except ValueError as e:
         await db.rollback()
         error_msg = str(e)
-        # Map domain errors (service-layer ValueError wrappers) to HTTP status codes
-        status_code, error_type = _map_domain_error(error_msg)
+        status_code, error_detail = _map_domain_error(error_msg)
         trace.proxy_out(http_status=status_code, stream=False)
         raise HTTPException(
             status_code=status_code,
-            detail={"error": error_type, "message": error_msg},
+            detail=error_detail,
         ) from e
     except Exception as e:
         await db.rollback()
@@ -280,29 +279,48 @@ async def chat_completions(
         trace.proxy_out(http_status=502, stream=False)
         raise HTTPException(
             status_code=502,
-            detail={"error": "PROXY_ERROR", "message": str(e)},
+            detail={
+                "error": {
+                    "message": str(e),
+                    "type": "server_error",
+                    "param": None,
+                    "code": "server_error",
+                },
+            },
         ) from e
     finally:
         await db.close()
 
 
-def _map_domain_error(error_msg: str) -> tuple[int, str]:
-    """Map domain error ValueError messages to HTTP status codes.
+def _map_domain_error(error_msg: str) -> tuple[int, dict]:
+    """Map domain error ValueError messages to OpenAI-compatible error detail.
 
     Service layer wraps domain errors as ``ValueError(f"ErrorName: {detail}")``.
-    This function extracts the status code and error type for the HTTP boundary.
+    Returns (status_code, error_detail_dict) for HTTPException.
     """
     if error_msg.startswith("AllModelsFailed:"):
-        return 503, "ALL_MODELS_FAILED"
+        return 503, _openai_error("All physical models in the fallback chain failed.", "server_error")
     if error_msg.startswith("ContextTooLargeForAllModels:"):
-        return 400, "CONTEXT_TOO_LARGE"
+        return 400, _openai_error(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
     if error_msg.startswith("ContextUnusable:"):
-        return 400, "CONTEXT_UNUSABLE"
+        return 400, _openai_error(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
     if error_msg.startswith("InputExceedsThreshold:"):
-        return 400, "INPUT_EXCEEDS_THRESHOLD"
+        return 400, _openai_error(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
     if error_msg.startswith("ParallelToolsNotSupported:"):
-        return 400, "PARALLEL_TOOLS_NOT_SUPPORTED"
-    return 502, "PROXY_ERROR"
+        return 400, _openai_error("Parallel tool calls are not supported by any physical model in this pseudo-model.", "unsupported_parameters")
+    return 502, _openai_error(str(error_msg), "server_error")
+
+
+def _openai_error(message: str, code: str) -> dict:
+    """Build OpenAI-compatible error detail dict."""
+    return {
+        "error": {
+            "message": message,
+            "type": "invalid_request_error",
+            "param": None,
+            "code": code,
+        },
+    }
 
 
 async def _handle_non_streaming(

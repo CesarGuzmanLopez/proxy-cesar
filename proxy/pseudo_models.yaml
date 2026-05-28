@@ -74,9 +74,9 @@ pseudo_models:
   # ── Desarrollo sostenido ──────────────────────────────────────────────────
   tareas-avanzadas:
     display_name: Tareas Avanzadas
-    description: "Desarrollo profundo y sostenido. Límite 200K tokens — usa compactalo si lo superas."
-    input_token_threshold: 200000
-    context_window: 200000
+    description: "Desarrollo profundo y sostenido. Límite 256K tokens — usa compactalo si lo superas."
+    input_token_threshold: 256000
+    context_window: 256000
     router_llm:
       enabled: false
     image_handling:
@@ -90,8 +90,8 @@ pseudo_models:
         tools_strict: true
         parallel_tools: true
         vision: false
-        context_window: 128000
-        note: "Go primary: Kimi K2.6. Coding avanzado (~5.750 req/mes)."
+        context_window: 262144
+        note: "Go primary: Kimi K2.6 (256K contexto). Coding avanzado (~5.750 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
         openai_tools_compatible: true
@@ -113,9 +113,9 @@ pseudo_models:
   # ── Código preciso (NUEVO) ────────────────────────────────────────────────
   codigo-preciso:
     display_name: Código Preciso
-    description: "Generación de código puro. Refactors, tests, parches. Límite 200K — usa compactalo si lo superas."
-    input_token_threshold: 200000
-    context_window: 200000
+    description: "Generación de código puro. Refactors, tests, parches. Límite 1M — usa compactalo si lo superas."
+    input_token_threshold: 1000000
+    context_window: 1000000
     router_llm:
       enabled: false
     image_handling:
@@ -129,8 +129,8 @@ pseudo_models:
         tools_strict: true
         parallel_tools: true
         vision: false
-        context_window: 128000
-        note: "Go primary: MiMo V2.5 Pro. Especializado en código (~6.450 req/mes)."
+        context_window: 1048576
+        note: "Go primary: MiMo V2.5 Pro (1M contexto). Especializado en código (~6.450 req/mes)."
       - provider: opencode-go
         model: openai/mimo-v2-pro
         api_base: https://opencode.ai/zen/go/v1
@@ -139,8 +139,8 @@ pseudo_models:
         tools_strict: true
         parallel_tools: true
         vision: false
-        context_window: 128000
-        note: "Go fallback: MiMo V2 Pro."
+        context_window: 1048576
+        note: "Go fallback: MiMo V2 Pro (1M contexto)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -178,16 +178,16 @@ pseudo_models:
         tools_strict: false
         parallel_tools: true
         vision: true
-        context_window: 128000
-        note: "Fallback: MiMo V2 Omni. Visión nativa + texto."
+        context_window: 262144
+        note: "Fallback: MiMo V2 Omni (256K contexto). Visión nativa + texto."
     fallback_strategy: sequential
 
   # ── Normal (punto de entrada) ─────────────────────────────────────────────
   normal:
     display_name: Normal
-    description: "Punto de entrada recomendado. Coding extenso. Límite 500K tokens — usa /compact si lo superas."
-    input_token_threshold: 500000
-    context_window: 500000
+    description: "Punto de entrada recomendado. Coding extenso. Límite 256K tokens — usa /compact si lo superas."
+    input_token_threshold: 256000
+    context_window: 256000
     router_llm:
       enabled: false
     image_handling:
@@ -201,8 +201,8 @@ pseudo_models:
         tools_strict: true
         parallel_tools: true
         vision: false
-        context_window: 200000
-        note: "Go primary: Kimi K2.5. Rápido, tools estrictas (~9.250 req/mes)."
+        context_window: 262144
+        note: "Go primary: Kimi K2.5 (256K contexto). Rápido, tools estrictas (~9.250 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -216,9 +216,9 @@ pseudo_models:
   # ── Gratuito (sin Go) ─────────────────────────────────────────────────────
   normal-gratis:
     display_name: Normal Gratis
-    description: "Modelos gratuitos y de bajo costo. Límite 200K tokens — usa /compact si lo superas."
-    input_token_threshold: 200000
-    context_window: 200000
+    description: "Modelos gratuitos y de bajo costo. Límite 131K tokens — usa /compact si lo superas."
+    input_token_threshold: 131072
+    context_window: 131072
     router_llm:
       enabled: false
     image_handling:
@@ -261,8 +261,8 @@ pseudo_models:
         tools_strict: false
         parallel_tools: true
         vision: false
-        context_window: 200000
-        note: "Go primary: MiniMax M2.7. Velocidad extrema (~17.000 req/mes)."
+        context_window: 196608
+        note: "Go primary: MiniMax M2.7 (192K contexto). Velocidad extrema (~17.000 req/mes)."
       - provider: groq
         model: groq/openai/gpt-oss-20b
         context_window: 131072
@@ -323,8 +323,8 @@ pseudo_models:
         tools_strict: false
         parallel_tools: true
         vision: false
-        context_window: 128000
-        note: "Go primary: GLM-5.1. Compactación vía Go (~4.300 req/mes)."
+        context_window: 198000
+        note: "Go primary: GLM-5.1 (198K contexto). Compactación vía Go (~4.300 req/mes)."
       - provider: groq
         model: groq/openai/gpt-oss-20b
         context_window: 131072

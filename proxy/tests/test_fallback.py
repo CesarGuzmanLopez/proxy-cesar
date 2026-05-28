@@ -86,7 +86,8 @@ async def test_3_all_models_fail(async_client: AsyncClient, mock_litellm):
     )
     assert response.status_code == 503
     data = response.json()
-    assert "ALL_MODELS_FAILED" in str(data)
+    detail = data.get("detail", data)
+    assert detail["error"]["code"] == "server_error"
 
 
 @pytest.mark.asyncio

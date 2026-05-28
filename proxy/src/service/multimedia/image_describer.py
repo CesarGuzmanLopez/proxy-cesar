@@ -47,7 +47,7 @@ and comprehensive visual description. The model is instructed to preserve exact 
 including annotations and handwritten notes.
 """
 
-MAX_TOKENS_PER_IMAGE: int = 512
+MAX_TOKENS_PER_IMAGE: int = 2048
 """Maximum completion tokens per image description."""
 
 TAG_PREFIX: str = "IMAGE_DESCRIBED"
@@ -129,9 +129,9 @@ def _extract_user_context(messages: list[dict]) -> str | None:
                     if isinstance(part, dict) and part.get("type") == "text":
                         text = part.get("text", "").strip()
                         if text and not text.startswith("data:image/"):
-                            return text[:500]  # Limit to 500 chars
+                            return text
             elif isinstance(content, str):
-                return content.strip()[:500]
+                return content.strip()
     return None
 
 
@@ -398,7 +398,7 @@ async def auto_describe_images(
                 messages=[{"role": "user", "content": batch_content}],
                 api_base=api_base,
                 api_key=api_key,
-                max_tokens=512 * len(uncached),
+                max_tokens=2048 * len(uncached),
                 temperature=0.1,
             )
             # Extract usage tokens from response
@@ -438,15 +438,18 @@ async def auto_describe_images(
                             max(batch_tokens // len(parsed), 1) if batch_tokens else 0
                         )
                         for i, ref in enumerate(uncached):
-                            desc = str(parsed[i])[:500] if i < len(parsed) else ""
+                            desc = str(parsed[i]) if i < len(parsed) else ""
                             url_cache[ref["url"]] = desc
                             total_tokens += (
                                 tokens_per_image if tokens_per_image else len(desc) // 4
                             )
                             if valkey is not None and desc:
                                 try:
+                                    prompt_hash = hashlib.sha256(
+                                        (user_prompt or "").encode()
+                                    ).hexdigest()[:8]
                                     await valkey.set(
-                                        f"blob:desc:generic:{ref['url_hash']}",
+                                        f"blob:desc:{prompt_hash}:{ref['url_hash']}",
                                         desc,
                                         ex=BLOB_STORAGE_TTL_SECONDS,
                                     )
@@ -465,15 +468,18 @@ async def auto_describe_images(
                             else 0
                         )
                         for i, ref in enumerate(uncached):
-                            desc = str(descriptions[i])[:500] if i < len(descriptions) else ""
+                            desc = str(descriptions[i]) if i < len(descriptions) else ""
                             url_cache[ref["url"]] = desc
                             total_tokens += (
                                 tokens_per_image if tokens_per_image else len(desc) // 4
                             )
                             if valkey is not None and desc:
                                 try:
+                                    prompt_hash = hashlib.sha256(
+                                        (user_prompt or "").encode()
+                                    ).hexdigest()[:8]
                                     await valkey.set(
-                                        f"blob:desc:generic:{ref['url_hash']}",
+                                        f"blob:desc:{prompt_hash}:{ref['url_hash']}",
                                         desc,
                                         ex=BLOB_STORAGE_TTL_SECONDS,
                                     )

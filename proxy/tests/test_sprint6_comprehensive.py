@@ -229,7 +229,7 @@ async def test_context_alert_normal_in_metadata(client):
     pm = data["proxy_metadata"]
     assert "context_alert" in pm
     assert pm["context_alert"]["alert_level"] == "normal"
-    assert pm["context_alert"]["context_usage_pct"] == 6.0  # 30000/500000*100
+    assert pm["context_alert"]["context_usage_pct"] == 11.7  # ~30006/256000*100
 
 
 @pytest.mark.asyncio
@@ -239,7 +239,7 @@ async def test_context_alert_moderate_in_metadata(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 350000  # 70% of 500000 → moderate
+    conv.total_tokens = 179200  # ~70% of 256000 → moderate
     conv.pseudo_model = "normal"
     conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
@@ -286,7 +286,7 @@ async def test_context_alert_high_in_metadata(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 450000  # 90% of 500000 → high
+    conv.total_tokens = 230400  # ~90% of 256000 → high
     conv.pseudo_model = "normal"
     conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
@@ -312,7 +312,7 @@ async def test_context_alert_high_in_metadata(client):
         "/v1/chat/completions",
         json={
             "model": "normal",
-            "messages": [{"role": "user", "content": "Keep going."}],
+            "messages": [{"role": "user", "content": "Wrap up the project."}],
             "conversation_id": str(conv.id),
         },
     )
@@ -365,8 +365,7 @@ async def test_context_unusable_400_error(client):
     assert resp.status_code == 400
     data = resp.json()
     detail = data.get("detail", data)
-    assert detail["error"] == "CONTEXT_UNUSABLE"
-    assert "ContextUnusable" in str(detail)
+    assert detail["error"]["code"] == "context_length_exceeded"
 
 
 @pytest.mark.asyncio
@@ -411,7 +410,7 @@ async def test_context_unusable_streaming_400(client):
     assert resp.status_code == 400
     data = resp.json()
     detail = data.get("detail", data)
-    assert detail["error"] == "CONTEXT_UNUSABLE"
+    assert detail["error"]["code"] == "context_length_exceeded"
 
 
 # ── Explicit Compaction Tests via HTTP ───────────────────────────────────
@@ -777,7 +776,7 @@ async def test_streaming_response_includes_context_alert(client):
 
     conv = MagicMock()
     conv.id = uuid.uuid4()
-    conv.total_tokens = 350000  # 70% of 500000 → moderate
+    conv.total_tokens = 100000  # moderate range with 256K window
     conv.pseudo_model = "normal"
     conv.physical_model = "deepseek/deepseek-v4-flash"
     conv.created_at = datetime.now()
