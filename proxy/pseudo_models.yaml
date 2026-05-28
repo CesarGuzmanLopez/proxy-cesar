@@ -201,7 +201,7 @@ pseudo_models:
         tools_strict: true
         parallel_tools: true
         vision: false
-        context_window: 128000
+        context_window: 200000
         note: "Go primary: Kimi K2.5. Rápido, tools estrictas (~9.250 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
