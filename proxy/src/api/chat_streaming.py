@@ -5,6 +5,7 @@ Extracted from chat.py to keep individual files under 600 lines.
 
 import json
 import logging
+import re
 import uuid
 
 from fastapi import HTTPException
@@ -719,7 +720,10 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                         # Suppress "length" — set to null so client continues
                         if chunk_dict.get("choices"):
                             chunk_dict["choices"][0]["finish_reason"] = None
-                        yield f"data: {json.dumps(chunk_dict)}\n\n"
+                        # Final safeguard: remove reasoning_content with regex before sending
+                    chunk_json = json.dumps(chunk_dict)
+                    chunk_json = re.sub(r',"reasoning_content":[^,}]*', '', chunk_json)
+                    yield f"data: {chunk_json}\n\n"
                         finish_reason = "length"
                         break
 
@@ -740,7 +744,10 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                 chunk_json = chunk_json.replace(placeholder, real_value)
                         chunk_dict = json.loads(chunk_json)
 
-                    yield f"data: {json.dumps(chunk_dict)}\n\n"
+                    # Final safeguard: remove reasoning_content with regex before sending
+                    chunk_json = json.dumps(chunk_dict)
+                    chunk_json = re.sub(r',"reasoning_content":[^,}]*', '', chunk_json)
+                    yield f"data: {chunk_json}\n\n"
 
                     if fr:
                         finish_reason = fr
