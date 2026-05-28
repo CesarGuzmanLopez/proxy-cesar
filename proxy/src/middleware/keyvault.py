@@ -429,9 +429,13 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             "yes" if valkey else "no",
         )
 
-        # ── Trick Starlette: set _body to modified, mark as already read ──
+        # ── Store modified body in request.state (NOT request._body!) ─────
+        # Setting request._body breaks streaming responses with BaseHTTPMiddleware.
+        # Instead, we store the modified body and secrets in request.state so
+        # the handler can read them without touching request._body at all.
         modified_body = json.dumps(body).encode()
-        request._body = modified_body
+        request.state.keyvault_secrets = secrets
+        request.state._keyvault_body = modified_body
 
         # ── Call handler ──────────────────────────────────────────────────
         response = await call_next(request)

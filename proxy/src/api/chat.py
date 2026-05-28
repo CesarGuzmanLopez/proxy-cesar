@@ -93,6 +93,15 @@ async def chat_completions(
     db = app_state.db_session_factory()
     affinity = app_state.affinity
 
+    # If KeyVault middleware modified the body, use sanitized version
+    if hasattr(fastapi_request.state, "_keyvault_body"):
+        import json as _json
+        try:
+            modified_raw = _json.loads(fastapi_request.state._keyvault_body)
+            request = ChatRequest.model_validate(modified_raw)
+        except Exception:
+            pass
+
     # Determine conversation ID
     conversation_id = request.conversation_id or str(uuid.uuid4())
     request_id = str(uuid.uuid4())[:8]  # Unique ID for this request
