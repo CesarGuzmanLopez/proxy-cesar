@@ -451,11 +451,16 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         if not secrets:
             return response
 
-        # For streaming responses, don't try to wrap the iterator — it causes
-        # the iterator to be consumed twice (once in middleware, once in Starlette).
+        # For streaming responses, return a new StreamingResponse that forwards
+        # the original iterator without consuming it in the middleware.
         # Secrets won't appear in streaming chunks anyway (they were masked before
-        # reaching the LLM, and the LLM never saw real values).
+        # reaching the LLM), so there's nothing to re-inject.
         if isinstance(response, StreamingResponse):
-            return response
+            return StreamingResponse(
+                content=response.body_iterator,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
 
         return await _re_inject_non_streaming(response, secrets, _trace)
