@@ -6,7 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**proxy-cesar** is a deterministic multi-model LLM proxy in production at `chat.guzman-lopez.com`. It abstracts 10 pseudo-models over 30+ physical models from multiple providers (OpenCode Go, DeepSeek, Groq, OpenRouter) with automatic fallback, conversation state management, context compaction, and security features (KeyVault for secret detection).
+**proxy-cesar v1.0** is a deterministic multi-model LLM proxy in production at `chat.guzman-lopez.com`. It abstracts 10 pseudo-models over 30+ physical models from multiple providers (OpenCode Go, DeepSeek, Groq, OpenRouter) with automatic fallback, conversation state management, context compaction, Bearer auth, and security features (KeyVault for secret detection).
+
+**Tests:** 406 total, 72% coverage.
+**Auth:** `PROXY_API_KEY` required in production (401 without Bearer token). Public endpoints: `/health`, `/docs`, `/openapi.json`, `/redoc`.
 
 **Stack:** Python 3.13+, FastAPI, SQLite (conversations), Redis :6380 (affinity/cache/rate-limiting), async-first architecture, result monad for error handling.
 
@@ -24,10 +27,11 @@ pip install -e ".[dev]"
 python -m src.main
 
 # Tests
-pytest                              # all tests
+pytest                              # all tests (406)
+pytest tests/test_tool_detector.py  # content delegation tests (82)
 pytest tests/test_e2e.py -x         # stop on first failure
 pytest tests/test_chat.py -k streaming  # single file + filter
-pytest tests/ --cov=src             # coverage report
+pytest tests/ --cov=src             # coverage report (72%)
 
 # Lint & format
 ruff check src/
@@ -35,7 +39,10 @@ ruff format src/
 
 # Health check (running proxy required)
 curl http://localhost:9110/health
+
+# Chat (auth required if PROXY_API_KEY is set)
 curl -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PROXY_API_KEY" \
   -d '{"model":"normal","messages":[{"role":"user","content":"hola"}]}' \
   http://localhost:9110/v1/chat/completions
 
@@ -145,6 +152,8 @@ match service.resolve_model(request.model):
 - Each pseudo-model has 1+ physical models (primary + fallbacks)
 - Fallback strategy is sequential (try primary, then fallbacks in order) except `compactador` which uses `by_context_window`
 - Model aliases (gpt-4o → normal, o3 → pensamiento-profundo-caro, etc.)
+- Context windows actualizados a valores reales de cada modelo:
+  kimi-k2.5/k2.6 = 256K, MiMo v2.5/V2 = 1M, GLM-5.1 = 198K, etc.
 
 **5. Affinity: Conversation Pinning (Respects User Choice)**
 - User chooses pseudo-model → proxy respects it (never changes automatically)
@@ -159,7 +168,13 @@ match service.resolve_model(request.model):
 - Stores real values in Redis, replaces with `[KEYVAULT:hash]` before sending to LLM
 - Re-injects real values in response (LLM never sees them)
 
-**7. Blob Vault: Content Transformation**
+**7. Auth: Bearer Token (Required in Production)**
+- `PROXY_API_KEY` env var → validada en cada request (excepto `/health`, `/docs`, etc.)
+- Si la variable está vacía → dev mode (auth deshabilitado)
+- Error `401 MISSING_AUTH` / `401 INVALID_API_KEY` si la key no coincide
+- Middleware registrado PRIMERO en main.py para ejecutarse antes que cualquier otro
+
+**8. Blob Vault: Content Transformation**
 - Images → described by vision model → `[BLOB:hash]` for non-vision models
 - PDFs → text extracted → `[BLOB:hash]`
 - Stored in Redis (24h TTL)
@@ -362,7 +377,7 @@ Reference: `python.md` (comprehensive guide, includes all rules).
 | Variable | Default | Description |
 |---|---|---|
 | `PROXY_PORT` | 9110 | HTTP port |
-| `PROXY_API_KEY` | — | Bearer token (empty = dev mode) |
+| `PROXY_API_KEY` | — | Bearer token (empty = dev mode; **required in production**) |
 | `DATABASE_URL` | sqlite+aiosqlite:///./proxy.db | SQLite |
 | `VALKEY_URL` | valkey://localhost:6380 | Redis native |
 | `OPENCODE_API_KEY` | — | OpenCode Go (primary) |
