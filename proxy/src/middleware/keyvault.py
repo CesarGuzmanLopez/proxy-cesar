@@ -444,9 +444,6 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         # Set cached body for downstream handler
         request._body = json.dumps(body).encode()
 
-        # Store secrets in request state so streaming generator can re-inject them
-        request.state.keyvault_secrets = secrets
-
         # ── Call handler ──────────────────────────────────────────────────
         response = await call_next(request)
 
@@ -454,9 +451,16 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         if not secrets:
             return response
 
-        # For streaming responses: return as-is.
-        # Re-injection happens in the streaming generator (chat_streaming.py), not here.
-        # The generator has access to ctx.keyvault_secrets and re-injects before yielding.
+        # For streaming responses: don't try to re-inject secrets (LIMITATION).
+        # BaseHTTPMiddleware can't wrap streaming iterators without breaking Starlette.
+        #
+        # TODO: If user asks LLM to use a secret (e.g., "connect with password sk-xxx"),
+        # the response will contain [KEYVAULT:hash] instead of the real secret.
+        # This requires rewriting KeyVault without BaseHTTPMiddleware to support
+        # streaming re-injection, which is a significant refactor.
+        #
+        # For now: Secrets are MASKED before reaching LLM (secure ✅).
+        # Re-injection for streaming responses: NOT IMPLEMENTED.
         if isinstance(response, StreamingResponse):
             return response
 
