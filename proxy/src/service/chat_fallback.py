@@ -35,6 +35,7 @@ from src.domain.types import Result, Ok, Err
 from src.domain.errors import ContextTooLargeForAllModels, AllModelsFailed
 from src.service.capability_detector import estimate_tokens
 from src.service.chat_models import FallbackInfo
+from src.service.smart_fallback import SmartFallback
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +363,8 @@ async def call_with_fallback(
     stream: bool = False,
     estimated_input: int | None = None,
     start_index: int = 0,
+    conversation_id: str | None = None,
+    valkey_client=None,
     **kwargs,
 ) -> tuple:
     """Try each physical model in order. On retryable errors, move to next.
@@ -381,11 +384,18 @@ async def call_with_fallback(
 
     ``start_index`` (default 0) allows resuming from a specific position in
     the physical models list — used by streaming continuation.
+
+    FASE 2: conversation_id + valkey_client enable adaptive fallback scoring.
     """
     fallback_info = FallbackInfo()
     last_error: Exception | None = None
     _trace_id = str(uuid.uuid4())[:8]
     _start = time.monotonic()
+
+    # FASE 2: Initialize SmartFallback if valkey available
+    smart_fallback: SmartFallback | None = None
+    if valkey_client and conversation_id:
+        smart_fallback = SmartFallback(valkey_client)
 
     _RETRYABLE = (
         ServiceUnavailableError,
@@ -518,6 +528,14 @@ async def call_with_fallback(
                 response = response_dict
 
             elapsed = time.monotonic() - _start
+            # FASE 2: Record successful call
+            if smart_fallback and conversation_id:
+                await smart_fallback.record_call(
+                    conversation_id,
+                    phys.model,
+                    elapsed_ms=int(elapsed * 1000),
+                    success=True,
+                )
             _log_model_call_result(response, phys, stream, _trace_id, elapsed)
             return response, fallback_info
 
@@ -526,12 +544,22 @@ async def call_with_fallback(
             fallback_info.attempted_models.append(phys.model)
             fallback_info.applied = True
             fallback_info.reason = f"{type(e).__name__}: {phys.model}"
+            elapsed = time.monotonic() - _start
+            # FASE 2: Record failed call
+            if smart_fallback and conversation_id:
+                await smart_fallback.record_call(
+                    conversation_id,
+                    phys.model,
+                    elapsed_ms=int(elapsed * 1000),
+                    success=False,
+                    error=str(e)[:100],
+                )
             logger.warning(
                 "llm_fallback | trace=%s model=%s error=%s elapsed=%.1fs",
                 _trace_id,
                 phys.model,
                 type(e).__name__,
-                time.monotonic() - _start,
+                elapsed,
             )
             continue
 

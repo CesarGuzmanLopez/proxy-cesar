@@ -38,6 +38,7 @@ from sqlalchemy import inspect as sa_inspect  # noqa: E402
 
 from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter, setup_valkey  # noqa: E402
 from src.adapters.litellm.client import setup_litellm  # noqa: E402
+from src.service.compactor.explicit import CompactionOrchestrator  # noqa: E402
 from src.api.chat import router as chat_router  # noqa: E402
 from src.api.conversation_operations import router as conversation_operations_router  # noqa: E402
 from src.api.conversations import router as conversations_router  # noqa: E402
@@ -107,7 +108,7 @@ async def lifespan(app: FastAPI):
             if "conversations" not in inspector.get_table_names():
                 return
             existing_cols = {c["name"] for c in inspector.get_columns("conversations")}
-            for col_name in ("images_described", "images_degraded_manually"):
+            for col_name in ("images_described", "images_degraded_manually", "version"):
                 if col_name not in existing_cols:
                     sync_conn.exec_driver_sql(
                         f"ALTER TABLE conversations ADD COLUMN {col_name} "
@@ -124,6 +125,9 @@ async def lifespan(app: FastAPI):
     valkey_client = await setup_valkey(settings)
     app.state.valkey = valkey_client
     app.state.affinity = ValkeyAffinityAdapter(valkey_client)
+
+    # FASE 3: Compaction Orchestrator
+    app.state.compaction_orchestrator = CompactionOrchestrator()
 
     # Metrics — persist to Valkey so counters survive restarts
     from src.api.metrics import metrics as _metrics

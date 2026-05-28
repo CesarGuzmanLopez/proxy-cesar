@@ -13,7 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
 from src.service.capability_detector import load_session_capabilities
-from src.service.compactor.explicit import compact_conversation
+from src.service.compactor.explicit import compact_conversation, CompactionOrchestrator
 
 router = APIRouter()
 
@@ -36,22 +36,39 @@ async def compact_conversation_endpoint(
     plan-proxy.md §11: Compactación explícita de conversaciones.
     For histories >500K tokens, dispatches to arq background worker.
 
+    FASE 3: Uses CompactionOrchestrator to prevent race conditions.
+    Returns 409 if compaction already in progress for this conversation.
+
     Returns:
         Dict with snapshot_id, tokens_before/after, preview, status.
     """
     config = fastapi_request.app.state.config
     arq_pool = getattr(fastapi_request.app.state, "arq_pool", None)
     valkey = getattr(fastapi_request.app.state, "valkey", None)
+    orchestrator: CompactionOrchestrator = fastapi_request.app.state.compaction_orchestrator
 
     db = fastapi_request.app.state.db_session_factory()
     try:
-        return await compact_conversation(
+        # FASE 3: Use orchestrator to prevent simultaneous compactions
+        success, result = await orchestrator.try_compact(
             conversation_id=conversation_id,
             db=db,
             config=config,
+            trigger="explicit",
             arq_pool=arq_pool,
             valkey=valkey,
         )
+
+        if not success:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "COMPACTION_IN_PROGRESS",
+                    "message": f"Compaction already in progress for conversation {conversation_id}",
+                },
+            )
+
+        return result
     except HTTPException:
         raise
     except Exception as e:

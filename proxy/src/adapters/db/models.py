@@ -62,6 +62,9 @@ class Conversation(ConversationBase, table=True):
         default=None, sa_type=SA_Uuid(), foreign_key="conversation_snapshots.id"
     )
 
+    # FASE 3: Optimistic locking for future multi-writer scenarios
+    version: int = Field(default=0, ge=0)
+
     turns: list["ConversationTurn"] = Relationship(back_populates="conversation")
     snapshots: list["ConversationSnapshot"] = Relationship(
         back_populates="conversation",

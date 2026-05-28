@@ -6,8 +6,11 @@ For histories >500K tokens, dispatches to arq for async processing.
 
 python.md §7: async-first.
 python.md §3: errors as data in domain, exceptions at boundary.
+
+FASE 3: CompactionOrchestrator with per-conversation mutex to prevent race conditions.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -29,6 +32,77 @@ from src.service.compactor.prompts import build_explicit_compaction_prompt
 logger = logging.getLogger(__name__)
 
 _MIN_RETENTION = 0.05
+
+
+# ── Compaction Orchestrator (FASE 3) ──────────────────────────────────────
+
+
+class CompactionOrchestrator:
+    """Single coordinator for all compaction strategies.
+
+    Prevents race conditions by ensuring only one compaction per conversation
+    at a time using asyncio.Lock.
+    """
+
+    def __init__(self):
+        self._locks: dict[uuid.UUID | str, asyncio.Lock] = {}
+
+    async def try_compact(
+        self,
+        conversation_id: str,
+        db: AsyncSessionPort,
+        config,
+        trigger: str = "explicit",  # "explicit", "pre", "continuous"
+        arq_pool=None,
+        valkey=None,
+    ) -> tuple[bool, dict]:
+        """Try to acquire lock and start compaction.
+
+        Args:
+            conversation_id: Conversation ID to compact
+            db: Async DB session
+            config: Proxy config
+            trigger: What triggered the compaction
+            arq_pool: Optional arq pool for large histories
+            valkey: Optional Valkey client for images
+
+        Returns:
+            (success: bool, result: dict) where:
+            - success=True: compaction started/completed, result has details
+            - success=False: compaction already in progress, result is empty dict
+        """
+        conv_uuid = _parse_uuid(conversation_id)
+
+        # Get or create lock for this conversation
+        lock = self._locks.setdefault(conv_uuid, asyncio.Lock())
+
+        # Try to acquire non-blocking
+        if not lock.acquire(blocking=False):
+            logger.info(
+                "compact_already_in_progress conv=%s trigger=%s",
+                str(conv_uuid)[:12],
+                trigger,
+            )
+            return False, {}
+
+        try:
+            # Lock acquired - proceed with compaction
+            result = await compact_conversation(
+                conversation_id=conversation_id,
+                db=db,
+                config=config,
+                arq_pool=arq_pool,
+                valkey=valkey,
+            )
+            return True, result
+        finally:
+            lock.release()
+
+    def reset_lock(self, conversation_id: str) -> None:
+        """Reset lock for a conversation (e.g., after cleanup)."""
+        conv_uuid = _parse_uuid(conversation_id)
+        if conv_uuid in self._locks:
+            del self._locks[conv_uuid]
 
 
 def _compaction_max_tokens(estimated_input: int, default: int = 12000) -> int:

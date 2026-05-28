@@ -134,6 +134,10 @@ async def process_chat_request(
     conv_id = conversation_id or str(uuid.uuid4())
     conv_uuid = _parse_uuid(conv_id)
 
+    # FASE 1: Estimate tokens early for affinity upgrade check
+    # (will be recalculated after history + auto-describe, but gives early signal)
+    _est_input_early = estimate_tokens(messages)
+
     # Step 4-11: Load session, check switch, load/create conversation, resolve model, set affinity
     (
         existing_affinity,
@@ -151,6 +155,7 @@ async def process_chat_request(
         pseudo_model_name,
         pm_schema,
         config,
+        estimated_input=_est_input_early,
     )
     # Sprint 5: Auto-describe images on pseudo-model switch
     auto_describe_meta: dict | None = None
@@ -241,6 +246,9 @@ async def process_chat_request(
         tools=tools,
         tool_choice=tool_choice,
         thinking=thinking,
+        # FASE 2: SmartFallback parameters
+        conversation_id=conv_id,
+        valkey_client=valkey,
     )
     _t_llm_elapsed = time.monotonic() - _t_llm_start
 
@@ -266,6 +274,14 @@ async def process_chat_request(
         pass
 
     # Sprint 11: Update physical_model from actual response when fallback occurred.
+    # FASE 1: Record failure if pinned model failed
+    if fallback_info.applied and existing_affinity:
+        await affinity.record_failure(
+            conv_id,
+            existing_affinity,
+            error=fallback_info.reason or "fallback_applied",
+        )
+
     if fallback_info.applied:
         actual_model: str | None = None
         if hasattr(response, "model"):
@@ -397,11 +413,14 @@ async def _resolve_session_conv_and_models(
     pseudo_model_name: str,
     pm_schema: PseudoModelSchema,
     config: ProxyConfigSchema,
+    estimated_input: int = 0,
 ) -> tuple:
     """Steps 4-11: Load/create conversation, session, check switch, resolve physical model.
 
     Merged from _resolve_session_and_models + _load_or_create_conv
     to avoid loading Conversation twice (and to eagerly load .turns).
+
+    FASE 1: Added dynamic affinity upgrade logic.
     """
     existing_affinity = await affinity.get(conv_id)
 
@@ -426,6 +445,27 @@ async def _resolve_session_conv_and_models(
         and not is_pinned_model_eligible(pinned, eligible)
     ):
         pinned = None
+
+    # FASE 1: Dynamic affinity upgrade check
+    if pinned and estimated_input > 0:
+        pinned_model_schema = next(
+            (p for p in pm_schema.physical_models if p.model == pinned), None
+        )
+        if pinned_model_schema:
+            should_upgrade = await affinity.should_upgrade(
+                conv_id,
+                pinned,
+                pinned_model_schema.context_window or 0,
+                estimated_input,
+            )
+            if should_upgrade:
+                logger.info(
+                    "affinity_dynamic_upgrade conv=%s pinned=%s → upgrading",
+                    str(conv_uuid)[:12],
+                    pinned,
+                )
+                pinned = None
+
     if pinned:
         selected_phys = next(
             (p for p in pm_schema.physical_models if p.model == pinned),
