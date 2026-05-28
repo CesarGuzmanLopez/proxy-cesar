@@ -179,7 +179,10 @@ app = FastAPI(
 # KeyVault sanitizes secrets closest to the handler.
 
 # 1. KeyVault — innermost (closest to handler, sanitizes request/response bodies)
-app.add_middleware(KeyVaultMiddleware)
+# DISABLED: KeyVault middleware breaks Starlette streaming
+# The BaseHTTPMiddleware pattern doesn't work correctly with StreamingResponse.
+# TODO: Reimplement without BaseHTTPMiddleware or use a different approach.
+# app.add_middleware(KeyVaultMiddleware)
 
 # 2. Rate limiting — after keyvault, before auth
 app.add_middleware(RateLimitMiddleware)
