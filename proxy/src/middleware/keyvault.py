@@ -433,6 +433,13 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
                 break
             insert_pos = i + 1
         msgs.insert(insert_pos, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
+
+        # If streaming: pass through unmodified. BaseHTTPMiddleware breaks
+        # streaming responses when request.state is touched. The handler
+        # will handle secret detection natively for streaming requests.
+        if body.get("stream"):
+            return await call_next(request)
+
         # ── Store secrets in request.state for handler to use ─────────────
         # Do NOT set request._body — it breaks streaming responses.
         # The handler reads request.state.keyvault_secrets and applies masking.

@@ -119,7 +119,6 @@ async def chat_completions(
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
     # If KeyVault middleware sanitized the body, use the sanitized messages
-    # (avoids BaseHTTPMiddleware + request._body streaming issue)
     if hasattr(fastapi_request.state, "_keyvault_body"):
         try:
             import json as _json
@@ -127,6 +126,29 @@ async def chat_completions(
             sanitized_msgs = sanitized.get("messages", [])
             if sanitized_msgs:
                 messages = sanitized_msgs
+        except Exception:
+            pass
+
+    # For streaming: detect secrets natively (middleware skips streaming)
+    keyvault_secrets = {}
+    if request.stream and not hasattr(fastapi_request.state, "_keyvault_body"):
+        try:
+            from src.middleware.keyvault import _mask_messages, _KEYVAULT_SYSTEM_PROMPT
+            secrets: dict[str, str] = {}
+            body_copy = {"messages": [dict(m) for m in messages]}
+            _mask_messages(body_copy, secrets)
+            if secrets:
+                # Inject KeyVault system prompt
+                msgs = body_copy["messages"]
+                insert_pos = 0
+                for i, m in enumerate(msgs):
+                    if m.get("role") != "system":
+                        break
+                    insert_pos = i + 1
+                msgs.insert(insert_pos, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
+                messages = msgs
+                fastapi_request.state.keyvault_secrets = secrets
+                logger.info("keyvault_handler_stream secrets=%d", len(secrets))
         except Exception:
             pass
 
