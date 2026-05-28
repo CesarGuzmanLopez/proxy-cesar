@@ -256,16 +256,41 @@ def _re_inject_recursive(obj: object, secrets: dict[str, str]) -> object:
 async def _re_inject_non_streaming(
     response, secrets: dict[str, str], trace_id: str = "????"
 ) -> JSONResponse:
-    """Re-inject secrets into a non-streaming response."""
+    """Re-inject secrets into a non-streaming response.
+
+    Note: For streaming responses, the body_iterator has already been consumed
+    by the SSE generator, so we return the response unchanged. Streaming
+    re-injection happens inline in _build_re_inject_stream.
+    """
     try:
-        if hasattr(response, "body_iterator") and response.body_iterator is not None:
-            chunks: list[bytes] = [chunk async for chunk in response.body_iterator]
-            body_bytes = b"".join(chunks)
-        elif hasattr(response, "body") and response.body:
+        # Try to get body content
+        body_bytes = None
+
+        if hasattr(response, "body") and response.body:
             body_bytes = response.body
-        else:
+        elif hasattr(response, "body_iterator") and response.body_iterator is not None:
+            # Check if body_iterator is already consumed (empty)
+            chunks: list[bytes] = []
+            try:
+                async for chunk in response.body_iterator:
+                    chunks.append(chunk)
+                body_bytes = b"".join(chunks)
+            except (StopAsyncIteration, RuntimeError):
+                # Iterator was already consumed or closed
+                logger.debug(
+                    "keyvault_skip_re_inject trace=%s: body_iterator already consumed",
+                    trace_id,
+                )
+                return response
+
+        if not body_bytes:
+            logger.debug(
+                "keyvault_skip_re_inject trace=%s: empty body, skipping re-injection",
+                trace_id,
+            )
             return response
 
+        # Parse and re-inject secrets
         resp_json = json.loads(body_bytes)
         resp_json = _re_inject_recursive(resp_json, secrets)
         headers = dict(response.headers)
@@ -275,6 +300,14 @@ async def _re_inject_non_streaming(
             status_code=response.status_code,
             headers=headers,
         )
+    except json.JSONDecodeError as e:
+        # Response body is not JSON (e.g., empty or text), skip re-injection
+        logger.debug(
+            "keyvault_skip_re_inject trace=%s: not valid JSON (%s), returning unchanged",
+            trace_id,
+            str(e)[:50],
+        )
+        return response
     except Exception as exc:
         logger.error("keyvault_re_inject_error trace=%s: %s", trace_id, exc)
         return response
