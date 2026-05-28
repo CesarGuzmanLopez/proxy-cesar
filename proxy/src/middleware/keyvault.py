@@ -460,7 +460,7 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             return StreamingResponse(
                 content=_build_re_inject_stream(
                     response.body_iterator, secrets, _trace
-                )(),
+                ),
                 status_code=response.status_code,
                 headers=headers,
                 media_type=response.media_type,
