@@ -21,10 +21,13 @@ logger = logging.getLogger(__name__)
 class ValkeyAffinityAdapter:
     """Adapter implementing AffinityPort protocol using Valkey.
 
+    Philosophy: User chooses pseudo-model, proxy respects it and pins the physical model.
+    Only change model on FAILURE (via fallback), never on size/capacity.
+
     Features:
-    - Dynamic TTL: extended if conversation stays active
-    - Upgrade detection: should_upgrade() triggers model change
-    - Failure tracking: records errors per model per conversation
+    - Dynamic TTL: extended if conversation stays active (sliding window)
+    - Failure tracking: records errors to inform fallback decisions
+    - Affinity invalidation: removed only if parallel tools incompatible
     """
 
     def __init__(self, client: valkey_async.Valkey) -> None:
@@ -123,53 +126,6 @@ class ValkeyAffinityAdapter:
 
         return 0
 
-    async def should_upgrade(
-        self,
-        conversation_id: str,
-        physical_model: str,
-        context_window: int,
-        input_tokens: int,
-    ) -> bool:
-        """Determine if pinned model should be upgraded.
-
-        Triggers upgrade if:
-        1. Input tokens exceed 70% of context window
-        2. Model has failed 2+ times in last hour
-
-        Args:
-            conversation_id: Conversation ID
-            physical_model: Currently pinned model
-            context_window: Context window of pinned model
-            input_tokens: Estimated input tokens
-
-        Returns:
-            True if should upgrade to next model, False otherwise
-        """
-        # Check 1: Input size exceeds 70% of context window
-        if context_window > 0 and input_tokens > (context_window * 0.7):
-            logger.debug(
-                "affinity_upgrade_trigger input_exceeds_context "
-                "conv=%s model=%s input=%d window=%d",
-                str(conversation_id)[:12],
-                physical_model,
-                input_tokens,
-                context_window,
-            )
-            return True
-
-        # Check 2: Model has failed recently
-        failure_count = await self.get_failure_count(conversation_id, physical_model)
-        if failure_count >= 2:
-            logger.debug(
-                "affinity_upgrade_trigger too_many_failures "
-                "conv=%s model=%s failures=%d",
-                str(conversation_id)[:12],
-                physical_model,
-                failure_count,
-            )
-            return True
-
-        return False
 
 
 async def setup_valkey(settings: Settings) -> valkey_async.Valkey:
