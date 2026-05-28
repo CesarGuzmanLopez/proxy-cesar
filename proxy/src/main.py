@@ -179,8 +179,7 @@ app = FastAPI(
 # KeyVault sanitizes secrets closest to the handler.
 
 # 1. KeyVault — innermost (closest to handler, sanitizes request/response bodies)
-# TEMP: Disabled for streaming debug
-# app.add_middleware(KeyVaultMiddleware)
+app.add_middleware(KeyVaultMiddleware)
 
 # 2. Rate limiting — after keyvault, before auth
 app.add_middleware(RateLimitMiddleware)
