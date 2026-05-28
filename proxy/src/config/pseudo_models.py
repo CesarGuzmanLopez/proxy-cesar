@@ -104,10 +104,6 @@ class PseudoModelSchema(BaseModel, extra="forbid"):
             )
         return v
 
-    @model_validator(mode="after")
-    def _validate_cross_dependencies(self):
-        return self
-
 
 # ── Top-level config ────────────────────────────────────────────────────────
 

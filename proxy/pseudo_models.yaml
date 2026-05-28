@@ -1,18 +1,17 @@
 # pseudo_models.yaml — Proxy pseudo-model configuration
 #
-# context_window en pseudo-modelos es intencionalmente menor que el
-# context_window de los physical models. Esto obliga al cliente a compactar
-# antes de alcanzar el límite real del proveedor, mejorando la experiencia.
-# El physical model tiene su propio context_window que es el real.
-# NO es un bug — es diseño deliberado.
+# context_window e input_token_threshold de cada pseudo-modelo reflejan
+# el mínimo de los context_window de sus physical models, con excepcion
+# del modelo "compactador" que puede procesar hasta 3M tokens dividiendo
+# en pedazos segun el modelo disponible.
 
 pseudo_models:
   # ── Razonamiento premium ──────────────────────────────────────────────────
   pensamiento-profundo-caro:
     display_name: Pensamiento Profundo
-    description: "Razonamiento de máximo nivel. Límite 120K tokens — si lo superas usa compactalo para continuar."
-    input_token_threshold: 120000
-    context_window: 120000
+    description: "Razonamiento de máximo nivel. Límite 1M tokens — si lo superas usa /compact para continuar."
+    input_token_threshold: 1000000
+    context_window: 1000000
     router_llm:
       enabled: true
       suggester: pensamiento-rapido
@@ -43,16 +42,16 @@ pseudo_models:
   # ── Razonamiento ligero ────────────────────────────────────────────────────
   pensamiento-rapido:
     display_name: Pensamiento Rápido
-    description: "Razonamiento ligero. Debug, code review, análisis rápidos. Límite 120K — usa compactalo si lo superas."
-    input_token_threshold: 120000
-    context_window: 120000
+    description: "Razonamiento ligero. Debug, code review, análisis rápidos. Límite 1M tokens — usa /compact si lo superas."
+    input_token_threshold: 1000000
+    context_window: 1000000
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/qwen3.6-plus
+        model: qwen3.6-plus
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -74,16 +73,16 @@ pseudo_models:
   # ── Desarrollo sostenido ──────────────────────────────────────────────────
   tareas-avanzadas:
     display_name: Tareas Avanzadas
-    description: "Desarrollo profundo y sostenido. Límite 256K tokens — usa compactalo si lo superas."
-    input_token_threshold: 256000
-    context_window: 256000
+    description: "Desarrollo profundo y sostenido. Límite 262K tokens — usa /compact si lo superas."
+    input_token_threshold: 262144
+    context_window: 262144
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/kimi-k2.6
+        model: kimi-k2.6
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -110,10 +109,10 @@ pseudo_models:
         note: "Fallback 2: DeepSeek V4 Flash directo."
     fallback_strategy: sequential
 
-  # ── Código preciso (NUEVO) ────────────────────────────────────────────────
+  # ── Código preciso ────────────────────────────────────────────────
   codigo-preciso:
     display_name: Código Preciso
-    description: "Generación de código puro. Refactors, tests, parches. Límite 1M — usa compactalo si lo superas."
+    description: "Generación de código puro. Refactors, tests, parches. Límite 1M tokens — usa /compact si lo superas."
     input_token_threshold: 1000000
     context_window: 1000000
     router_llm:
@@ -122,7 +121,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/mimo-v2.5-pro
+        model: mimo-v2.5-pro
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -132,7 +131,7 @@ pseudo_models:
         context_window: 1048576
         note: "Go primary: MiMo V2.5 Pro (1M contexto). Especializado en código (~6.450 req/mes)."
       - provider: opencode-go
-        model: openai/mimo-v2-pro
+        model: mimo-v2-pro
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -154,9 +153,9 @@ pseudo_models:
   # ── Visión ────────────────────────────────────────────────────────────────
   vision:
     display_name: Visión
-    description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 120K tokens — usa compactalo si superas."
-    input_token_threshold: 120000
-    context_window: 120000
+    description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 131K tokens — usa /compact si superas."
+    input_token_threshold: 131072
+    context_window: 131072
     router_llm:
       enabled: false
     image_handling:
@@ -171,7 +170,7 @@ pseudo_models:
         context_window: 131072
         note: "Primary: Visión vía Groq. 131K contexto. Rápido y barato."
       - provider: opencode-go
-        model: openai/mimo-v2-omni
+        model: mimo-v2-omni
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -185,16 +184,16 @@ pseudo_models:
   # ── Normal (punto de entrada) ─────────────────────────────────────────────
   normal:
     display_name: Normal
-    description: "Punto de entrada recomendado. Coding extenso. Límite 256K tokens — usa /compact si lo superas."
-    input_token_threshold: 256000
-    context_window: 256000
+    description: "Punto de entrada recomendado. Coding extenso. Límite 262K tokens — usa /compact si lo superas."
+    input_token_threshold: 262144
+    context_window: 262144
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/kimi-k2.5
+        model: kimi-k2.5
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -254,7 +253,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/minimax-m2.7
+        model: minimax-m2.7
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -273,19 +272,19 @@ pseudo_models:
         note: "Fallback: GPT-OSS 20B vía Groq (1000+ t/s)."
     fallback_strategy: sequential
 
-  # ── Flash Lowcost (NUEVO) ──────────────────────────────────────────────────
+  # ── Flash Lowcost ──────────────────────────────────────────────────
   flash-lowcost:
     display_name: Flash Lowcost
-    description: "Sub-agentes baratos. Clasificación, extracción, parsing. Límite 128K."
-    input_token_threshold: 128000
-    context_window: 128000
+    description: "Sub-agentes baratos. Clasificación, extracción, parsing. Límite 1M tokens."
+    input_token_threshold: 1000000
+    context_window: 1000000
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/qwen3.5-plus
+        model: qwen3.5-plus
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -307,7 +306,7 @@ pseudo_models:
   # ── Compactador (con helpers internos) ────────────────────────────────────
   compactador:
     display_name: Compactador
-    description: "Compactación de contexto con delegación de modelos. GLM-5.1 Go, fallback a GPT-OSS Groq (131K), DeepSeek Flash (1M) para historias masivas."
+    description: "Compactación de contexto con delegación de modelos. Puede procesar hasta 3M tokens dividiendo en pedazos según el modelo disponible."
     input_token_threshold: 3000000
     context_window: 3000000
     router_llm:
@@ -316,7 +315,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/glm-5.1
+        model: glm-5.1
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true

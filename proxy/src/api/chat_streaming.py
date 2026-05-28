@@ -345,7 +345,6 @@ async def _handle_streaming_with_db(
         desc_in_flight, auto_describe_meta = await handle_auto_describe(
             conv=conv,
             current_pseudo_name=conv.pseudo_model,
-            new_pm_schema=pm_schema,
             config=config,
             db=db,
             pinned_physical_model=physical_model,

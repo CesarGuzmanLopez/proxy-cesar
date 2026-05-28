@@ -390,6 +390,23 @@ async def auto_describe_images(
             metadata = _extract_image_metadata(ref["url"])
             metadata_cache[ref["url"]] = metadata
 
+        # Safety check: verify batch fits in a reasonable context window
+        # Most vision models have 128K context; if batch exceeds 70%, log a warning
+        # NOTE: Full batch splitting is handled by tool_detector.py:_describe_image_batch
+        from src.service.multimedia.image_processor import can_batch_fit, estimate_image_tokens
+
+        first_degraded = degrade_image(uncached[0]["url"])
+        sample_tokens = estimate_image_tokens(first_degraded, "high")
+        instruction_tokens = len(instruction) // 4
+        if not can_batch_fit(len(uncached), sample_tokens, 128000, instruction_tokens):
+            logger.warning(
+                "image_batch_large vision_model=%s images=%d estimated_tokens=%d "
+                "consider_reducing_batch_or_model_ctx",
+                vision_model,
+                len(uncached),
+                len(uncached) * sample_tokens,
+            )
+
         batch_tokens: int = 0
         general_summary: str | None = None
         try:

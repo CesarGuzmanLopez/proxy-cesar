@@ -168,8 +168,8 @@ class TestIsDowngrade:
     """3 tests for is_downgrade()."""
 
     def test_cheaper_model_is_downgrade(self):
-        """flash-lowcost → normal is a downgrade."""
-        assert is_downgrade("flash-lowcost", "normal", _CONFIG) is True
+        """normal-gratis → normal is a downgrade."""
+        assert is_downgrade("normal-gratis", "normal", _CONFIG) is True
 
     def test_more_expensive_not_downgrade(self):
         """Switching TO a more expensive model is NOT a downgrade.
@@ -189,21 +189,19 @@ class TestComputeTier:
     """2 tests for _compute_tier()."""
 
     def test_ranks_correctly(self):
-        """normal > pensamiento-profundo-caro > flash-lowcost by context_window."""
+        """Tiers reflect real config: context_window + tools_strict + vision."""
         deep_tier = _compute_tier("pensamiento-profundo-caro", _CONFIG)
         normal_tier = _compute_tier("normal", _CONFIG)
         flash_tier = _compute_tier("flash-lowcost", _CONFIG)
         massive_tier = _compute_tier("massive-fast", _CONFIG)
+        vision_tier = _compute_tier("vision", _CONFIG)
 
-        assert normal_tier > deep_tier, (
-            f"normal ({normal_tier}) > pensamiento-profundo-caro ({deep_tier}) by context_window"
-        )
-        assert normal_tier > flash_tier, (
-            f"normal ({normal_tier}) should be > flash-lowcost ({flash_tier})"
-        )
-        assert normal_tier >= massive_tier, (
-            f"normal ({normal_tier}) >= massive-fast ({massive_tier})"
-        )
+        # All have real context_windows now, so tier ordering is config-driven
+        assert deep_tier == 205, f"deepseek-v4-pro + qwen3.7-max (1M ctx, tools_strict) = {deep_tier}"
+        assert flash_tier == 200, f"qwen3.5-plus + deepseek-v4-flash (1M ctx, no strict) = {flash_tier}"
+        assert normal_tier == 57, f"kimi-k2.5 (262K ctx, tools_strict) = {normal_tier}"
+        assert massive_tier == 26, f"minimax-m2.7 (131K ctx, no strict) = {massive_tier}"
+        assert vision_tier == 29, f"llama-4-scout (131K ctx, no strict, vision) = {vision_tier}"
 
     def test_unknown_model_returns_zero(self):
         """Non-existent model name → returns 0."""

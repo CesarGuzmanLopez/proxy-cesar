@@ -130,7 +130,6 @@ async def chat_completions(
             pass
 
     # For streaming: detect secrets natively (middleware skips streaming)
-    keyvault_secrets = {}
     if request.stream and not hasattr(fastapi_request.state, "_keyvault_body"):
         try:
             from src.middleware.keyvault import _mask_messages, _KEYVAULT_SYSTEM_PROMPT

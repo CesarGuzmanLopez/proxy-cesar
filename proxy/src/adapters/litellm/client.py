@@ -211,16 +211,26 @@ async def call_litellm(
     api_base = kwargs.pop("api_base", None)
     api_key = kwargs.pop("api_key", None)
 
+    # Strip provider prefix (openai/, anthropic/) from model name when using
+    # a custom api_base — the upstream API expects the bare model ID.
+    # e.g. openai/kimi-k2.5 → kimi-k2.5, anthropic/qwen3.7-max → qwen3.7-max
+    effective_model = model
+    if api_base and "/" in model:
+        _prefix, _sep, _bare = model.partition("/")
+        if _prefix in ("openai", "anthropic", "custom") and _bare:
+            effective_model = _bare
+
     logger.info(
-        "litellm_call model=%s stream=%s messages=%d api_base=%s",
+        "litellm_call model=%s stream=%s messages=%d api_base=%s eff_model=%s",
         model,
         stream,
         len(messages),
         bool(api_base),
+        effective_model,
     )
 
     response = await litellm.acompletion(
-        model=model,
+        model=effective_model,
         messages=messages,
         stream=stream,
         api_base=api_base,

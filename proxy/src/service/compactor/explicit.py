@@ -466,6 +466,7 @@ async def _compact_async(
     config,
     api_base: str | None = None,
     api_key: str | None = None,
+    valkey=None,
 ) -> dict:
     """Async compaction helper called by the arq worker.
 
@@ -513,6 +514,7 @@ async def _compact_async(
             api_base=api_base,
             api_key=api_key,
             turn_count=len(turns),
+            valkey=valkey,
         )
     finally:
         await db.close()

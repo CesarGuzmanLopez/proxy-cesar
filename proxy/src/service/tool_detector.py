@@ -550,8 +550,6 @@ async def _describe_images(valkey, prefix, blobs, user_text, config):
     )
     while len(descs) < len(blobs):
         descs.append("")
-    while len(descs) < len(blobs):
-        descs.append("")
     store = [
         _store_desc(valkey, f"{prefix}:{h}:desc:{prompt_hash}", d)
         for (h, _, _, _, _), d in zip(blobs, descs)

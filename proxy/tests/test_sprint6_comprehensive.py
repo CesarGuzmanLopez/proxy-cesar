@@ -229,7 +229,7 @@ async def test_context_alert_normal_in_metadata(client):
     pm = data["proxy_metadata"]
     assert "context_alert" in pm
     assert pm["context_alert"]["alert_level"] == "normal"
-    assert pm["context_alert"]["context_usage_pct"] == 11.7  # ~30006/256000*100
+    assert pm["context_alert"]["context_usage_pct"] == 11.4  # ~30006/262144*100
 
 
 @pytest.mark.asyncio

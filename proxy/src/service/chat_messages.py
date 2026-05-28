@@ -7,7 +7,7 @@ image description when switching from vision to non-vision models.
 import logging
 
 from src.adapters.db.models import Conversation, ConversationTurn
-from src.config.pseudo_models import PseudoModelSchema, ProxyConfigSchema
+from src.config.pseudo_models import ProxyConfigSchema
 from src.domain.ports import AsyncSessionPort
 from src.service.multimedia.image_describer import auto_describe_images
 
@@ -140,7 +140,6 @@ def build_conversation_messages(
 def _resolve_auto_describe_params(
     config: ProxyConfigSchema,
     current_pseudo_name: str,
-    new_pm_schema: PseudoModelSchema,
     pinned_physical_model: str,
 ) -> tuple[str | None, str | None, str | None, str | None, str | None]:
     """Resolve vision model for auto-describe.
@@ -194,21 +193,21 @@ def _resolve_auto_describe_params(
 async def handle_auto_describe(
     conv: Conversation,
     current_pseudo_name: str,
-    new_pm_schema: PseudoModelSchema,
     config: ProxyConfigSchema,
     db: AsyncSessionPort,
     pinned_physical_model: str,
     in_flight_messages: list[dict] | None = None,
 ) -> tuple[list[dict] | None, dict | None]:
     """Execute auto-describe when switching from vision to non-vision model."""
-    vision_model, current_pseudo_name, skip_reason, api_base, api_key = (
-        _resolve_auto_describe_params(
-            config,
-            current_pseudo_name,
-            new_pm_schema,
-            pinned_physical_model,
-        )
+    result = _resolve_auto_describe_params(
+        config,
+        current_pseudo_name,
+        pinned_physical_model,
     )
+    vision_model = result[0]
+    skip_reason = result[2]
+    api_base = result[3]
+    api_key = result[4]
     if vision_model is None:
         if skip_reason:
             logger.debug("auto_describe_skipped reason=%s", skip_reason)
@@ -247,6 +246,8 @@ async def handle_auto_describe(
 
     if described_count == 0 and in_flight_count == 0:
         return (None, desc_meta if desc_meta else None)
+    # NOTE: If in_flight_count > 0, we must continue to save the degradation turn
+    # even if described_count == 0, because the current turn's images were described
 
     turn_number = max(t.turn_number for t in conv.turns) + 1 if conv.turns else 1
     deg_turn = ConversationTurn(
