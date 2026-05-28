@@ -146,8 +146,12 @@ match service.resolve_model(request.model):
 - Fallback strategy is sequential (try primary, then fallbacks in order) except `compactador` which uses `by_context_window`
 - Model aliases (gpt-4o → normal, o3 → pensamiento-profundo-caro, etc.)
 
-**5. Affinity: Conversation Pinning**
-- First request in a conversation pins to a physical model (Redis `conv:{id}:physical_model`, 24h TTL)
+**5. Affinity: Conversation Pinning (Respects User Choice)**
+- User chooses pseudo-model → proxy respects it (never changes automatically)
+- First request pins physical model (Redis `conv:{id}:physical_model`, 24h TTL with sliding expiry)
+- Model only changes on FAILURE (via fallback chain), never on size/capacity
+- TTL extends if conversation stays active (sliding window)
+- Failure metrics tracked for smart fallback decisions
 - Subsequent requests use the pinned model unless capabilities force a switch
 
 **6. KeyVault: Secret Detection**
@@ -159,6 +163,178 @@ match service.resolve_model(request.model):
 - Images → described by vision model → `[BLOB:hash]` for non-vision models
 - PDFs → text extracted → `[BLOB:hash]`
 - Stored in Redis (24h TTL)
+
+---
+
+## Proxy Core Philosophy & Implementation
+
+**Mission:** Transparent multi-provider LLM coordination. User should NOT notice they're using a proxy.
+
+### How It Works: Complete Request Flow
+
+#### **INCOMING REQUEST**
+```
+User sends: {
+  "model": "normal",           ← User chooses pseudo-model
+  "messages": [...],
+  "stream": true,
+  "tools": [...]
+}
+```
+
+#### **STEP 1-3: VALIDATION & CONTENT PREP**
+- **Model Resolution** (`chat_service.py:_resolve_and_validate`):
+  - Validates "normal" exists in pseudo_models.yaml
+  - Resolves to pseudo-model schema with 30+ physical models
+  - Detects capabilities in messages (images, audio, PDF, video, tools)
+
+- **Content Delegation** (`chat_service.py:_apply_content_delegation`):
+  - **Images**: If pseudo-model lacks vision → describe via vision model, cache in Valkey, inject descriptions as `[BLOB:hash]`
+  - **PDFs**: Extract text via specialized model → store as `[BLOB:hash]`
+  - **Audio**: Transcribe via audio model → store as `[BLOB:hash]`
+  - **Video**: Description + keyframes → store as `[BLOB:hash]`
+  - **Result**: Messages sent to LLM only contain text + metadata, actual files cached separately
+
+- **KeyVault Secret Detection** (`middleware/keyvault.py`):
+  - 27 regex patterns detect API keys, PEM files, JWTs, crypto wallets, SSH keys, etc.
+  - Found secrets → stored in Valkey with TTL, replaced with `[KEYVAULT:hash]`
+  - Injects system prompt: "When you see [KEYVAULT:*], understand it's a secret placeholder"
+  - **LLM never sees real secrets**
+
+#### **STEP 4-11: CONVERSATION & MODEL SELECTION**
+- **Load Conversation** (`chat_service.py:_resolve_session_conv_and_models`):
+  - Get conversation history from SQLite
+  - Load accumulated capabilities (images, tools, audio, etc. in session history)
+  - Load affinity: is there a pinned physical model?
+
+- **Affinity Check** (`valkey_affinity.py`):
+  - If pinned model exists AND compatible → use it
+  - Extends TTL if conversation active (sliding window)
+  - **Does NOT upgrade** based on size/capacity (respects user choice)
+  - Only invalidates if incompatible (parallel tools required but not supported)
+
+- **Fallback Chain Selection** (`model_resolver.py`):
+  - Gets fallback chain for the pseudo-model user chose
+  - Chain order: primary → fallbacks (or by_context_window for compactador)
+  - SmartFallback scoring: choose model with best success_rate, skip if >3 errors/1h
+
+#### **STEP 12: INPUT VALIDATION**
+- **Token Estimation** (`capability_detector.py:estimate_tokens`):
+  - tiktoken o200k_base encoding (GPT-4o)
+  - Counts text + tool arguments + tool results
+  - Fallback to 4-char=1-token heuristic if tiktoken fails
+
+- **Token Threshold** (`threshold_guard.py`):
+  - Check: input_tokens < pseudo_model.input_token_threshold
+  - If exceeds → FAIL (InputExceedsThreshold) — proxy doesn't hide overages
+  - User should handle via compaction or shorter messages
+
+- **Context Usability** (`context_alert.py`):
+  - Total history tokens vs context window
+  - Alert levels: 60% (warning), 80% (danger), 100%+ (unusable)
+  - If unsuable → optionally trigger auto-compaction
+
+#### **STEP 13: CALL LLM WITH FALLBACK**
+```
+call_with_fallback(
+  messages: [system, user history, current request],
+  tools: [...],
+  ...
+)
+```
+
+**Fallback Loop** (`chat_fallback.py:call_with_fallback`):
+1. Try first physical model (pinned if available)
+2. If retryable error (429, 503, 401, 404, 400):
+   - Log error
+   - **SmartFallback**: Record failure metrics
+   - Continue to next model
+3. If non-retryable error: fail immediately (fail fast)
+4. If success: return response
+5. If all models fail: AllModelsFailed error
+
+**SmartFallback Scoring** (`smart_fallback.py`):
+- Per conversation, per model: track success_rate, latency, errors_1h
+- Score = success_rate - (errors_1h * 0.1) - (latency_ms / 1000)
+- Skip models with >3 errors in last 1 hour
+- Metrics stored in Valkey (TTL 1h)
+
+#### **STEP 14: RESPONSE PROCESSING**
+- **Extract Response Metadata**:
+  - finish_reason: "stop", "length", "tool_calls", etc.
+  - tokens: prompt_tokens, completion_tokens
+  - provider headers (Anthropic cache info, etc.)
+  - actual model name (may differ from pinned if fallback occurred)
+
+- **Reconstruct Tool Calls** (for streaming):
+  - Aggregate tool_call deltas from stream chunks
+  - Validate tool IDs match request definitions
+  - Store as structured objects in turn
+
+- **Token Limit Continuation** (if finish_reason="length"):
+  - Append partial response as assistant message
+  - Continue with next model in chain
+  - Build composite response from accumulated parts
+
+#### **STEP 15: RE-INJECT SECRETS**
+- Find all `[KEYVAULT:hash]` in response
+- Look up hash in Valkey
+- Replace with original secret
+- **LLM thinks it generated real secrets, but we fixed it before sending to user**
+
+#### **STEP 16-17: SAVE & RETURN**
+- **Save Turn to DB**:
+  - conversation_id, turn_number, pseudo_model, physical_model
+  - input/output tokens, messages, response
+  - turn_type: "normal" (not "degradation_event")
+  - tool_calls, tool_definitions, thinking_blocks
+
+- **Save Conversation Metadata**:
+  - Accumulate capability flags (has_images, has_tools, etc.)
+  - Max tools level used
+  - Images described count
+  - Total tokens
+
+- **Return to User**:
+  - If streaming: SSE chunks + final metadata chunk + `[DONE]`
+  - If non-streaming: JSON response
+  - Both include `proxy_metadata`:
+    ```json
+    {
+      "physical_model": "openai/gpt-4o-mini",
+      "pseudo_model": "normal",
+      "provider": "openai",
+      "affinity_maintained": true,
+      "fallback_applied": false,
+      "context_usage": "45.2%",
+      "images_described": 2,
+      "cache_info": {...},
+      "elapsed_ms": 1250
+    }
+    ```
+
+### When Things Go Wrong
+
+#### **No Input Tokens Left** (context full)
+- ✗ Proxy does NOT silently delete old turns
+- ✗ Proxy does NOT change model
+- ✓ Returns ContextUnusable error → User can request compaction
+
+#### **Model Fails (429, 503, etc.)**
+- ✓ Try next in fallback chain (SmartFallback scores models)
+- ✓ Log which model failed + reason
+- ✓ Record metrics for future skipping
+- User sees correct response OR AllModelsFailed error
+
+#### **User Sends Incompatible Content**
+- Image to non-vision model: Auto-describe via vision model ✓
+- PDF to model that can't read: Extract text ✓
+- Tool use to model without tool support: Return error ✓
+
+#### **Streaming Interrupted**
+- ✓ Sends StreamPersistenceFailed error + `[DONE]`
+- ✓ Partial response saved to DB
+- Turn persisted (incremental)
 
 ---
 
