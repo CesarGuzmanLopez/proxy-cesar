@@ -44,6 +44,73 @@ TAG_PREFIX: str = "IMAGE_DESCRIBED"
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
+def _extract_image_metadata(url: str) -> dict:
+    """Extract metadata from image URL or base64 data.
+
+    Returns dict with: type, size (if available), format, etc.
+    """
+    metadata = {"type": "image"}
+
+    if url.startswith("data:"):
+        # Base64 data URL: data:image/png;base64,... or data:image/jpeg;base64,...
+        try:
+            mime_part = url.split(";")[0].replace("data:", "")
+            if mime_part:
+                metadata["mime_type"] = mime_part
+                ext = mime_part.split("/")[-1]
+                metadata["format"] = ext.upper()
+
+            # Rough size estimation from base64
+            if "base64," in url:
+                b64_data = url.split("base64,")[1]
+                # Each base64 char represents ~6 bits, ~4 chars = 3 bytes
+                estimated_bytes = (len(b64_data) * 3) // 4
+                metadata["estimated_size_kb"] = round(estimated_bytes / 1024, 1)
+        except Exception:
+            pass
+    else:
+        # HTTPS URL
+        metadata["url"] = url
+        try:
+            if "png" in url.lower():
+                metadata["format"] = "PNG"
+                metadata["mime_type"] = "image/png"
+            elif "jpg" in url.lower() or "jpeg" in url.lower():
+                metadata["format"] = "JPEG"
+                metadata["mime_type"] = "image/jpeg"
+            elif "webp" in url.lower():
+                metadata["format"] = "WEBP"
+                metadata["mime_type"] = "image/webp"
+            elif "gif" in url.lower():
+                metadata["format"] = "GIF"
+                metadata["mime_type"] = "image/gif"
+        except Exception:
+            pass
+
+    return metadata
+
+
+def _extract_user_context(messages: list[dict]) -> str | None:
+    """Extract the last user message's text content for vision context.
+
+    Returns the user's prompt so the vision model understands the context
+    of what the user is asking about.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content")
+            if isinstance(content, list):
+                # Find text parts in the content
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text = part.get("text", "").strip()
+                        if text and not text.startswith("data:image/"):
+                            return text[:500]  # Limit to 500 chars
+            elif isinstance(content, str):
+                return content.strip()[:500]
+    return None
+
+
 def find_image_refs(messages: list[dict]) -> list[dict]:
     """Find all image references in a message list (supports multiple formats).
 
@@ -182,7 +249,10 @@ async def auto_describe_images(
     """Auto-describe all images in a message list using BATCH calls + cache.
 
     Instead of describing each image one by one (legacy behavior), groups
-    all uncached images and sends them in a single batch to the vision model.
+    all uncached images and sends them in a single batch to the vision model
+    WITH the user's prompt for context. Also returns a general summary if
+    multiple images are present.
+
     Caches descriptions in Valkey under ``blob:desc:generic:{url_hash}`` so
     the same image across conversations reuses the description.
 
@@ -209,10 +279,14 @@ async def auto_describe_images(
             "status": "no_images_found",
         }
 
+    # Extract user prompt for context
+    user_prompt = _extract_user_context(messages)
+
     unique_refs = [r for r in refs if not r["is_duplicate"]]
     duplicate_refs = [r for r in refs if r["is_duplicate"]]
     total_tokens: int = 0
     url_cache: dict[str, str] = {}
+    metadata_cache: dict[str, dict] = {}  # Store metadata per URL
 
     # Separate cached vs uncached images
     uncached: list[dict] = []
@@ -234,14 +308,29 @@ async def auto_describe_images(
     if uncached:
         from src.service.multimedia.image_processor import degrade_image
 
+        # Build instruction with user context
+        instruction = "Describe each image briefly (1-2 sentences)."
+        if user_prompt:
+            instruction += f"\n\nUser context: {user_prompt}"
+
+        if len(uncached) > 1:
+            instruction += (
+                "\n\nReturn a JSON object with:"
+                '\n- "descriptions": array of strings (one per image, in order)'
+                '\n- "summary": brief synthesis (2-3 sentences) noting similarities or patterns'
+                '\n\nExample: {"descriptions": ["A login screen", "A chart"], '
+                '"summary": "Both are UI elements..."}'
+            )
+        else:
+            instruction += (
+                "\n\nReturn a JSON array of strings in the order the images were sent. "
+                'Example: ["A login screen"]'
+            )
+
         batch_content: list[dict] = [
             {
                 "type": "text",
-                "text": (
-                    "Describe each image briefly (1-2 sentences). "
-                    "Return a JSON array of strings in the order the images were sent. "
-                    'Example: ["A login screen", "A bar chart of Q1 sales"]'
-                ),
+                "text": instruction,
             }
         ]
         for ref in uncached:
@@ -252,6 +341,9 @@ async def auto_describe_images(
                     "image_url": {"url": degraded, "detail": "high"},
                 }
             )
+            # Collect metadata from URL/base64
+            metadata = _extract_image_metadata(ref["url"])
+            metadata_cache[ref["url"]] = metadata
 
         batch_tokens: int = 0
         try:
@@ -293,12 +385,42 @@ async def auto_describe_images(
                     text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
                 try:
                     parsed = json_mod.loads(text)
+                    general_summary: str | None = None
+
                     if isinstance(parsed, list):
+                        # Format: ["desc1", "desc2", ...]
                         tokens_per_image = (
                             max(batch_tokens // len(parsed), 1) if batch_tokens else 0
                         )
                         for i, ref in enumerate(uncached):
                             desc = str(parsed[i])[:500] if i < len(parsed) else ""
+                            url_cache[ref["url"]] = desc
+                            total_tokens += (
+                                tokens_per_image if tokens_per_image else len(desc) // 4
+                            )
+                            if valkey is not None and desc:
+                                try:
+                                    await valkey.set(
+                                        f"blob:desc:generic:{ref['url_hash']}",
+                                        desc,
+                                        ex=BLOB_STORAGE_TTL_SECONDS,
+                                    )
+                                except Exception as e:
+                                    logger.warning(
+                                        "blob_storage_error error=%s", str(e)
+                                    )
+                    elif isinstance(parsed, dict):
+                        # Format: {"descriptions": [...], "summary": "..."}
+                        descriptions = parsed.get("descriptions", [])
+                        general_summary = parsed.get("summary", None)
+
+                        tokens_per_image = (
+                            max(batch_tokens // len(descriptions), 1)
+                            if batch_tokens and descriptions
+                            else 0
+                        )
+                        for i, ref in enumerate(uncached):
+                            desc = str(descriptions[i])[:500] if i < len(descriptions) else ""
                             url_cache[ref["url"]] = desc
                             total_tokens += (
                                 tokens_per_image if tokens_per_image else len(desc) // 4
@@ -356,11 +478,46 @@ async def auto_describe_images(
         if not description:
             continue
         described_count += 1
+
+        # Build full text with metadata
         tag: str = f"[{TAG_PREFIX} #{described_count} — described by {vision_model}]"
         full_text: str = f"{tag}\n\n{description}"
+
+        # Add metadata if available
+        meta = metadata_cache.get(ref["url"])
+        if meta:
+            meta_lines = []
+            if meta.get("format"):
+                meta_lines.append(f"Format: {meta['format']}")
+            if meta.get("estimated_size_kb"):
+                meta_lines.append(f"Size: ~{meta['estimated_size_kb']}KB")
+            if meta.get("mime_type"):
+                meta_lines.append(f"MIME: {meta['mime_type']}")
+            if meta_lines:
+                full_text += f"\n[Metadata: {', '.join(meta_lines)}]"
+
         msg = modified[ref["msg_idx"]]
         content_list = msg["content"]
         content_list[ref["part_idx"]] = {"type": "text", "text": full_text}
+
+    # Add general summary after all descriptions if available
+    if general_summary and described_count > 1:
+        # Append summary to the last message that had images
+        last_img_msg_idx = max([ref["msg_idx"] for ref in refs]) if refs else -1
+        if last_img_msg_idx >= 0 and last_img_msg_idx < len(modified):
+            msg = modified[last_img_msg_idx]
+            summary_text = f"\n\n[{TAG_PREFIX} General Summary]\n{general_summary}"
+            # Append to existing content
+            if isinstance(msg.get("content"), list):
+                # Find last text part and append, or add new text part
+                found_text = False
+                for part in reversed(msg["content"]):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        part["text"] = part["text"] + summary_text
+                        found_text = True
+                        break
+                if not found_text:
+                    msg["content"].append({"type": "text", "text": summary_text})
 
     metadata: dict = {
         "ok": True,
@@ -369,6 +526,8 @@ async def auto_describe_images(
         "duplicate_images_skipped": len(duplicate_refs),
         "described_by": vision_model,
         "total_description_tokens": total_tokens,
+        "general_summary_provided": general_summary is not None,
+        "image_metadata_included": len(metadata_cache) > 0,
         "status": "completed",
     }
 
