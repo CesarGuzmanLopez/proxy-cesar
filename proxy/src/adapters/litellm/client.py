@@ -144,21 +144,23 @@ def normalise_stream_chunk(chunk) -> None:
 
     The function is a no-op for chunks that lack ``reasoning_content``.
     """
-    try:
-        if not chunk or "choices" not in chunk:
-            return
+    import logging
+    logger = logging.getLogger(__name__)
 
-        for choice in chunk.get("choices", []):
-            delta = choice.get("delta", {})
-            has_reasoning = "reasoning_content" in delta
-            if has_reasoning:
-                # If content is empty but reasoning_content has value, copy it
-                if delta.get("content") is None and delta.get("reasoning_content"):
-                    delta["content"] = delta["reasoning_content"]
-                # Always remove reasoning_content so client never sees it
+    if not chunk or "choices" not in chunk:
+        return
+
+    for choice in chunk.get("choices", []):
+        delta = choice.get("delta", {})
+        if "reasoning_content" in delta:
+            logger.debug(f"normalise_stream_chunk: found reasoning_content={delta.get('reasoning_content')[:50]}")
+            # If content is empty but reasoning_content has value, copy it
+            if delta.get("content") is None and delta.get("reasoning_content"):
+                delta["content"] = delta["reasoning_content"]
+            # Always remove reasoning_content so client never sees it
+            if "reasoning_content" in delta:
                 del delta["reasoning_content"]
-    except Exception:
-        pass  # Silently ignore if normalization fails
+                logger.debug("normalise_stream_chunk: deleted reasoning_content")
 
 
 def setup_litellm(settings: Settings) -> None:
