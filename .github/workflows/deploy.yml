@@ -48,10 +48,16 @@ jobs:
           port: ${{ secrets.PLATA_SSH_PORT || '22' }}
           username: ${{ secrets.PLATA_USER }}
           key: ${{ secrets.PLATA_SSH_KEY }}
-          envs: >-
-            PROXY_API_KEY,DEEPSEEK_API_KEY,GROQ_API_KEY,
-            OPENROUTER_API_KEY,OPENCODE_API_KEY,PRUNA_API_KEY,
-            DISABLED_PROVIDERS,VALKEY_URL,LOG_FILE
+          envs: |
+            PROXY_API_KEY
+            DEEPSEEK_API_KEY
+            GROQ_API_KEY
+            OPENROUTER_API_KEY
+            OPENCODE_API_KEY
+            PRUNA_API_KEY
+            DISABLED_PROVIDERS
+            VALKEY_URL
+            LOG_FILE
           script: |
             set -euo pipefail
 
@@ -114,22 +120,21 @@ jobs:
             find "$REPO_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
             find "$REPO_DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
 
-            # ── 5. Write .env (owned by proxy) ────────────────────
+            # ── 5. Write .env with secrets (use printenv for SSH env vars) ─
             echo "[deploy] Writing .env..."
             sudo tee .env > /dev/null <<-EOF
             PROXY_HOST=0.0.0.0
             PROXY_PORT=9110
-            PROXY_API_KEY=${PROXY_API_KEY}
+            PROXY_API_KEY=$(printenv PROXY_API_KEY || echo "")
             DATABASE_URL=sqlite+aiosqlite:///./proxy.db
-            VALKEY_URL=${VALKEY_URL}
-            DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-            GROQ_API_KEY=${GROQ_API_KEY}
-            OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-            OPENCODE_API_KEY=${OPENCODE_API_KEY}
-            PRUNA_API_KEY=${PRUNA_API_KEY}
-            KEYCLAW_ENABLED=false
-            DISABLED_PROVIDERS=${DISABLED_PROVIDERS}
-            LOG_FILE=${LOG_FILE:-/var/log/proxy-cesar/proxy.log}
+            VALKEY_URL=$(printenv VALKEY_URL || echo "valkey://localhost:6380")
+            DEEPSEEK_API_KEY=$(printenv DEEPSEEK_API_KEY || echo "")
+            GROQ_API_KEY=$(printenv GROQ_API_KEY || echo "")
+            OPENROUTER_API_KEY=$(printenv OPENROUTER_API_KEY || echo "")
+            OPENCODE_API_KEY=$(printenv OPENCODE_API_KEY || echo "")
+            PRUNA_API_KEY=$(printenv PRUNA_API_KEY || echo "")
+            DISABLED_PROVIDERS=$(printenv DISABLED_PROVIDERS || echo "")
+            LOG_FILE=$(printenv LOG_FILE || echo "/var/log/proxy-cesar/proxy.log")
             EOF
 
             sudo chmod 600 .env

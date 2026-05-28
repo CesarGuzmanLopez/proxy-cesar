@@ -209,20 +209,6 @@ async def process_chat_request(
         logger.debug("chat_skip_build_msgs conv=%s client_msgs=%d db_turns=%d",
                      conv_id[:12], len(messages), len(conv.turns))
 
-    # NEW: Transform images in the full conversation history (including previous
-    # turns) when the current physical model lacks vision. Previous turns may
-    # have stored raw image data if they were processed by a vision-capable model.
-    if delegation and messages_for_llm:
-        from src.service.tool_detector import replace_base64_with_blob_refs, inject_blob_extraction_guidance
-
-        messages_for_llm = await replace_base64_with_blob_refs(
-            messages_for_llm,
-            conversation_id,
-            valkey or getattr(affinity, "_client", None),
-            config,
-        )
-        messages_for_llm = inject_blob_extraction_guidance(messages_for_llm)
-
     # Step 12: Check input threshold
     est_input = estimate_tokens(messages_for_llm)
     threshold_check = _check_input_threshold(

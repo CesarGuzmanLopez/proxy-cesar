@@ -550,6 +550,8 @@ async def auto_describe_images(
                 meta_lines.append(f"Size: ~{meta['estimated_size_kb']}KB")
             if meta.get("mime_type"):
                 meta_lines.append(f"MIME: {meta['mime_type']}")
+            if meta.get("filename"):
+                meta_lines.append(f"Filename: {meta['filename']}")
             if meta_lines:
                 full_text += f"\n[Metadata: {', '.join(meta_lines)}]"
 

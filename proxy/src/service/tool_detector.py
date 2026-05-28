@@ -312,9 +312,9 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
     content: list,
 ) -> tuple[
     str,
-    list[tuple[str, str, str, str]],
-    list[tuple[str, str, str, str]],
-    list[tuple[str, str, str, str]],
+    list[tuple[str, str, str, str, str]],
+    list[tuple[str, str, str, str, str]],
+    list[tuple[str, str, str, str, str]],
     list[dict],
 ]:
     """Classify content parts into images, audio, files, and others.
@@ -325,9 +325,9 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
     - Text with data URL: {"type": "text", "text": "data:image/..."}
     """
     user_text = _extract_user_text(content)
-    images: list[tuple[str, str, str, str]] = []
-    audios: list[tuple[str, str, str, str]] = []
-    files: list[tuple[str, str, str, str]] = []
+    images: list[tuple[str, str, str, str, str]] = []
+    audios: list[tuple[str, str, str, str, str]] = []
+    files: list[tuple[str, str, str, str, str]] = []
     others: list[dict] = []
 
     for part in content:
@@ -376,7 +376,8 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
         h = _hash_content(raw)
         mime = _extract_mime(raw) or f"{content_type}/unknown"
         sz = str(len(raw) // 1024)
-        info = (h, raw, mime, sz)
+        filename = ""
+        info = (h, raw, mime, sz, filename)
 
         # Classify into appropriate category
         if content_type == "image":
@@ -403,14 +404,15 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
     """
     out: list[dict[str, object]] = list(others)
 
-    def _truncate_desc(desc: str, sz_kb: int) -> str:
+    def _truncate_desc(desc: str, sz_kb: int | str) -> str:
         """Truncate description so the full blob text ≤ original file size in tokens."""
         if not desc:
             return desc
+        sz = int(sz_kb) if isinstance(sz_kb, str) else sz_kb
         # Original file: sz_kb * 1024 bytes ≈ sz_kb * 1024 chars ≈ sz_kb * 256 tokens.
         # Overhead per blob (header + instructions) is ~400 chars.
         # Max desc = original_chars - overhead, min 500 chars for useful output.
-        max_desc_chars = max(sz_kb * 1024 - 400, 500)
+        max_desc_chars = max(sz * 1024 - 400, 500)
         if len(desc) > max_desc_chars:
             return desc[:max_desc_chars] + "..."
         return desc
@@ -442,15 +444,15 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
         t += "\n]"
         return {"type": "text", "text": t}
 
-    for (h, _, mime, sz), d in zip(images, descs):
+    for (h, _, mime, sz, filename), d in zip(images, descs):
         extraction = "Vision model (description via Groq/similar)"
-        out.append(_bt(h, mime, sz, "image", d, extraction))
+        out.append(_bt(h, mime, sz, "image", d, extraction, filename))
 
-    for (h, _, mime, sz), d in zip(audios, aresults):
+    for (h, _, mime, sz, filename), d in zip(audios, aresults):
         extraction = "Speech-to-text (Whisper/similar transcription)"
-        out.append(_bt(h, mime, sz, "audio", d, extraction))
+        out.append(_bt(h, mime, sz, "audio", d, extraction, filename))
 
-    for (h, _, mime, sz), d in zip(files, fresults):
+    for (h, _, mime, sz, filename), d in zip(files, fresults):
         # Determine extraction method based on MIME type
         if "pdf" in mime.lower():
             extraction = "PDF text extraction"
@@ -458,7 +460,7 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
             extraction = "DOCX text extraction"
         else:
             extraction = "Document text extraction"
-        out.append(_bt(h, mime, sz, "document", d, extraction))
+        out.append(_bt(h, mime, sz, "document", d, extraction, filename))
 
     return out
 
@@ -480,7 +482,7 @@ async def _process_msg_blobs(
     )
     store_tasks = [
         _store_blob_if_missing(valkey, f"{prefix}:{h}", r)
-        for h, r, _, _ in image_blobs + audio_blobs + file_blobs
+        for h, r, _, _, _ in image_blobs + audio_blobs + file_blobs
     ]
     if store_tasks:
         await asyncio.gather(*store_tasks)
@@ -493,7 +495,7 @@ async def _process_msg_blobs(
         await asyncio.gather(
             *[
                 _describe_audio(valkey, f"{prefix}:{h}:desc", r, config)
-                for h, r, _, _ in audio_blobs
+                for h, r, _, _, _ in audio_blobs
             ]
         )
         if audio_blobs
@@ -505,7 +507,7 @@ async def _process_msg_blobs(
                 _describe_pdf(valkey, f"{prefix}:{h}:desc", r)
                 if "pdf" in mime.lower()
                 else _describe_docx(valkey, f"{prefix}:{h}:desc", r)
-                for h, r, mime, _ in file_blobs
+                for h, r, mime, _, _ in file_blobs
             ]
         )
         if file_blobs
@@ -538,19 +540,21 @@ async def _describe_images(valkey, prefix, blobs, user_text, config):
     cached = await asyncio.gather(
         *[
             _get_cached(valkey, f"{prefix}:{h}:desc:{prompt_hash}")
-            for h, _, _, _ in blobs
+            for h, _, _, _, _ in blobs
         ]
     )
     if all(cached):
         return cached
     descs = await _describe_image_batch(
-        [(h, r) for h, r, _, _ in blobs], user_text, config
+        [(h, r) for h, r, _, _, _ in blobs], user_text, config
     )
+    while len(descs) < len(blobs):
+        descs.append("")
     while len(descs) < len(blobs):
         descs.append("")
     store = [
         _store_desc(valkey, f"{prefix}:{h}:desc:{prompt_hash}", d)
-        for (h, _, _, _), d in zip(blobs, descs)
+        for (h, _, _, _, _), d in zip(blobs, descs)
         if d
     ]
     if store:

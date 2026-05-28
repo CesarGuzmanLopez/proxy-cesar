@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 **/.venv/
+.venv_test/
 venv/
 .env
 *.env
