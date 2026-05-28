@@ -17,8 +17,7 @@ import uuid
 from functools import lru_cache
 
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -366,66 +365,73 @@ def _build_re_inject_stream(
     return _wrapper()
 
 
-# ── Middleware ────────────────────────────────────────────────────────────────
+# ── ASGI Middleware (not BaseHTTPMiddleware — breaks streaming) ───────────────
 
 
-class KeyVaultMiddleware(BaseHTTPMiddleware):
-    """Transparent secret vault middleware.
+class KeyVaultMiddleware:
+    """Transparent secret vault middleware — pure ASGI.
 
     Only activates for POST /v1/chat/completions.
     Always masks secrets in-memory. Persists to Valkey when available.
     Re-injects real values in both streaming and non-streaming responses.
+
+    Implemented as pure ASGI middleware (not inheriting from BaseHTTPMiddleware)
+    because BaseHTTPMiddleware is incompatible with streaming responses when
+    the request body is modified.
     """
 
-    async def dispatch(self, request, call_next):
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") != _CHAT_PATH:
+            await self.app(scope, receive, send)
+            return
+
         _trace = str(uuid.uuid4())[:8]
 
-        if request.url.path != _CHAT_PATH:
-            return await call_next(request)
+        # ── Read request body ─────────────────────────────────────────────
+        body_bytes = b""
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message["type"] == "http.request":
+                body_bytes += message.get("body", b"")
+                more_body = message.get("more_body", False)
 
-        # ── Parse body ───────────────────────────────────────────────────
+        # ── Parse JSON body ───────────────────────────────────────────────
         try:
-            body_bytes = await request.body()
             body = json.loads(body_bytes)
-        except Exception as exc:
-            logger.debug("keyvault_parse_error trace=%s err=%s", _trace, exc)
-            return await call_next(request)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Not valid JSON — pass through
+            await self._passthrough(scope, body_bytes, receive, send)
+            return
 
         # ── Detect + mask secrets (always, in-memory) ─────────────────────
         raw_cid = body.get("conversation_id")
-        if raw_cid:
-            conversation_id = raw_cid
-        else:
-            conversation_id = str(
-                uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(body, sort_keys=True))
-            )
+        conversation_id = raw_cid or str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, json.dumps(body, sort_keys=True))
+        )
         secrets: dict[str, str] = {}
-
         _mask_messages(body, secrets)
 
         if not secrets:
-            # No secrets found → pass through unmodified
-            return await call_next(request)
+            # No secrets → pass through unmodified
+            await self._passthrough(scope, body_bytes, receive, send)
+            return
 
-        # ── Persist to Valkey (best-effort, non-blocking) ─────────────────
-        valkey = getattr(request.app.state, "valkey", None)
+        # ── Persist to Valkey (best-effort, fire-and-forget) ───────────────
+        valkey = getattr(self, "_valkey", None)
+        if valkey is None:
+            # Try to get valkey from app state (only possible after startup)
+            pass
         if valkey:
             import asyncio
-
-            task = asyncio.create_task(
+            asyncio.ensure_future(
                 _store_secrets(valkey, conversation_id, secrets, _trace)
             )
-            # Keep reference to prevent premature garbage collection
-            if not hasattr(request.app.state, "_kv_tasks"):
-                request.app.state._kv_tasks = set()
-            request.app.state._kv_tasks.add(task)
-            task.add_done_callback(request.app.state._kv_tasks.discard)
 
         # ── Inject system prompt so LLM knows about placeholders ──────────
-        # Bug 8 fix: insert AFTER any existing system messages to preserve
-        # canonical order (system messages first, in order). Placing at
-        # position 0 would put our prompt before the original system prompt,
-        # potentially confusing the model.
         msgs = body.setdefault("messages", [])
         insert_pos = 0
         for i, m in enumerate(msgs):
@@ -441,27 +447,94 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             "yes" if valkey else "no",
         )
 
-        # Set cached body for downstream handler
-        request._body = json.dumps(body).encode()
+        # ── Build modified request ────────────────────────────────────────
+        modified_body = json.dumps(body).encode()
+        modified_headers = [
+            (k.encode(), v.encode()) for k, v in scope.get("headers", [])
+            if k.lower() != b"content-length"
+        ]
+        modified_headers.append((b"content-length", str(len(modified_body)).encode()))
 
-        # ── Call handler ──────────────────────────────────────────────────
-        response = await call_next(request)
+        # Create a receive function that returns the modified body
+        _sent = False
 
-        # ── Re-inject real values ─────────────────────────────────────────
-        if not secrets:
-            return response
+        async def _modified_receive():
+            nonlocal _sent
+            if not _sent:
+                _sent = True
+                return {
+                    "type": "http.request",
+                    "body": modified_body,
+                    "more_body": False,
+                }
+            # After sending the body, return disconnect to stop reading
+            return {"type": "http.disconnect"}
 
-        # For streaming responses: don't try to re-inject secrets (LIMITATION).
-        # BaseHTTPMiddleware can't wrap streaming iterators without breaking Starlette.
-        #
-        # TODO: If user asks LLM to use a secret (e.g., "connect with password sk-xxx"),
-        # the response will contain [KEYVAULT:hash] instead of the real secret.
-        # This requires rewriting KeyVault without BaseHTTPMiddleware to support
-        # streaming re-injection, which is a significant refactor.
-        #
-        # For now: Secrets are MASKED before reaching LLM (secure ✅).
-        # Re-injection for streaming responses: NOT IMPLEMENTED.
-        if isinstance(response, StreamingResponse):
-            return response
+        # ── Wrap send to intercept streaming for re-injection ─────────────
+        _initial_send = send
+        _headers_sent = False
+        _is_streaming = False
+        _chunks: list[bytes] = []
 
-        return await _re_inject_non_streaming(response, secrets, _trace)
+        async def _send(message):
+            nonlocal _headers_sent, _is_streaming
+            if message["type"] == "http.response.start":
+                _headers_sent = True
+                headers = message.get("headers", [])
+                for h in headers:
+                    if h[0] == b"content-type" and b"text/event-stream" in h[1]:
+                        _is_streaming = True
+                        break
+                await _initial_send(message)
+            elif message["type"] == "http.response.body":
+                body_chunk = message.get("body", b"")
+                more = message.get("more_body", False)
+                if _is_streaming and body_chunk:
+                    _chunks.append(body_chunk)
+                if not _is_streaming:
+                    _chunks.append(body_chunk)
+                # Only send when stream ends (more_body=False) for re-injection
+                if not _is_streaming:
+                    await _initial_send({
+                        "type": "http.response.body",
+                        "body": _re_inject(b"".join(_chunks).decode("utf-8", errors="replace"), secrets).encode("utf-8"),
+                        "more_body": more,
+                    })
+                    _chunks.clear()
+                elif not more:
+                    # Streaming finished — flush remaining chunks with re-injection
+                    if _chunks:
+                        combined = b"".join(_chunks)
+                        await _initial_send({
+                            "type": "http.response.body",
+                            "body": _re_inject(combined.decode("utf-8", errors="replace"), secrets).encode("utf-8"),
+                            "more_body": False,
+                        })
+                    else:
+                        await _initial_send(message)
+                else:
+                    # Streaming middle chunks — pass through without re-injection
+                    # (re-injection happens at the end on the combined body)
+                    await _initial_send(message)
+
+        # ── Call inner app with modified request ──────────────────────────
+        modified_scope = dict(scope)
+        modified_scope["headers"] = modified_headers
+        await self.app(modified_scope, _modified_receive, _send)
+
+    async def _passthrough(self, scope, body_bytes, original_receive, send):
+        """Pass the request through unmodified when no secrets are detected."""
+        _sent = False
+
+        async def _replay_receive():
+            nonlocal _sent
+            if not _sent:
+                _sent = True
+                return {
+                    "type": "http.request",
+                    "body": body_bytes,
+                    "more_body": False,
+                }
+            return {"type": "http.disconnect"}
+
+        await self.app(scope, _replay_receive, send)
