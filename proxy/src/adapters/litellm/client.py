@@ -150,11 +150,13 @@ def normalise_stream_chunk(chunk) -> None:
 
         for choice in chunk.get("choices", []):
             delta = choice.get("delta", {})
-            # If content is empty but reasoning_content has value, copy it
-            if delta.get("content") is None and delta.get("reasoning_content"):
-                delta["content"] = delta["reasoning_content"]
-            # Always remove reasoning_content so client never sees it
-            delta.pop("reasoning_content", None)
+            has_reasoning = "reasoning_content" in delta
+            if has_reasoning:
+                # If content is empty but reasoning_content has value, copy it
+                if delta.get("content") is None and delta.get("reasoning_content"):
+                    delta["content"] = delta["reasoning_content"]
+                # Always remove reasoning_content so client never sees it
+                del delta["reasoning_content"]
     except Exception:
         pass  # Silently ignore if normalization fails
 
