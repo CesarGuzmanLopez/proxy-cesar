@@ -742,6 +742,11 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                             placeholder = f"[KEYVAULT:{secret_hash}]"
                             if placeholder in chunk_json:
                                 chunk_json = chunk_json.replace(placeholder, real_value)
+                                logger.info("stream_keyvault_reinject hash=%s placeholder=%s chunk_len=%d",
+                                             secret_hash, placeholder, len(chunk_json))
+                            else:
+                                logger.debug("stream_keyvault_skip hash=%s placeholder not in chunk chunk_len=%d",
+                                              secret_hash, len(chunk_json))
                         chunk_dict = json.loads(chunk_json)
 
                     # Use chunk_dict (may have keyvault secrets re-injected)
