@@ -118,6 +118,19 @@ async def chat_completions(
     # Prepare messages as dicts
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
+    logger.info(
+        "chat_request_full request_id=%s conv=%s model=%s stream=%s "
+        "messages=%d tools=%d thinking=%s msg_roles=%s",
+        request_id,
+        conversation_id[:12],
+        request.model,
+        request.stream,
+        len(messages),
+        len(request.tools) if request.tools else 0,
+        str(request.thinking)[:50] if request.thinking else "none",
+        [m.get("role", "?") for m in messages],
+    )
+
     # Sprint 9: Check for inline commands early — if detected, respond
     # with the command output instead of calling the LLM.
     cmd_result = await handle_inline_command(
@@ -280,5 +293,19 @@ async def _handle_non_streaming(
         for h, v in provider_headers.items():
             if h.lower() not in _excluded:
                 headers[h] = str(v)
+
+    # Log full response for debugging
+    resp_content = response_dict.get("choices", [{}])[0].get("message", {}).get("content", "")
+    logger.info(
+        "chat_response_full conv=%s model=%s physical=%s "
+        "content_len=%d finish=%s reasoning=%s preview=%s",
+        conversation_id[:12],
+        response_dict.get("model", "?"),
+        result.physical_model,
+        len(resp_content),
+        response_dict.get("choices", [{}])[0].get("finish_reason", "?"),
+        bool(response_dict.get("choices", [{}])[0].get("message", {}).get("reasoning_content")),
+        resp_content[:100],
+    )
 
     return JSONResponse(content=response_dict, headers=headers)

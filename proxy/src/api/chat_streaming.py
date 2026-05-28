@@ -19,7 +19,7 @@ from src.adapters.cache.provider_cache import (
     build_cache_metadata,
 )
 from src.adapters.db.models import Conversation
-from src.domain.types import Result, Ok, Err
+from src.domain.types import Ok, Err
 from src.service.chat_models import StreamContext
 from src.service.context_alert import get_context_alert
 from src.service.chat_fallback import _try_physical_model, call_with_fallback
@@ -681,6 +681,21 @@ async def _stream_response_generator(ctx: StreamContext):
             len(chunks),
             input_tokens,
             output_tokens,
+        )
+
+        # Log the assembled response for debugging
+        _msg = response_dict.get("choices", [{}])[0].get("message", {})
+        _content = _msg.get("content") or ""
+        _reasoning = _msg.get("reasoning_content") or ""
+        logger.info(
+            "stream_response_assembled conv=%s physical=%s "
+            "content_len=%d reasoning_len=%d finish=%s preview=%s",
+            ctx.conversation_id[:12],
+            ctx.physical_model,
+            len(_content),
+            len(_reasoning),
+            response_dict.get("choices", [{}])[0].get("finish_reason", "?"),
+            _content[:100],
         )
 
         # Sprint 7: extract cache metadata from streaming response
