@@ -350,11 +350,8 @@ async def test_re_inject_non_streaming():
     mock_response = AsyncMock()
     mock_response.status_code = 200
     mock_response.headers = {"content-type": "application/json"}
-
-    async def _body_iterator():
-        yield b'{"content": "[KEYVAULT:abc12345]"}'
-
-    mock_response.body_iterator = _body_iterator()
+    mock_response.body = b'{"content": "[KEYVAULT:abc12345]"}'
+    mock_response.body_iterator = None
 
     secrets = {"abc12345": "real_key"}
     result = await _re_inject_non_streaming(mock_response, secrets)

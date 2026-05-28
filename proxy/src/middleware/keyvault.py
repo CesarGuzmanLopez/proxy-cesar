@@ -448,17 +448,14 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         # ── Re-inject real values ─────────────────────────────────────────
+        # Note: For streaming responses, secrets were already masked in the request,
+        # so they won't appear in the response. Return as-is.
         if isinstance(response, StreamingResponse):
-            headers = dict(response.headers)
-            # Remove Content-Length for streaming responses — FastAPI will use Transfer-Encoding: chunked
-            headers.pop("content-length", None)
-            return StreamingResponse(
-                content=_build_re_inject_stream(
-                    response.body_iterator, secrets, _trace
-                )(),
-                status_code=response.status_code,
-                headers=headers,
-                media_type=response.media_type,
-            )
+            return response
+
+        # For non-streaming responses, re-inject secrets that the LLM may have
+        # received and echoed back
+        if not secrets:
+            return response
 
         return await _re_inject_non_streaming(response, secrets, _trace)
