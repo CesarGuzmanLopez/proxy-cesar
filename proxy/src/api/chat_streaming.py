@@ -737,16 +737,15 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
 
                     # Re-inject secrets: replace [KEYVAULT:hash] with real values
                     if keyvault_secrets:
+                        logger.info("stream_reinject_attempt conv=%s keys=%s chunk=%db",
+                                     ctx.conversation_id[:12], list(keyvault_secrets.keys()),
+                                     len(json.dumps(chunk_dict)))
                         chunk_json = json.dumps(chunk_dict)
                         for secret_hash, real_value in keyvault_secrets.items():
                             placeholder = f"[KEYVAULT:{secret_hash}]"
                             if placeholder in chunk_json:
                                 chunk_json = chunk_json.replace(placeholder, real_value)
-                                logger.info("stream_keyvault_reinject hash=%s placeholder=%s chunk_len=%d",
-                                             secret_hash, placeholder, len(chunk_json))
-                            else:
-                                logger.debug("stream_keyvault_skip hash=%s placeholder not in chunk chunk_len=%d",
-                                              secret_hash, len(chunk_json))
+                                logger.info("stream_reinject_ok hash=%s", secret_hash)
                         chunk_dict = json.loads(chunk_json)
 
                     # Use chunk_dict (may have keyvault secrets re-injected)
