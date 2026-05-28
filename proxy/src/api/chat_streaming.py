@@ -707,6 +707,11 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                     # Convert chunk to dict ONCE — reuse for all processing
                     chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
 
+                    # ALWAYS remove reasoning_content from all chunks before ANY processing
+                    for choice in chunk_dict.get("choices", []):
+                        if isinstance(choice, dict) and "delta" in choice:
+                            choice["delta"].pop("reasoning_content", None)
+
                     if (
                         fr == "length"
                         and current_idx < len(phys_models) - 1
@@ -721,11 +726,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
 
                     # Normalize chunk: if content is null but reasoning_content exists, copy it
                     normalise_stream_chunk(chunk_dict)
-
-                    # ALWAYS remove reasoning_content from all chunks before client sees them
-                    for choice in chunk_dict.get("choices", []):
-                        if isinstance(choice, dict) and "delta" in choice:
-                            choice["delta"].pop("reasoning_content", None)
 
                     # Re-inject secrets: replace [KEYVAULT:hash] with real values
                     if keyvault_secrets:
