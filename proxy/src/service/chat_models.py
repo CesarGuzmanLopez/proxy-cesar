@@ -68,6 +68,8 @@ class StreamContext:
     """Full assembled message list (history + current) for continuation context."""
     trace: PipelineTrace | None = None
     """Pipeline trace for observability — logs LLM in/out events."""
+    keyvault_secrets: dict[str, str] | None = None
+    """Secrets that were masked in the request, for re-injection in streaming response."""
 
 
 @dataclass

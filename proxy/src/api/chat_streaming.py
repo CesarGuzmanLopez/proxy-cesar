@@ -517,6 +517,7 @@ async def _handle_streaming_with_db(
                     "thinking": thinking,
                 },
                 trace=trace,
+                keyvault_secrets=getattr(request.state, "keyvault_secrets", None),
             )
         ),
         media_type="text/event-stream",
@@ -718,7 +719,17 @@ async def _stream_response_generator(ctx: StreamContext):
 
                     # Normalize chunk: if content is null but reasoning_content exists, copy it
                     # normalise_stream_chunk(chunk_dict)  # TEMP: Disabled to test if this breaks streaming
-                    yield f"data: {json.dumps(chunk_dict)}\n\n"
+
+                    # Re-inject secrets that were masked in the request
+                    if ctx.keyvault_secrets:
+                        chunk_json = json.dumps(chunk_dict)
+                        for secret_hash, real_value in ctx.keyvault_secrets.items():
+                            placeholder = f"[KEYVAULT:{secret_hash}]"
+                            if placeholder in chunk_json:
+                                chunk_json = chunk_json.replace(placeholder, real_value)
+                        yield f"data: {chunk_json}\n\n"
+                    else:
+                        yield f"data: {json.dumps(chunk_dict)}\n\n"
 
                     if fr:
                         finish_reason = fr
