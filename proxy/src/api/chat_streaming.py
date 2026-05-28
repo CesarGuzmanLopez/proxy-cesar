@@ -685,6 +685,7 @@ async def _stream_response_generator(ctx: StreamContext):
                             _content_preview or "(no content)",
                         )
 
+                    logger.info("DBG_after_first_chunk_log")
                     # Detect finish_reason — intercept "length" if more models
                     try:
                         fr = chunk.choices[0].finish_reason if chunk.choices else None
