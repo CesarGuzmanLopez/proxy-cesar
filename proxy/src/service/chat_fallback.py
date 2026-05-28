@@ -212,12 +212,22 @@ async def _try_physical_model(
     api_base = phys.api_base or None
     api_key = _resolve_api_key(phys)
 
-    # Strip reasoning_content for DeepSeek — it rejects messages containing
-    # reasoning_content from other models (e.g. kimi-k2.5 fallback chain).
-    if "deepseek" in model_prefix or "deepseek" in provider:
-        for msg in call_messages:
-            if msg.get("role") == "assistant" and "reasoning_content" in msg:
-                del msg["reasoning_content"]
+    # Strip reasoning_content from ALL messages — models reject reasoning
+    # from other models (e.g. kimi-k2.6 reasoning sent to DeepSeek, or
+    # vice versa). Only the originating model can handle its own reasoning.
+    for msg in call_messages:
+        if msg.get("role") == "assistant" and "reasoning_content" in msg:
+            del msg["reasoning_content"]
+
+    logger.info(
+        "llm_try_phys | trace=%s model=%s api_base=%s api_key=%s messages=%d has_reasoning=%s",
+        _trace_id,
+        phys.model,
+        api_base or "(default)",
+        "yes" if api_key else "no",
+        len(call_messages),
+        any("reasoning_content" in (m or {}) for m in ordered_messages),
+    )
 
     raw_thinking = kwargs.get("thinking", None)
 
