@@ -451,10 +451,16 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
         if not secrets:
             return response
 
-        # For streaming responses: don't try to re-inject secrets.
-        # Secrets were masked before reaching the LLM, so the LLM never saw them,
-        # and they won't appear in the streaming response. Trying to wrap the
-        # iterator breaks Starlette's streaming.
+        # For streaming responses: don't try to re-inject secrets (LIMITATION).
+        # BaseHTTPMiddleware can't wrap streaming iterators without breaking Starlette.
+        #
+        # TODO: If user asks LLM to use a secret (e.g., "connect with password sk-xxx"),
+        # the response will contain [KEYVAULT:hash] instead of the real secret.
+        # This requires rewriting KeyVault without BaseHTTPMiddleware to support
+        # streaming re-injection, which is a significant refactor.
+        #
+        # For now: Secrets are MASKED before reaching LLM (secure ✅).
+        # Re-injection for streaming responses: NOT IMPLEMENTED.
         if isinstance(response, StreamingResponse):
             return response
 
