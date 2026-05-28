@@ -73,7 +73,7 @@ jobs:
 
             # ── 2. Clean clone (always fresh, always writable) ────
             echo "[deploy] Cloning repository..."
-            rm -rf "$REPO_DIR"
+            sudo rm -rf "$REPO_DIR" || true
             git clone --branch "$BRANCH" --depth 1 \
               https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
 
