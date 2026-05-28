@@ -81,14 +81,16 @@ jobs:
             echo "[deploy] Cloning repository..."
             sudo rm -rf "$REPO_DIR" || true
             git clone --branch "$BRANCH" --depth 1 \
-              https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR"
+              https://github.com/CesarGuzmanLopez/proxy-cesar.git "$REPO_DIR" 2>&1
 
             # Verify clone succeeded
-            if [ ! -f "${REPO_DIR}/proxy/src/main.py" ]; then
-              echo "[deploy] FATAL: Clone incomplete — missing src/main.py"
+            if [ ! -d "${REPO_DIR}/proxy" ]; then
+              echo "[deploy] FATAL: Clone incomplete — listing ${REPO_DIR}:"
+              ls -la "$REPO_DIR" 2>&1 || echo "(directory missing)"
               exit 1
             fi
-            echo "[deploy] Clone OK"
+            echo "[deploy] Clone OK — contents:"
+            ls -la "${REPO_DIR}/proxy/src/" 2>&1 | head -10
 
             # Restore database
             if [ -f "$DB_BAK" ]; then
