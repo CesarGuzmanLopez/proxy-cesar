@@ -250,15 +250,24 @@ async def _handle_streaming_with_db(
         bool(tools),
     )
 
+    # ── Debug: trace bottlenecks between content validation and LLM call ──
+    import time as _time
+    _t0 = _time.monotonic()
+    logger.info("DBG conv=%s step=conv_load_done elapsed=0", conversation_id[:12])
+
     # Load conversation FIRST (with eager-loaded turns) to avoid identity-map
     # issue when load_session_capabilities loads it next.
     conv = await db.get(
         Conversation, conv_uuid, options=[selectinload(Conversation.turns)]
     )
+    _t1 = _time.monotonic()
+    logger.info("DBG conv=%s step=db_get_conv elapsed=%.1f", conversation_id[:12], _t1 - _t0)
     is_new = conv is None
 
     # Load session capabilities (uses identity-mapped conv, no extra DB trip)
     session_caps = await load_session_capabilities(db, conv_uuid)
+    _t2 = _time.monotonic()
+    logger.info("DBG conv=%s step=load_session elapsed=%.1f", conversation_id[:12], _t2 - _t1)
 
     # Filter eligible models based on session capabilities
     (
@@ -269,6 +278,8 @@ async def _handle_streaming_with_db(
         pm_schema=pm_schema,
         session_caps=session_caps,
     )
+    _t3 = _time.monotonic()
+    logger.info("DBG conv=%s step=filter_models elapsed=%.1f", conversation_id[:12], _t3 - _t2)
 
     # Check input threshold
     estimated_input = estimate_tokens(messages)
@@ -294,6 +305,8 @@ async def _handle_streaming_with_db(
 
     # Create or get existing conversation
     existing_affinity = await affinity.get(conversation_id)
+    _t4 = _time.monotonic()
+    logger.info("DBG conv=%s step=affinity_get elapsed=%.1f", conversation_id[:12], _t4 - _t3)
 
     physical_model, provider, selected_phys_model = _resolve_physical_model(
         existing_affinity,
@@ -371,7 +384,11 @@ async def _handle_streaming_with_db(
 
     # ── Load conversation history for streaming context ──────────
     if not is_new and conv is not None and conv.turns:
+        logger.info("DBG conv=%s step=before_build_msgs turns=%d elapsed=%.1f",
+                     conversation_id[:12], len(conv.turns), _time.monotonic() - _t0)
         messages_for_llm = build_conversation_messages(conv, messages_for_llm)
+        logger.info("DBG conv=%s step=after_build_msgs msgs=%d elapsed=%.1f",
+                     conversation_id[:12], len(messages_for_llm), _time.monotonic() - _t0)
 
     # No automatic compaction — if threshold is exceeded, error is returned.
     active_messages = messages_for_llm
@@ -382,6 +399,8 @@ async def _handle_streaming_with_db(
         context_window=pm_schema.context_window,
         conversation_id=conversation_id,
     )
+    _t5 = _time.monotonic()
+    logger.info("DBG conv=%s step=after_context_alert elapsed=%.1f", conversation_id[:12], _t5 - _t0)
     if context_alert.alert_level == "unusable":
         raise HTTPException(
             status_code=400,
@@ -403,15 +422,20 @@ async def _handle_streaming_with_db(
 
     # ── Sprint 5: Router LLM ──────────────────────────────────────────────
     # Shared with non-streaming path via evaluate_router_suggestion().
+    logger.info("DBG conv=%s step=before_router_llm elapsed=%.1f", conversation_id[:12], _time.monotonic() - _t0)
+    _t_router = _time.monotonic()
     router_suggestion: dict | None = await evaluate_router_suggestion(
         pm_schema=pm_schema,
         messages=active_messages,
         current_pseudo_name=resolved_model,
         config=config,
     )
+    logger.info("DBG conv=%s step=after_router_llm elapsed=%.1f", conversation_id[:12], _time.monotonic() - _t_router)
 
     # Apply canonical message ordering before LLM call
     active_messages = canonicalize_message_order(active_messages)
+    logger.info("DBG conv=%s step=before_llm_call active_msgs=%d elapsed=%.1f",
+                 conversation_id[:12], len(active_messages), _time.monotonic() - _t0)
 
     logger.info(
         "stream_llm_call conv=%s pseudo=%s physical=%s provider=%s "
