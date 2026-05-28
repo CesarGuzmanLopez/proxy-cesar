@@ -533,23 +533,16 @@ async def _handle_streaming_with_db(
 
 
 def _dump_chunk_for_sse(chunk) -> str:
-    """Serialize a streaming chunk to JSON, ensuring both content and
-    reasoning_content are included in the delta as separate fields."""
+    """Serialize a streaming chunk to JSON.
+
+    Do NOT add reasoning_content to the serialized output — it will be removed
+    by normalise_stream_chunk() later, so including it here just causes confusion.
+    Let the normalizer handle all reasoning_content logic.
+    """
     try:
         d = json.loads(chunk.model_dump_json())
     except (AttributeError, TypeError, ValueError):
         return chunk.model_dump_json() if hasattr(chunk, "model_dump_json") else "{}"
-    try:
-        delta = chunk.choices[0].delta
-        if delta:
-            rc = getattr(delta, "reasoning_content", None)
-            if rc is not None and rc != "":
-                choice = d.get("choices", [{}])[0]
-                if "delta" not in choice:
-                    choice["delta"] = {}
-                choice["delta"]["reasoning_content"] = rc
-    except (AttributeError, IndexError, TypeError):
-        pass
     return json.dumps(d)
 
 
