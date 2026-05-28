@@ -701,22 +701,22 @@ async def _stream_response_generator(ctx: StreamContext):
                             len(accumulated_content),
                         )
 
+                    # Convert chunk to dict ONCE — reuse for all processing
+                    chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
+
                     if (
                         fr == "length"
                         and current_idx < len(phys_models) - 1
                         and getattr(ctx.pm_schema, "continue_on_length", False)
                     ):
                         # Suppress "length" — set to null so client continues
-                        chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
                         if chunk_dict.get("choices"):
                             chunk_dict["choices"][0]["finish_reason"] = None
                         yield f"data: {json.dumps(chunk_dict)}\n\n"
                         finish_reason = "length"
                         break
 
-                    # Normalize chunk before sending: if content is null but
-                    # reasoning_content exists, copy it to content for client visibility
-                    chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
+                    # Normalize chunk: if content is null but reasoning_content exists, copy it
                     normalise_stream_chunk(chunk_dict)
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
 
