@@ -449,28 +449,30 @@ class KeyVaultMiddleware:
 
         # ── Build modified request ────────────────────────────────────────
         modified_body = json.dumps(body).encode()
-        modified_headers = [
-            (k if isinstance(k, bytes) else k.encode(),
-             v if isinstance(v, bytes) else v.encode())
-            for k, v in scope.get("headers", [])
-            if (k.lower() if isinstance(k, bytes) else k.encode().lower()) != b"content-length"
-        ]
-        modified_headers.append((b"content-length", str(len(modified_body)).encode()))
 
-        # Create a receive function that returns the modified body
-        _sent = False
+        # Create a receive that returns the modified body once, then
+        # delegates to a disconnect-like behavior that Starlette expects.
+        _body_sent = False
+        _disconnect_sent = False
 
         async def _modified_receive():
-            nonlocal _sent
-            if not _sent:
-                _sent = True
+            nonlocal _body_sent, _disconnect_sent
+            if not _body_sent:
+                _body_sent = True
                 return {
                     "type": "http.request",
                     "body": modified_body,
                     "more_body": False,
                 }
-            # After sending the body, return disconnect to stop reading
-            return {"type": "http.disconnect"}
+            # Starlette calls receive() again after body to wait for disconnect
+            # Return disconnect once, then wait forever on subsequent calls
+            if not _disconnect_sent:
+                _disconnect_sent = True
+                return {"type": "http.disconnect"}
+            # Block forever — Starlette shouldn't call receive() again after disconnect
+            import asyncio
+            await asyncio.Event().wait()
+            return {"type": "http.disconnect"}  # unreachable, but type-safe
 
         # ── Wrap send to intercept streaming for re-injection ─────────────
         _initial_send = send
@@ -519,10 +521,8 @@ class KeyVaultMiddleware:
                     # (re-injection happens at the end on the combined body)
                     await _initial_send(message)
 
-        # ── Call inner app with modified request ──────────────────────────
-        modified_scope = dict(scope)
-        modified_scope["headers"] = modified_headers
-        await self.app(modified_scope, _modified_receive, _send)
+        # ── Call inner app with original scope + modified receive/send ────
+        await self.app(scope, _modified_receive, _send)
 
     async def _passthrough(self, scope, body_bytes, original_receive, send):
         """Pass the request through unmodified when no secrets are detected."""
