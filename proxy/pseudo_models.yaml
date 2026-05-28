@@ -162,6 +162,14 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
+      - provider: groq
+        model: groq/meta-llama/llama-4-scout-17b-16e-instruct
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: false
+        vision: true
+        context_window: 131072
+        note: "Primary: Visión vía Groq. 131K contexto. Rápido y barato."
       - provider: opencode-go
         model: openai/mimo-v2-omni
         api_base: https://opencode.ai/zen/go/v1
@@ -171,15 +179,7 @@ pseudo_models:
         parallel_tools: true
         vision: true
         context_window: 128000
-        note: "Go primary: MiMo V2 Omni. Visión nativa + texto."
-      - provider: groq
-        model: groq/meta-llama/llama-4-scout-17b-16e-instruct
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: true
-        context_window: 131072
-        note: "Fallback: Visión vía Groq. 131K contexto."
+        note: "Fallback: MiMo V2 Omni. Visión nativa + texto."
     fallback_strategy: sequential
 
   # ── Normal (punto de entrada) ─────────────────────────────────────────────

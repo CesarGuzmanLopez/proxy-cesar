@@ -152,8 +152,17 @@ async def _handle_streaming_with_db(
     # Detect capabilities in incoming messages
     turn_caps = detect_turn_capabilities(messages, tools)
 
-    # Validate incoming content
-    validate_incoming_content(turn_caps, pm_schema, resolved_model, tools)
+    # Validate incoming content and get delegation signal
+    delegation = validate_incoming_content(turn_caps, pm_schema, resolved_model, tools)
+
+    # Apply content delegation (images → descriptions, audio → transcriptions, etc.)
+    if delegation:
+        from src.service.tool_detector import replace_base64_with_blob_refs
+
+        valkey_client = getattr(affinity, "_client", None)
+        messages = await replace_base64_with_blob_refs(
+            messages, conversation_id, valkey_client, config
+        )
 
     # Resolve conversation ID
     try:
