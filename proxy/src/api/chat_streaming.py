@@ -721,9 +721,9 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                         if chunk_dict.get("choices"):
                             chunk_dict["choices"][0]["finish_reason"] = None
                         # Final safeguard: remove reasoning_content with regex before sending
-                    chunk_json = json.dumps(chunk_dict)
-                    chunk_json = re.sub(r', "reasoning_content": "[^"]*"', '', chunk_json)
-                    yield f"data: {chunk_json}\n\n"
+                        chunk_json = json.dumps(chunk_dict)
+                        chunk_json = re.sub(r', "reasoning_content": "[^"]*"', '', chunk_json)
+                        yield f"data: {chunk_json}\n\n"
                         finish_reason = "length"
                         break
 
