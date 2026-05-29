@@ -208,17 +208,16 @@ async def _try_physical_model(
     api_base = phys.api_base or None
     api_key = await _resolve_api_key(phys, conversation_id, affinity)
 
-    if "deepseek" in model_prefix or "deepseek" in provider:
+    # Strip reasoning_content if the model has the flag set (e.g. DeepSeek)
+    if phys.strip_reasoning:
         for msg in call_messages:
             if msg.get("role") == "assistant" and "reasoning_content" in msg:
                 del msg["reasoning_content"]
 
     raw_thinking = kwargs.get("thinking", None)
 
-    supports_anthropic = model_prefix == "anthropic" or provider == "anthropic"
-    is_openai_reasoning_model = bool(
-        re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model)
-    )
+    supports_anthropic = phys.thinking or False
+    is_openai_reasoning_model = phys.reasoning_effort or False
     supports_reasoning_effort = is_openai_reasoning_model
     if supports_anthropic:
         reasoning_capability = "anthropic"

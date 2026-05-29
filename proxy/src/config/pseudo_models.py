@@ -37,6 +37,12 @@ class PhysicalModelSchema(BaseModel, extra="forbid"):
     """Default top_p — overrides client value when set."""
     system_prompt: str | None = None
     """System prompt injected before user messages for this model."""
+    strip_reasoning: bool = False
+    """If True, strips reasoning_content from assistant messages before re-sending."""
+    thinking: bool = False
+    """If True, this model supports Anthropic-style thinking dict parameter."""
+    reasoning_effort: bool = False
+    """If True, this model supports OpenAI-style reasoning_effort parameter."""
 
 
 # ── Sub-configs ─────────────────────────────────────────────────────────────

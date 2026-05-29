@@ -7,7 +7,6 @@ Local models (Ollama, LM Studio) are discovered live and included with
 their actual capabilities and a conservative 30% context window limit.
 """
 
-import re
 
 from fastapi import APIRouter, Request
 
@@ -41,23 +40,9 @@ async def list_models(request: Request):
         supports_thinking = False
         supports_reasoning_effort = False
         for phys in pm.physical_models:
-            prov = phys.provider.lower() if phys.provider else ""
-            model_prefix = (
-                phys.model.split("/")[0].lower() if "/" in phys.model else prov
-            )
-            if prov == "anthropic" or model_prefix == "anthropic":
+            if phys.thinking:
                 supports_thinking = True
-            # Only actual OpenAI o-series models (o1, o3, o4-mini, etc.) support
-            # reasoning_effort. Models with openai/ prefix that are NOT actual
-            # OpenAI models (e.g. kimi-k2.5, qwen3.6-plus) get auto.
-            if re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model):
-                supports_reasoning_effort = True
-            # OpenCode Go models routed through OpenAI-compatible endpoint
-            # that support reasoning (verified: MiMo-V2.5 returns reasoning_content
-            # with both reasoning_effort and thinking param). These models respond
-            # to the thinking dict sent via LiteLLM → Go backend.
-            if model_prefix == "openai" and prov == "opencode-go":
-                supports_thinking = True
+            if phys.reasoning_effort:
                 supports_reasoning_effort = True
 
         caps = dict(ALL_CAPABILITIES)

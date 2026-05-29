@@ -129,14 +129,6 @@ def provider_supports_cache(provider: str) -> bool:
     return provider.lower() in _PROVIDERS_WITH_CACHE
 
 
-# ── Gemini CachedContent (deprecated — Google models removed) ──────────────
-
-
-def manage_gemini_cache() -> None:
-    """Stub — Google models have been removed from the proxy configuration."""
-    return None
-
-
 # ── Cache metadata extraction ────────────────────────────────────────────────
 
 

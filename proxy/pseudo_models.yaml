@@ -26,6 +26,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
+        thinking: true
         note: "Go: Qwen3.7 Max vía Anthropic /messages. Premium reasoning (~4.770 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
@@ -34,6 +35,8 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
+        reasoning_effort: true
+        strip_reasoning: true
         note: "Fallback: DeepSeek V4 Pro directo. Razonamiento profundo."
     fallback_strategy: sequential
 
@@ -57,6 +60,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 196608
+        thinking: true
         note: "Go: MiniMax M2.7 (192K contexto) vía Anthropic /messages (~17.000 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
@@ -65,6 +69,8 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
+        reasoning_effort: true
+        strip_reasoning: true
         note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
     fallback_strategy: sequential
 
@@ -88,6 +94,8 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
+        thinking: true
+        reasoning_effort: true
         note: "Go: MiMo-V2.5 vía OpenAI /chat/completions (~150.400 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
@@ -137,6 +145,8 @@ pseudo_models:
         parallel_tools: true
         vision: true
         context_window: 262144
+        thinking: true
+        reasoning_effort: true
         note: "Fallback: MiMo V2 Omni (256K contexto). Visión nativa + texto."
     fallback_strategy: sequential
 
@@ -217,6 +227,8 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
+        reasoning_effort: true
+        strip_reasoning: true
         note: "Fallback: DeepSeek V4 Flash directo. Rápido, 1M contexto."
     fallback_strategy: sequential
 
@@ -240,6 +252,8 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 198000
+        thinking: true
+        reasoning_effort: true
         note: "Go primary: GLM-5.1 (198K contexto). Compactación vía Go (~4.300 req/mes)."
       - provider: groq
         model: groq/openai/gpt-oss-20b
@@ -262,7 +276,8 @@ pseudo_models:
         model: deepseek/deepseek-v4-flash
         context_window: 1000000
         openai_tools_compatible: true
-        parallel_tools: true
+        reasoning_effort: true
+        strip_reasoning: true
         vision: false
         note: "Fallback 2: 1M contexto. Para historias grandes (>131K tokens)."
       # Modelos helper (no participan en fallback de chat)
