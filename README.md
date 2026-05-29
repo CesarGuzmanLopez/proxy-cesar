@@ -136,16 +136,9 @@ El prefijo (`openai/`, `anthropic/`) lo usa liteLLM para elegir el adaptador. li
 
 **Capas de procesamiento:** CORS → Auth → RateLimit → KeyVault → Blob Vault → Fallback loop → Response
 
-**KeyVault:** Detecta 27 patrones de secrets (API keys, PEM, SSH, JWT, wallets) → los reemplaza por `[KEYVAULT:hash]` antes de llegar al LLM → los reinyecta en la respuesta.
+**KeyVault:** Detecta 27 patrones de secrets (API keys, PEM, SSH, JWT, wallets) → los reemplaza por `[KEYVAULT:hash]` antes de llegar al LLM → los reinyecta en la respuesta (streaming y no-streaming).
 
-> ⚠️ **Streaming:** Los secrets se detectan, se almacenan en Valkey y el system prompt se inyecta. Pero la **re-inyección en la respuesta no está implementada** — el cliente ve `[KEYVAULT:hash]` en lugar del valor real.
->
-> **Por qué:** El middleware llama a `request.body()` para inspeccionar los mensajes. `BaseHTTPMiddleware` de Starlette cachea ese body y, si luego la request se pasa al handler (streaming), el `StreamingResponse` devuelto ya está siendo consumido por el cliente SSE. Reemplazar placeholders requeriría bufferizar todos los chunks SSE, aplicar regex, y re-yield — con el riesgo de que un placeholder quede partido entre dos chunks. No se implementó porque:
-> 1. El handler devuelve un generador asíncrono (SSE), no un body completo
-> 2. El middleware no puede interceptar cada chunk individual sin romper el streaming
-> 3. `request.state` no se propaga al generador porque el middleware retorna antes de setearlo (línea 459-460)
->
-> **Solución:** Para secrets reales usa `stream: false` o implementa re-inyección del lado del cliente.
+> 💡 **Streaming:** Los placeholders `[KEYVAULT:hash]` se fragmentan en múltiples chunks SSE. El proxy usa un buffer deslizante de 256 caracteres para detectar placeholders completos a través de chunks y reinyectarlos sin demora perceptible.
 
 **Blob Vault:** Contenido no soportado por el modelo (imágenes en modelo sin visión) → describe con modelo helper → pasa descripción al LLM.
 
