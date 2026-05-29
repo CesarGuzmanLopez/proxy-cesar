@@ -50,6 +50,13 @@ async def list_models(request: Request):
             # OpenAI models (e.g. kimi-k2.5, qwen3.6-plus) get auto.
             if re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model):
                 supports_reasoning_effort = True
+            # OpenCode Go models routed through OpenAI-compatible endpoint
+            # that support reasoning (verified: MiMo-V2.5 returns reasoning_content
+            # with both reasoning_effort and thinking param). These models respond
+            # to the thinking dict sent via LiteLLM → Go backend.
+            if model_prefix == "openai" and prov == "opencode-go":
+                supports_thinking = True
+                supports_reasoning_effort = True
 
         caps = dict(ALL_CAPABILITIES)
         caps["thinking"] = supports_thinking
