@@ -181,9 +181,11 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], images, descs, [], [], [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File extracted: image" in text
+        assert "[v2][File extracted:" in text  # versioned format
+        assert "image" in text.split("[v2][File extracted:")[1].split("]")[0]
         assert "10 KB" in text
         assert "Vision model" in text
+        assert "or use extracted content below" in text
         assert "A login screen" in text
 
     def test_audio_blob_with_transcription(self):
@@ -192,7 +194,8 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], audios, aresults, [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File extracted: audio" in text
+        assert "[v2][File extracted:" in text
+        assert "audio" in text.split("[v2][File extracted:")[1].split("]")[0]
         assert "Hello world" in text
 
     def test_pdf_blob_with_text(self):
@@ -201,7 +204,8 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], [], [], files, fresults)
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File extracted: document" in text
+        assert "[v2][File extracted:" in text
+        assert "document" in text.split("[v2][File extracted:")[1].split("]")[0]
         assert "PyMuPDF" in text
 
     def test_empty_description_warning(self):
@@ -209,7 +213,7 @@ class TestBuildBlobOutput:
         descs = [""]
         out = _build_blob_output([], images, descs, [], [], [], [])
         text = str(out[0]["text"])
-        assert "Warning: Content extraction failed" in text
+        assert "Content extraction failed" in text
 
     def test_multiple_blobs(self):
         images = [
@@ -318,7 +322,7 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[File extracted: image\n"
+                            "[v2][File extracted: image\n"
 
                         ),
                     }
@@ -339,8 +343,8 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[File extracted: image\n"
-                            "  source: abc.png"
+                            "[v2][File extracted: image\n"
+                            "  name: abc.png"
                         ),
                     }
                 ],

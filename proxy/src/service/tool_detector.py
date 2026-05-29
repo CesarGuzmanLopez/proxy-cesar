@@ -25,6 +25,98 @@ BLOB_PREFIX = "BLOB"
 BLOB_TTL = BLOB_STORAGE_TTL_SECONDS  # Configurable in src/config/constants.py
 _MAX_BLOB_SIZE = 10 * 1024 * 1024  # 10 MB
 _CONTENT_PREVIEW_MAX = 500
+_BLOB_FORMAT_VERSION = "v2"  # Increment when format changes
+
+
+# ── Content Type Classification (SINGLE source of truth) ────────────
+
+
+class ContentType:
+    """Content types recognized by the proxy's extraction pipeline."""
+    IMAGE = "image"
+    AUDIO = "audio"
+    PDF = "pdf"
+    DOCUMENT = "document"  # Word, text, CSV, etc.
+    SPREADSHEET = "spreadsheet"  # Excel, etc.
+    PRESENTATION = "presentation"  # PowerPoint
+    UNKNOWN = "unknown"
+
+
+def _classify_content_type(part: dict) -> str:
+    """Classify a content part into a ContentType. SINGLE source of truth.
+
+    Handles all formats:
+    - OpenAI:  {"type": "image_url", "image_url": {"url": "..."}}
+    - File:    {"type": "file", "file": {"mime_type": "...", "data": "..."}}
+    - Anthropic: {"type": "file", "source": {"media_type": "...", "data": "..."}}
+    - Audio:   {"type": "input_audio", ...}
+    - Text with data URL: {"type": "text", "text": "data:image/..."}
+    """
+    ptype = part.get("type", "")
+    if ptype in ("image_url", "image"):
+        return ContentType.IMAGE
+    if ptype == "input_audio":
+        return ContentType.AUDIO
+    if ptype == "text":
+        text = part.get("text", "")
+        if isinstance(text, str) and text.startswith("data:image/"):
+            return ContentType.IMAGE
+        return ContentType.UNKNOWN
+    if ptype != "file":
+        return ContentType.UNKNOWN
+
+    # File type — determine from MIME
+    mime = (
+        part.get("mime_type")
+        or part.get("mimeType")
+        or part.get("mimetype")
+        or part.get("media_type", "")
+    )
+    if not mime:
+        file_obj = part.get("file", {}) or {}
+        mime = (
+            file_obj.get("mime_type")
+            or file_obj.get("mimeType")
+            or file_obj.get("mimetype")
+            or file_obj.get("media_type", "")
+        )
+    if not mime:
+        source = part.get("source", {}) or {}
+        mime = source.get("media_type", "")
+    if not mime:
+        # Try extracting from data URI
+        for field in ("data", "file", "source"):
+            candidate = part.get(field)
+            if isinstance(candidate, str) and candidate.startswith("data:"):
+                match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", candidate)
+                if match:
+                    mime = match.group(1)
+                    break
+            elif isinstance(candidate, dict):
+                inner = candidate.get("data") or candidate.get("file_data", "")
+                if isinstance(inner, str) and inner.startswith("data:"):
+                    match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", inner)
+                    if match:
+                        mime = match.group(1)
+                        break
+
+    mime_lower = mime.lower() if mime else ""
+    if "pdf" in mime_lower:
+        return ContentType.PDF
+    if any(v in mime_lower for v in ("spreadsheet", "excel", "xls", "xlsx", "csv", "ods")):
+        return ContentType.SPREADSHEET
+    if any(v in mime_lower for v in ("presentation", "powerpoint", "ppt", "pptx")):
+        return ContentType.PRESENTATION
+    if any(v in mime_lower for v in ("word", "docx", "officedocument", "opendocument", "text/", "rtf", "msword")):
+        return ContentType.DOCUMENT
+    if any(v in mime_lower for v in ("image", "png", "jpg", "jpeg", "gif", "webp")):
+        return ContentType.IMAGE
+    if any(v in mime_lower for v in ("audio", "wav", "mp3", "ogg", "flac", "m4a")):
+        return ContentType.AUDIO
+    if any(v in mime_lower for v in ("video", "mp4", "webm", "mkv", "avi")):
+        return ContentType.UNKNOWN  # Not supported for extraction
+
+    return ContentType.DOCUMENT  # Fallback to document for unknown file types
 
 
 def _hash_content(data: str) -> str:
@@ -308,6 +400,89 @@ async def _try_extract_docx_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
+async def _try_extract_pptx_text(base64_data: str) -> str:
+    """Extract text from a base64-encoded PPTX file (offloaded to thread pool)."""
+
+    def _sync_extract() -> str:
+        try:
+            from pptx import Presentation
+            from io import BytesIO
+
+            pptx_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
+            prs = Presentation(BytesIO(pptx_bytes))
+            slides_text = []
+            for i, slide in enumerate(prs.slides, 1):
+                slide_parts = []
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for para in shape.text_frame.paragraphs:
+                            text = para.text.strip()
+                            if text:
+                                slide_parts.append(text)
+                    if shape.has_table:
+                        for row in shape.table.rows:
+                            row_text = [cell.text.strip() for cell in row.cells]
+                            slide_parts.append(" | ".join(row_text))
+                if slide_parts:
+                    slides_text.append(f"--- Slide {i} ---\n" + "\n".join(slide_parts))
+            size_kb = len(pptx_bytes) // 1024
+            text = "\n\n".join(slides_text) if slides_text else ""
+            meta = f"[PPTX: {len(prs.slides)} slides, {size_kb} KB."
+            if text:
+                if len(text) > _CONTENT_PREVIEW_MAX:
+                    remainder = len(text) - _CONTENT_PREVIEW_MAX
+                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
+                return f"{meta}\n\n{text}]"
+            return f"{meta} No text found in slides.]"
+        except ImportError:
+            return "[PPTX: Could not process — python-pptx library not available.]"
+        except Exception as exc:
+            return f"[PPTX could not parse: {str(exc)[:100]}]"
+
+    return await asyncio.to_thread(_sync_extract)
+
+
+async def _try_extract_xlsx_text(base64_data: str) -> str:
+    """Extract text from a base64-encoded XLSX file (offloaded to thread pool)."""
+
+    def _sync_extract() -> str:
+        try:
+            import openpyxl
+            from io import BytesIO
+
+            xlsx_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
+            wb = openpyxl.load_workbook(BytesIO(xlsx_bytes), read_only=True, data_only=True)
+            sheets_text = []
+            total_rows = 0
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                rows_text = []
+                for row in ws.iter_rows(values_only=True):
+                    row_values = [str(v) if v is not None else "" for v in row]
+                    row_text = " | ".join(row_values).strip()
+                    if row_text:
+                        rows_text.append(row_text)
+                        total_rows += 1
+                if rows_text:
+                    sheets_text.append(f"--- Sheet: {sheet_name} ({len(rows_text)} rows) ---\n" + "\n".join(rows_text))
+            wb.close()
+            size_kb = len(xlsx_bytes) // 1024
+            text = "\n\n".join(sheets_text) if sheets_text else ""
+            meta = f"[XLSX: {len(wb.sheetnames)} sheets, {total_rows} data rows, {size_kb} KB."
+            if text:
+                if len(text) > _CONTENT_PREVIEW_MAX:
+                    remainder = len(text) - _CONTENT_PREVIEW_MAX
+                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
+                return f"{meta}\n\n{text}]"
+            return f"{meta} No data found.]"
+        except ImportError:
+            return "[XLSX: Could not process — openpyxl library not available.]"
+        except Exception as exc:
+            return f"[XLSX could not parse: {str(exc)[:100]}]"
+
+    return await asyncio.to_thread(_sync_extract)
+
+
 def _classify_content_parts(  # noqa: S3776 — multiple content types × multiple formats
     content: list,
 ) -> tuple[
@@ -415,22 +590,31 @@ def _truncate_desc(desc: str, sz_kb: int | str) -> str:
     return desc
 
 
-def _build_blob_text(h: str, mime: str, sz: int | str, label: str, desc: str = "", extraction_method: str = "", filename: str = "") -> str:
-    """Build blob text representation."""
+def _build_blob_text(label: str, sz: int | str, desc: str = "", extraction_method: str = "", filename: str = "") -> str:
+    """Build extracted content text block.
+
+    Args:
+        label: Content type label (image, document, pdf, etc.)
+        sz: File size in KB
+        desc: Extracted text description/content
+        extraction_method: How the content was extracted
+        filename: Original filename if available
+
+    Format is versioned with _BLOB_FORMAT_VERSION for future compatibility.
+    """
     desc = _truncate_desc(desc, sz)
-    t = f"[File extracted: {label}"
+    t = f"[{_BLOB_FORMAT_VERSION}][File extracted: {label}"
     if filename:
         t += f" | name: {filename}"
     t += f" | {sz} KB"
     if extraction_method:
         t += f" | tool: {extraction_method}"
     t += "]\n"
-    t += "You sent this file — read with tools if it exists in your workspace, "
-    t += "or use the extracted content below.\n"
+    t += "Sent as file — read with tools if in workspace, or use extracted content below:\n"
     if desc:
-        t += f"\n{desc}"
+        t += f"\n{desc}\n"
     else:
-        t += "\nWarning: Content extraction failed.\n"
+        t += "\n(Warning: Content extraction failed.)\n"
     return t
 
 
@@ -445,8 +629,12 @@ def _determine_doc_extraction(mime: str) -> str:
     mime_lower = mime.lower()
     if "pdf" in mime_lower:
         return "PyMuPDF (Python)"
-    if "wordprocessingml" in mime_lower or "word" in mime_lower or "docx" in mime_lower:
+    if any(v in mime_lower for v in ("wordprocessingml", "word", "docx", "msword", "opendocument")):
         return "python-docx (Python)"
+    if any(v in mime_lower for v in ("spreadsheet", "excel", "xls", "xlsx", "csv", "ods")):
+        return "openpyxl (Python)"
+    if any(v in mime_lower for v in ("presentation", "powerpoint", "ppt", "pptx")):
+        return "python-pptx (Python)"
     return "text decode (UTF-8)"
 
 
@@ -454,17 +642,17 @@ def _build_blob_output(others, images, descs, audios, aresults, files, fresults)
     """Build output content list from classified parts and descriptions."""
     out: list[dict[str, object]] = list(others)
 
-    for (h, _, mime, sz, filename), d in zip(images, descs):
-        text = _build_blob_text(h, mime, sz, "image", d, _EXTRACTION_LABELS["image"], filename)
+    for (_, _, mime, sz, filename), d in zip(images, descs):
+        text = _build_blob_text("image", sz, d, _EXTRACTION_LABELS["image"], filename)
         out.append({"type": "text", "text": text})
 
-    for (h, _, mime, sz, filename), d in zip(audios, aresults):
-        text = _build_blob_text(h, mime, sz, "audio", d, _EXTRACTION_LABELS["audio"], filename)
+    for (_, _, mime, sz, filename), d in zip(audios, aresults):
+        text = _build_blob_text("audio", sz, d, _EXTRACTION_LABELS["audio"], filename)
         out.append({"type": "text", "text": text})
 
-    for (h, _, mime, sz, filename), d in zip(files, fresults):
+    for (_, _, mime, sz, filename), d in zip(files, fresults):
         extraction = _determine_doc_extraction(mime)
-        text = _build_blob_text(h, mime, sz, "document", d, extraction, filename)
+        text = _build_blob_text("document", sz, d, extraction, filename)
         out.append({"type": "text", "text": text})
 
     return out
@@ -629,36 +817,8 @@ async def _describe_audio(valkey, desc_key: str, raw: str, config) -> str:
     return desc
 
 
-async def _describe_pdf(valkey, desc_key: str, raw: str) -> str:
-    """Extract PDF text if not already cached."""
-    try:
-        cached = await valkey.get(desc_key)
-        if cached:
-            return cached
-    except Exception as exc:
-        logger.warning("blob_pdf_cache_error key=%s err=%s", desc_key, exc)
-    desc = await _try_extract_pdf_text(raw)
-    if desc:
-        await _store_desc(valkey, desc_key, desc)
-    return desc
-
-
-async def _describe_docx(valkey, desc_key: str, raw: str) -> str:
-    """Extract DOCX text if not already cached."""
-    try:
-        cached = await valkey.get(desc_key)
-        if cached:
-            return cached
-    except Exception as exc:
-        logger.warning("blob_docx_cache_error key=%s err=%s", desc_key, exc)
-    desc = await _try_extract_docx_text(raw)
-    if desc:
-        await _store_desc(valkey, desc_key, desc)
-    return desc
-
-
 async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> str:
-    """Extract text from a file — PDF, DOCX, or plain text fallback."""
+    """Extract text from a file — PDF, DOCX, PPTX, XLSX, or plain text fallback."""
     try:
         cached = await valkey.get(desc_key)
         if cached:
@@ -666,20 +826,24 @@ async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> 
     except Exception as exc:
         logger.warning("blob_file_cache_error key=%s err=%s", desc_key, exc)
 
-    mime_lower = mime.lower()
-    if "pdf" in mime_lower:
-        desc = await _describe_pdf(valkey, desc_key, raw)
-    elif "wordprocessingml" in mime_lower or "word" in mime_lower or "docx" in mime_lower or "opendocument" in mime_lower:
-        desc = await _describe_docx(valkey, desc_key, raw)
+    # Use a mock part dict with mime_type and data to classify
+    mock_part = {"type": "file", "file": {"mime_type": mime, "data": raw}}
+    ctype = _classify_content_type(mock_part)
+
+    if ctype == ContentType.PDF:
+        desc = await _try_extract_pdf_text(raw)
+    elif ctype == ContentType.DOCUMENT:
+        desc = await _try_extract_docx_text(raw)
+    elif ctype == ContentType.PRESENTATION:
+        desc = await _try_extract_pptx_text(raw)
+    elif ctype == ContentType.SPREADSHEET:
+        desc = await _try_extract_xlsx_text(raw)
     else:
         # Generic text fallback: decode base64 as UTF-8
         try:
             decoded = base64.b64decode(raw.split(",", 1)[-1].strip())
             text = decoded.decode("utf-8", errors="replace")[:5000]
-            if text.strip():
-                desc = f"[Text extracted ({len(decoded)} bytes)]\n\n{text}"
-            else:
-                desc = ""
+            desc = f"[Text extracted ({len(decoded)} bytes)]\n\n{text}" if text.strip() else ""
         except Exception as exc:
             logger.debug("blob_text_decode_error mime=%s err=%s", mime, exc)
             desc = ""
@@ -711,12 +875,12 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     def _message_has_blobs(msg: dict) -> bool:
         content = msg.get("content", "")
         if isinstance(content, str):
-            return "[File extracted:" in content or f"[{BLOB_PREFIX}:" in content
+            return "[v2][File extracted:" in content
         if isinstance(content, list):
             return any(
                 isinstance(part, dict)
                 and isinstance(part.get("text"), str)
-                and ("[File extracted:" in part["text"])
+                and ("[v2][File extracted:" in part["text"])
                 for part in content
             )
         return False
@@ -733,33 +897,31 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
         content = msg.get("content", [])
         if isinstance(content, str):
             text = content.lower()
-            if "[file extracted: image" in text:
+            if "[v2][file extracted: image" in text:
                 counts["images"] = counts.get("images", 0) + 1
-            if "[file extracted: document" in text or "[file extracted: pdf" in text:
-                counts["pdfs"] = counts.get("pdfs", 0) + 1
-            if "[file extracted: audio" in text:
+            if any(t in text for t in ("[v2][file extracted: pdf", "[v2][file extracted: document", "[v2][file extracted: presentation", "[v2][file extracted: spreadsheet")):
+                counts["docs"] = counts.get("docs", 0) + 1
+            if "[v2][file extracted: audio" in text:
                 counts["audios"] = counts.get("audios", 0) + 1
         elif isinstance(content, list):
             for item in content:
                 if not isinstance(item, dict):
                     continue
-                if item.get("type") in {"image_url", "image"}:
+                ctype = _classify_content_type(item)
+                if ctype == ContentType.IMAGE:
                     counts["images"] = counts.get("images", 0) + 1
-                elif item.get("type") == "file":
-                    mime = (item.get("file", {}) or {}).get("mime_type", "")
-                    if "pdf" in mime.lower():
-                        counts["pdfs"] = counts.get("pdfs", 0) + 1
-                    else:
-                        counts["documents"] = counts.get("documents", 0) + 1
-                elif item.get("type") == "input_audio":
+                elif ctype == ContentType.AUDIO:
                     counts["audios"] = counts.get("audios", 0) + 1
-                elif item.get("type") == "text":
+                elif ctype in (ContentType.PDF, ContentType.DOCUMENT, ContentType.PRESENTATION, ContentType.SPREADSHEET):
+                    counts["docs"] = counts.get("docs", 0) + 1
+                # Also check formatted text for already-processed messages
+                if item.get("type") == "text":
                     text = str(item.get("text", "")).lower()
-                    if "[file extracted: image" in text:
+                    if "[v2][file extracted: image" in text:
                         counts["images"] = counts.get("images", 0) + 1
-                    if "[file extracted: document" in text or "[file extracted: pdf" in text:
-                        counts["pdfs"] = counts.get("pdfs", 0) + 1
-                    if "[file extracted: audio" in text:
+                    if any(t in text for t in ("[v2][file extracted: pdf", "[v2][file extracted: document", "[v2][file extracted: presentation", "[v2][file extracted: spreadsheet")):
+                        counts["docs"] = counts.get("docs", 0) + 1
+                    if "[v2][file extracted: audio" in text:
                         counts["audios"] = counts.get("audios", 0) + 1
 
     methods = []
@@ -767,20 +929,19 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
         methods.append("  • Images → Vision models (Llama 4 Scout / MiMo Omni)")
     if counts.get("audios", 0) > 0:
         methods.append("  • Audio → Whisper speech-to-text")
-    if counts.get("pdfs", 0) > 0 or counts.get("documents", 0) > 0:
-        methods.append("  • PDFs/Docs → PyMuPDF / python-docx (Python)")
+    if counts.get("docs", 0) > 0:
+        methods.append("  • Documents → PyMuPDF / python-docx / openpyxl / python-pptx (Python)")
 
     methods_text = "\n".join(methods) if methods else (
         "  • Images → Vision models (Llama 4 Scout / MiMo Omni)\n"
         "  • Audio → Whisper speech-to-text\n"
-        "  • PDFs/Docs → PyMuPDF / python-docx (Python)"
+        "  • Documents → PyMuPDF / python-docx / openpyxl / python-pptx (Python)"
     )
 
     system_message = (
         "**File Content Extraction**\n\n"
-        "Some content was auto-extracted from files you sent. "
-        "The original files are in [File extracted: ...] blocks below — "
-        "read with tools if they exist in your workspace, or use the extracted text.\n\n"
+        "Some files were auto-extracted. Their content is in [v2][File extracted: ...] blocks below. "
+        "Read directly, or access original files with tools if they exist in your workspace.\n\n"
         f"Extraction methods:\n{methods_text}"
     )
 

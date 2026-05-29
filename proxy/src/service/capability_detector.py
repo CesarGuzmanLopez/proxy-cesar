@@ -55,48 +55,29 @@ def _detect_image(part: dict) -> bool:
 
 
 def _detect_file_type(part: dict) -> str | None:
-    """Detect file type from a content part. Returns category or None.
+    """Detect file type from a content part. Uses _classify_content_type from tool_detector.
 
-    Supports multiple formats:
-    - Direct mime_type/mimeType/mimetype field at part level
-    - Nested file object:      {"type": "file", "file": {"mime_type": "...", ...}}
-    - Anthropic file format:   {"type": "file", "source": {"type": "base64", "media_type": "..."}}
-    - Data URI fallback:       {"type": "file", "file": {"data": "data:...;base64,..."}}
+    Returns category or None for compatibility with existing callers.
+    Supported categories: pdf, video, documents
     """
-    mime = part.get("mime_type") or part.get("mimeType") or part.get("mimetype") or part.get("media_type", "")
+    # Use the centralized classifier
+    from src.service.tool_detector import _classify_content_type, ContentType
+
+    ctype = _classify_content_type(part)
+    if ctype == ContentType.PDF:
+        return "pdf"
+    if ctype in (ContentType.DOCUMENT, ContentType.SPREADSHEET, ContentType.PRESENTATION):
+        return "documents"
+    # Video detection
+    mime = part.get("mime_type") or part.get("mimeType") or part.get("mimetype", "")
     if not mime:
         file_obj = part.get("file", {}) or {}
-        mime = (file_obj.get("mime_type") or file_obj.get("mimeType") or file_obj.get("mimetype") or file_obj.get("media_type", ""))
-    if not mime:
-        # Anthropic format: source.media_type only (source.type is always "base64")
-        source = part.get("source", {}) or {}
-        mime = source.get("media_type", "")
-    if not mime:
-        # Try data at any nesting level to extract MIME from data URI
-        for field in ("data", "file", "source"):
-            candidate = part.get(field)
-            if isinstance(candidate, str) and candidate.startswith("data:"):
-                match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", candidate)
-                if match:
-                    mime = match.group(1)
-                    break
-            elif isinstance(candidate, dict):
-                inner = candidate.get("data") or candidate.get("file_data", "")
-                if isinstance(inner, str) and inner.startswith("data:"):
-                    match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", inner)
-                    if match:
-                        mime = match.group(1)
-                        break
-    if not mime:
-        logger.info("file_no_mime part_keys=%s file_keys=%s", list(part.keys()), list((part.get("file", {}) or {}).keys()))
-        return None
-    mime = mime.lower()
-    if "pdf" in mime:
-        return "pdf"
-    if any(v in mime for v in ("video", "mp4", "webm", "mkv", "avi")):
+        mime = file_obj.get("mime_type", "")
+    if any(v in mime.lower() for v in ("video", "mp4", "webm", "mkv", "avi")):
         return "video"
-    if any(v in mime for v in ("word", "docx", "officedocument", "opendocument", "text/")):
-        return "documents"
+    # Audio detection for non-file types
+    if ctype == ContentType.AUDIO:
+        return "audio"
     return None
 
 
