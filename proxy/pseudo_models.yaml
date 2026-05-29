@@ -131,7 +131,7 @@ pseudo_models:
           - ONLY use structured tool calls
           - DO NOT simulate tool outputs
           - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          - Use tools when needed, but respond normally for plain text.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
@@ -181,7 +181,7 @@ pseudo_models:
           - ONLY use structured tool calls
           - DO NOT simulate tool outputs
           - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          - Use tools when needed, but respond normally for plain text.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
@@ -215,7 +215,7 @@ pseudo_models:
           - ONLY use structured tool calls
           - DO NOT simulate tool outputs
           - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          - Use tools when needed, but respond normally for plain text.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
@@ -267,7 +267,7 @@ pseudo_models:
           - ONLY use structured tool calls
           - DO NOT simulate tool outputs
           - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          - Use tools when needed, but respond normally for plain text.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
