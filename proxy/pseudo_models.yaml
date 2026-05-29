@@ -117,6 +117,16 @@ pseudo_models:
         parallel_tools: false
         vision: true
         context_window: 131072
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
         note: "Primary: Visión vía Groq. 131K contexto. Rápido y barato."
       - provider: opencode-go
         model: openai/mimo-v2-omni
@@ -155,6 +165,16 @@ pseudo_models:
         tools_strict: false
         parallel_tools: true
         vision: false
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
         note: "Fallback rápido vía Groq. 32B, 131K contexto. Bajo costo."
         context_window: 131072
     fallback_strategy: sequential
@@ -227,12 +247,24 @@ pseudo_models:
         model: groq/openai/gpt-oss-20b
         context_window: 131072
         openai_tools_compatible: true
+        parallel_tools: true
         vision: false
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
         note: "Fallback 1: 20B vía Groq (1000+ t/s). Texto puro para <131K."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         context_window: 1000000
         openai_tools_compatible: true
+        parallel_tools: true
         vision: false
         note: "Fallback 2: 1M contexto. Para historias grandes (>131K tokens)."
       # Modelos helper (no participan en fallback de chat)
