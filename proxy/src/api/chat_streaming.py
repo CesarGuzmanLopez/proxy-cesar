@@ -717,11 +717,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                     # LLM tokenizers split [KEYVAULT:hash] across 3-6 SSE chunks.
                     # We check for complete placeholders first, then buffer open brackets.
                     if keyvault_secrets:
-                        # Check ALL text fields in delta for placeholder replacement.
-                        # Models may output [KEYVAULT:hash] in content, reasoning_content,
-                        # or across multiple chunks. We check the chunk JSON directly for
-                        # complete placeholders (single-chunk case). Cross-chunk fragmentation
-                        # is handled by the buffer below.
                         delta_content = ""
                         for choice in chunk_dict.get("choices", []):
                             delta = choice.get("delta", {})
@@ -729,37 +724,57 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                 dc = delta.get(text_field, "") or ""
                                 delta_content += dc
 
-                        chunk_json = json.dumps(chunk_dict)
+                        # Accumulate text buffer and deferred chunks
+                        buf = getattr(ctx, "_keyvault_buf", "")
+                        pending = getattr(ctx, "_keyvault_pending", [])
+                        buf += delta_content
+                        pending.append(chunk_dict)
+
+                        # Check if buffer now has a complete placeholder
                         replaced = False
                         for secret_hash, real_value in keyvault_secrets.items():
                             placeholder = f"[KEYVAULT:{secret_hash}]"
-                            if placeholder in chunk_json:
-                                chunk_json = chunk_json.replace(placeholder, real_value)
-                                replaced = True
-                                logger.info(
-                                    "stream_reinject_ok conv=%s hash=%s",
-                                    ctx.conversation_id[:12], secret_hash,
-                                )
+                            if placeholder in buf:
+                                # Found complete placeholder — replace in ALL pending chunks
+                                for i, pc in enumerate(pending):
+                                    pc_json = json.dumps(pc)
+                                    if placeholder in pc_json:
+                                        pending[i] = json.loads(pc_json.replace(placeholder, real_value))
+                                        replaced = True
+                                        logger.info(
+                                            "stream_reinject_ok conv=%s hash=%s",
+                                            ctx.conversation_id[:12], secret_hash,
+                                        )
+                                        break
+                                # Replace in ALL remaining pending chunks too (clean up fragments)
+                                for i in range(len(pending)):
+                                    pc_json = json.dumps(pending[i])
+                                    if placeholder in pc_json:
+                                        pending[i] = json.loads(pc_json.replace(placeholder, real_value))
+                                # Yield all pending chunks
+                                for pc in pending:
+                                    yield f"data: {json.dumps(pc)}\n\n"
+                                pending = []
+                                buf = ""
+                                break
 
-                        # Cross-chunk placeholder detection: buffer text and check completeness
-                        if not replaced and delta_content:
-                            buf = getattr(ctx, "_keyvault_buf", "") + delta_content
-                            for secret_hash, real_value in keyvault_secrets.items():
-                                placeholder = f"[KEYVAULT:{secret_hash}]"
-                                if placeholder in buf and placeholder in chunk_json:
-                                    chunk_json = chunk_json.replace(placeholder, real_value)
-                                    replaced = True
-                                    logger.info(
-                                        "stream_reinject_ok conv=%s hash=%s (cross-chunk)",
-                                        ctx.conversation_id[:12], secret_hash,
-                                    )
-                                    break
-                            # Keep buffer if unclosed bracket, else discard
+                        if not replaced:
+                            # No complete placeholder yet. Check if we have an unclosed '['.
+                            # If yes, keep buffering. If no, flush all pending chunks.
                             has_open = "[" in buf.rpartition("]")[2]
-                            ctx._keyvault_buf = buf[-512:] if has_open else ""
+                            if has_open:
+                                ctx._keyvault_buf = buf[-512:]
+                                ctx._keyvault_pending = pending
+                            else:
+                                # Flush all pending chunks (no potential placeholder)
+                                for pc in pending:
+                                    yield f"data: {json.dumps(pc)}\n\n"
+                                ctx._keyvault_buf = ""
+                                ctx._keyvault_pending = []
 
-                        if replaced:
-                            chunk_dict = json.loads(chunk_json)
+                        # Skip the normal yield below — we already yielded manually
+                        if replaced or not replaced:
+                            continue  # Go to next chunk
 
                     # Use chunk_dict (may have keyvault secrets re-injected)
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
@@ -795,6 +810,14 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
 
             # ── Decide whether to continue with next model ──────────────
             if finish_reason != "length":
+                # Flush any remaining keyvault pending chunks before finishing
+                if keyvault_secrets:
+                    pending = getattr(ctx, "_keyvault_pending", [])
+                    if pending:
+                        for pc in pending:
+                            yield f"data: {json.dumps(pc)}\n\n"
+                        ctx._keyvault_pending = []
+                        ctx._keyvault_buf = ""
                 break  # Natural stop — we're done
 
             # All models exhausted — stop
