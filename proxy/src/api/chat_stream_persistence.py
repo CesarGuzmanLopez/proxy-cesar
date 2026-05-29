@@ -380,30 +380,119 @@ def _extract_usage_dict(chunks: list) -> dict[str, object] | None:
     return None
 
 
-def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
-    """Extract input/output tokens and response dict from collected chunks."""
-    if not chunks:
-        return 0, 0, {}
+def _extract_tokens_from_chunks(
+    last_chunk_or_list,
+    accumulated_content: str | None = None,
+    tool_calls: list[dict] | None = None,
+) -> tuple[int, int, dict]:
+    """Extract input/output tokens and response dict.
 
-    input_tokens, output_tokens = _extract_usage(chunks)
-    message, response_id, response_created, response_model, finish_reason = _extract_message_and_metadata(chunks)
-    usage_dict = _extract_usage_dict(chunks)
+    Supports two call patterns for backward compatibility:
+      1. New streaming path: (last_chunk, accumulated_content, tool_calls)
+      2. Legacy test path: (chunks_list,) — uses old accumulation logic
 
-    response_dict: dict[str, object] = {}
+    Args:
+        last_chunk_or_list: Final streaming chunk OR legacy list of chunks.
+        accumulated_content: Re-assembled content string (new path).
+        tool_calls: Accumulated tool_calls list (new path).
+    """
+    # ── Legacy test path: called with a list of chunks ───────────────────────
+    if isinstance(last_chunk_or_list, list):
+        chunks = last_chunk_or_list
+        if not chunks:
+            return 0, 0, {}
+        input_tokens, output_tokens = _extract_usage(chunks)
+        message, response_id, response_created, response_model, finish_reason = _extract_message_and_metadata(
+            chunks
+        )
+        usage_dict = _extract_usage_dict(chunks)
+        response_dict: dict[str, object] = {}
+        if response_id:
+            response_dict["id"] = response_id
+        if response_created:
+            response_dict["created"] = response_created
+        if response_model:
+            response_dict["model"] = response_model
+        response_dict["object"] = "chat.completion"
+        response_dict["choices"] = [
+            {"message": message, "finish_reason": finish_reason or "stop"}
+        ]
+        if usage_dict:
+            response_dict["usage"] = usage_dict
+        return input_tokens, output_tokens, response_dict
+
+    # ── New streaming path ───────────────────────────────────────────────────
+    last_chunk = last_chunk_or_list
+    _input_tokens = 0
+    _output_tokens = 0
+
+    if last_chunk is not None:
+        _input_tokens, _output_tokens = _extract_usage_from_chunk(last_chunk)
+
+    _usage_dict: dict = {}
+    if last_chunk is not None:
+        _usage_dict = _extract_usage_dict_from_chunk(last_chunk)
+
+    response_id = getattr(last_chunk, "id", None) if last_chunk else None
+    response_created = getattr(last_chunk, "created", None) if last_chunk else None
+    response_model = getattr(last_chunk, "model", None) if last_chunk else None
+
+    _response_dict: dict[str, object] = {}
     if response_id:
-        response_dict["id"] = response_id
+        _response_dict["id"] = response_id
     if response_created:
-        response_dict["created"] = response_created
+        _response_dict["created"] = response_created
     if response_model:
-        response_dict["model"] = response_model
-    response_dict["object"] = "chat.completion"
-    response_dict["choices"] = [
-        {"message": message, "finish_reason": finish_reason or "stop"}
-    ]
-    if usage_dict:
-        response_dict["usage"] = usage_dict
+        _response_dict["model"] = response_model
+    _response_dict["object"] = "chat.completion"
 
-    return input_tokens, output_tokens, response_dict
+    _message: dict[str, object] = {"content": accumulated_content or ""}
+    if tool_calls:
+        _message["tool_calls"] = tool_calls
+    _response_dict["choices"] = [
+        {"message": _message, "finish_reason": "stop"}
+    ]
+    if _usage_dict:
+        _response_dict["usage"] = _usage_dict
+
+    return _input_tokens, _output_tokens, _response_dict
+
+
+def _extract_usage_from_chunk(chunk) -> tuple[int, int]:
+    """Extract prompt/completion tokens from a single chunk."""
+    try:
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            pt = getattr(usage, "prompt_tokens", 0)
+            ct = getattr(usage, "completion_tokens", 0)
+            return (
+                int(pt) if isinstance(pt, (int, float)) else 0,
+                int(ct) if isinstance(ct, (int, float)) else 0,
+            )
+    except (TypeError, ValueError):
+        pass
+    return 0, 0
+
+
+def _extract_usage_dict_from_chunk(chunk) -> dict:
+    """Extract usage dict from a single chunk."""
+    try:
+        usage = getattr(chunk, "usage", None)
+        if usage is None:
+            return {}
+        result = {}
+        pt = getattr(usage, "prompt_tokens", None)
+        if pt is not None:
+            result["prompt_tokens"] = int(pt)
+        ct = getattr(usage, "completion_tokens", None)
+        if ct is not None:
+            result["completion_tokens"] = int(ct)
+        tt = getattr(usage, "total_tokens", None)
+        if tt is not None:
+            result["total_tokens"] = int(tt)
+        return result
+    except (TypeError, ValueError):
+        return {}
 
 
 def _build_final_metadata_chunk(

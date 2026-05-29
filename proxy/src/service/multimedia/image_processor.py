@@ -5,6 +5,7 @@ to reduce token consumption and split into batches when there are many
 images to avoid exceeding the model's context window.
 """
 
+import asyncio
 import base64
 import io
 import logging
@@ -89,6 +90,15 @@ def degrade_image(data_url: str) -> str:
     except Exception as e:
         logger.warning("image_processing_error error=%s", str(e))
         return data_url
+
+
+async def degrade_image_async(data_url: str) -> str:
+    """Async wrapper for degrade_image — runs PIL I/O in a thread pool.
+
+    Use this instead of degrade_image() inside async functions to avoid
+    blocking the event loop.
+    """
+    return await asyncio.to_thread(degrade_image, data_url)
 
 
 def estimate_image_tokens(data_url: str, detail: str = "auto") -> int:

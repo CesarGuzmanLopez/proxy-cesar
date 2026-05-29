@@ -19,6 +19,10 @@ VISION_TOKENS_PER_TILE = 170
 # Fixed tokens for low-detail vision images in OpenAI
 VISION_LOW_DETAIL_TOKENS = 85
 
+# LLM Call Constants
+# Default timeout for LiteLLM calls (in seconds)
+# Protects against hanging requests through the fallback chain
+DEFAULT_LLM_TIMEOUT_SECONDS = 60
 # Blob Storage Constants
 # TTL for base64-encoded blobs in Redis (in seconds)
 # 86400 = 24 hours — allows multi-turn conversations within a day

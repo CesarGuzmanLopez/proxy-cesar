@@ -176,7 +176,7 @@ def _build_compaction_history(turns: list[ConversationTurn]) -> list[dict]:
     return all_messages
 
 
-def _parse_compactor_response(response) -> tuple[str, int]:
+async def _parse_compactor_response(response) -> tuple[str, int]:
     """Extract snapshot content and token count from compactor API response."""
     response_dict = (
         response.model_dump() if hasattr(response, "model_dump") else response
@@ -193,7 +193,7 @@ def _parse_compactor_response(response) -> tuple[str, int]:
         snapshot_tokens = getattr(response.usage, "completion_tokens", 0)
 
     if not snapshot_tokens:
-        snapshot_tokens = estimate_tokens(
+        snapshot_tokens = await estimate_tokens(
             [{"role": "user", "content": snapshot_content or ""}]
         )
     return snapshot_content or "", snapshot_tokens
@@ -260,7 +260,7 @@ async def _run_compaction_sync(
             max_tokens=_compaction_max_tokens(total_tokens),
             temperature=0.1,
         )
-        snapshot_content, snapshot_tokens = _parse_compactor_response(response)
+        snapshot_content, snapshot_tokens = await _parse_compactor_response(response)
     except Exception as exc:
         logger.error(
             "compaction_failed trace=%s conv=%s compactor=%s: %s",

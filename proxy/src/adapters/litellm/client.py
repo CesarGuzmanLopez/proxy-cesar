@@ -190,6 +190,7 @@ async def call_litellm(
     model: str,
     messages: list[dict],
     stream: bool = False,
+    timeout: float | None = None,
     **kwargs,
 ):
     """Call LiteLLM with the exact model ID from config.
@@ -219,12 +220,17 @@ async def call_litellm(
         bool(api_base),
     )
 
+    from src.config.constants import DEFAULT_LLM_TIMEOUT_SECONDS
+
+    effective_timeout = timeout if timeout is not None else DEFAULT_LLM_TIMEOUT_SECONDS
+
     response = await litellm.acompletion(
         model=model,
         messages=messages,
         stream=stream,
         api_base=api_base,
         api_key=api_key,
+        timeout=effective_timeout,
         **kwargs,
     )
 

@@ -68,6 +68,8 @@ class StreamContext:
     """Full assembled message list (history + current) for continuation context."""
     trace: PipelineTrace | None = None
     """Pipeline trace for observability — logs LLM in/out events."""
+    timeout: float | None = None
+    """LLM call timeout in seconds — propagated to _try_physical_model for continuation."""
 
 
 @dataclass

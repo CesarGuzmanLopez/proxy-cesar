@@ -145,9 +145,9 @@ async def describe_image(
     api_key: str | None = None,
 ) -> tuple[str, int]:
     """Describe a single image using a vision model via LiteLLM."""
-    from src.service.multimedia.image_processor import degrade_image
+    from src.service.multimedia.image_processor import degrade_image_async
 
-    degraded_url = degrade_image(image_url)
+    degraded_url = await degrade_image_async(image_url)
     img_messages: list[dict] = [
         {
             "role": "user",
@@ -432,17 +432,17 @@ async def auto_describe_images(
 
     # Batch describe uncached images
     if uncached:
-        from src.service.multimedia.image_processor import degrade_image, can_batch_fit, estimate_image_tokens
+        from src.service.multimedia.image_processor import degrade_image_async, can_batch_fit, estimate_image_tokens
 
         instruction = _build_batch_instruction(user_prompt, len(uncached))
         batch_content: list[dict] = [{"type": "text", "text": instruction}]
         for ref in uncached:
-            degraded = degrade_image(ref["url"])
+            degraded = await degrade_image_async(ref["url"])
             batch_content.append({"type": "image_url", "image_url": {"url": degraded, "detail": "high"}})
             metadata_cache[ref["url"]] = _extract_image_metadata(ref["url"])
 
         # Safety check
-        first_degraded = degrade_image(uncached[0]["url"])
+        first_degraded = await degrade_image_async(uncached[0]["url"])
         sample_tokens = estimate_image_tokens(first_degraded, "high")
         instruction_tokens = len(instruction) // 4
         if not can_batch_fit(len(uncached), sample_tokens, 128000, instruction_tokens):

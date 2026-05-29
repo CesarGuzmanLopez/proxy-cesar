@@ -7,6 +7,7 @@ python.md §4: pure functions, immutable data, declarative style.
 # Feature: tiktoken-based token counting replaces 4-char heuristic.
 """
 
+import asyncio
 import functools
 import logging
 import uuid
@@ -269,8 +270,8 @@ def _char_fallback_count(messages: list[dict]) -> int:
     return max(1, total_chars // 4)
 
 
-def estimate_tokens(messages: list[dict]) -> int:
-    """Count tokens in messages using tiktoken.
+async def estimate_tokens(messages: list[dict]) -> int:
+    """Count tokens in messages using tiktoken (runs in thread pool to avoid blocking).
 
     plan-proxy.md §2: Uses tiktoken for deterministic token counting.
     Falls back to 4-char heuristic if tiktoken is unavailable.
@@ -283,7 +284,7 @@ def estimate_tokens(messages: list[dict]) -> int:
     """
     try:
         encoding = _get_encoding()
-        return _tiktoken_count(encoding, messages)
+        return await asyncio.to_thread(_tiktoken_count, encoding, messages)
     except Exception as e:
         logger.warning("token_count_error fallback_to_char error=%s", str(e))
         return _char_fallback_count(messages)

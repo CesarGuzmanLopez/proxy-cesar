@@ -1,6 +1,7 @@
 """Tests for capability detection logic.
 
 """
+import pytest
 
 from src.domain.capabilities import TurnCapabilities
 from src.service.capability_detector import detect_turn_capabilities, estimate_tokens
@@ -276,19 +277,22 @@ def test_alternate_mime_key():
     assert caps.has_pdf is True
 
 
-def test_estimate_tokens_empty():
+@pytest.mark.asyncio
+async def test_estimate_tokens_empty():
     """Empty messages → at least 1 token."""
-    assert estimate_tokens([]) == 1
+    assert await estimate_tokens([]) == 1
 
 
-def test_estimate_tokens_text():
+@pytest.mark.asyncio
+async def test_estimate_tokens_text():
     """Text message counted by tiktoken (includes 4-token overhead)."""
     messages = [{"role": "user", "content": "Hello world"}]
     # tiktoken o200k_base: "Hello"=1 + " world"=1 + 4 overhead = 6
-    assert estimate_tokens(messages) == 6
+    assert await estimate_tokens(messages) == 6
 
 
-def test_estimate_tokens_multimodal():
+@pytest.mark.asyncio
+async def test_estimate_tokens_multimodal():
     """Multimodal content counts text parts via tiktoken."""
     messages = [
         {
@@ -303,4 +307,4 @@ def test_estimate_tokens_multimodal():
         }
     ]
     # tiktoken o200k_base: text=4 + 4 overhead = 8
-    assert estimate_tokens(messages) == 8
+    assert await estimate_tokens(messages) == 8

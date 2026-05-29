@@ -366,7 +366,7 @@ async def _handle_streaming_with_db(
     # estimate_tokens must run AFTER replace_base64_with_blob_refs so the
     # count reflects what the LLM actually receives (text descriptions
     # can be much larger than the original base64 blobs).
-    estimated_input = estimate_tokens(active_messages)
+    estimated_input = await estimate_tokens(active_messages)
 
     # ── Check input threshold (post-delegation) ───────────────────────
     threshold_check = check_input_threshold(
@@ -543,6 +543,7 @@ async def _handle_streaming_with_db(
                     "thinking": thinking,
                 },
                 trace=trace,
+                timeout=60.0,  # Use same default as DEFAULT_LLM_TIMEOUT_SECONDS
             ),
             keyvault_secrets=keyvault_secrets,
         ),
@@ -552,19 +553,15 @@ async def _handle_streaming_with_db(
     return _streaming_response
 
 
-def _dump_chunk_for_sse(chunk) -> str:
-    """Serialize a streaming chunk to JSON.
-
-    Just serialize the chunk object as-is. Any cleaning of fields
-    (like removing reasoning_content) happens in the caller after normalization.
-    """
+def _chunk_to_dict(chunk) -> dict:
+    """Convert a streaming chunk to a dict (single serialization, no string intermediate)."""
     try:
-        return chunk.model_dump_json()
+        return chunk.model_dump(exclude_none=False)
     except (AttributeError, TypeError):
         try:
-            return json.dumps(chunk.model_dump(exclude_none=False))
+            return dict(chunk)
         except Exception:
-            return "{}"
+            return {}
 
 
 async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[str, str] | None = None):
@@ -581,7 +578,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
     import uuid
 
     stream_id = str(uuid.uuid4())[:8]  # Unique ID for this streaming session
-    chunks: list = []
+    last_chunk = None  # Track last chunk for token extraction (avoids memory accumulation)
     db = ctx.db
 
     # feature prepare for token-limit continuation across multiple models
@@ -631,7 +628,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                         )
 
                 async for chunk in current_stream:
-                    chunks.append(chunk)
+                    last_chunk = chunk  # Track last chunk; avoids storing all chunks in memory
 
                     # Accumulate text content and tool_calls for potential continuation
                     try:
@@ -690,7 +687,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                         )
 
                     # Convert chunk to dict ONCE — reuse for all processing
-                    chunk_dict = json.loads(_dump_chunk_for_sse(chunk))
+                    chunk_dict = _chunk_to_dict(chunk)
 
                     if (
                         fr == "length"
@@ -812,8 +809,9 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                 canonicalize_message_order(cont_messages),
                 True,  # stream
                 ctx.call_kwargs or {},
-                estimate_tokens(cont_messages),
+                await estimate_tokens(cont_messages),
                 _trace_id,
+                timeout=ctx.timeout,
             )
 
             if new_stream is None:
@@ -841,13 +839,14 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
             # Continue the outer while loop to iterate the new stream
 
         # ── All streams consumed — persist and finalize ─────────────────
-        input_tokens, output_tokens, response_dict = _extract_tokens_from_chunks(chunks)
+        input_tokens, output_tokens, response_dict = _extract_tokens_from_chunks(
+            last_chunk, accumulated_content
+        )
 
         logger.info(
-            "stream_complete conv=%s physical=%s chunks=%d tokens=%d+%d",
+            "stream_complete conv=%s physical=%s tokens=%d+%d",
             ctx.conversation_id[:12],
             ctx.physical_model,
-            len(chunks),
             input_tokens,
             output_tokens,
         )
@@ -892,25 +891,9 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                 cache_meta["fallback_cache_destruction"] = destruction
             ctx.cache_metadata = cache_meta
 
-        # Handle Result[..., StreamPersistenceFailed] from _persist_stream_turn
-        persist_result = await _persist_stream_turn(
-            ctx, response_dict, input_tokens, output_tokens
-        )
-
-        # Determine session_caps and conv for final metadata — use defaults if persistence failed
+        # Set defaults for final metadata chunk (before persistence runs)
         session_caps = ctx.session_caps
         conv = ctx.conv
-        match persist_result:
-            case Ok(value=(db, conv, session_caps)):
-                # Persistence succeeded, use returned values
-                pass
-            case Err(error=error):
-                logger.error(
-                    "stream_persist_failed conv=%s turn=%s reason=%s",
-                    error.conversation_id,
-                    error.turn_number,
-                    error.reason,
-                )
 
         # Build and send final metadata chunk with fallback for json.dumps failure
         try:
@@ -939,6 +922,30 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                     ctx.conversation_id,
                     str(fallback_err),
                 )
+
+        # Persist AFTER metadata chunk, BEFORE [DONE] marker.
+        # This ensures [DONE] is sent immediately after content chunks,
+        # reducing the gap between last content and stream termination.
+        try:
+            persist_result = await _persist_stream_turn(
+                ctx, response_dict, input_tokens, output_tokens
+            )
+            match persist_result:
+                case Ok(value=(db, conv, session_caps)):
+                    pass
+                case Err(error=error):
+                    logger.error(
+                        "stream_persist_failed conv=%s turn=%s reason=%s",
+                        error.conversation_id,
+                        error.turn_number,
+                        error.reason,
+                    )
+        except Exception as e:
+            logger.error(
+                "stream_persist_error conv=%s error=%s",
+                ctx.conversation_id,
+                str(e),
+            )
 
         logger.info(
             "stream_done conv=%s physical=%s",

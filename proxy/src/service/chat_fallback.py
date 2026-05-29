@@ -151,6 +151,7 @@ async def _try_physical_model(
     _trace_id: str,
     conversation_id: str | None = None,
     affinity=None,
+    timeout: float | None = None,
 ) -> tuple[ModelResponse | dict, str | None]:
     """Attempt to call a single physical model.
 
@@ -258,6 +259,7 @@ async def _try_physical_model(
         stream=stream,
         api_base=api_base,
         api_key=api_key,
+        timeout=timeout,
         **call_kwargs,
     )
 
@@ -584,6 +586,7 @@ async def call_with_fallback(
     conversation_id: str | None = None,
     valkey_client=None,
     affinity=None,
+    timeout: float | None = None,
     **kwargs,
 ) -> tuple:
     """Try each physical model in order. On retryable errors, move to next.
@@ -632,7 +635,7 @@ async def call_with_fallback(
         )
 
     _est_input = (
-        estimated_input if estimated_input is not None else estimate_tokens(messages)
+        estimated_input if estimated_input is not None else await estimate_tokens(messages)
     )
     _context_skipped: list[str] = []
 
@@ -647,6 +650,7 @@ async def call_with_fallback(
             response, skip_reason = await _try_physical_model(
                 phys, ordered_messages, stream, kwargs, _est_input, _trace_id,
                 conversation_id=conversation_id, affinity=affinity,
+                timeout=timeout,
             )
 
             if response is None:
@@ -664,7 +668,7 @@ async def call_with_fallback(
                 response, phys, ordered_messages, accumulated_parts,
                 fallback_info, pseudo_model_schema, idx, _trace_id
             ):
-                _est_input = estimate_tokens(ordered_messages)
+                _est_input = await estimate_tokens(ordered_messages)
                 continue
 
             if accumulated_parts:

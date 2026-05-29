@@ -89,16 +89,16 @@ async def _describe_image_batch(
 
     from src.service.multimedia.image_processor import (
         can_batch_fit,
-        degrade_image,
+        degrade_image_async,
         estimate_image_tokens,
     )
 
     vision_model = vision_phys.model
     context_window = vision_phys.context_window or 128000
-    # Degrade all images first
+    # Degrade all images first (async — non-blocking)
     degraded: list[tuple[str, str]] = []
     for h, raw in images:
-        degraded_raw = degrade_image(raw)
+        degraded_raw = await degrade_image_async(raw)
         degraded.append((h, degraded_raw))
 
     system = (

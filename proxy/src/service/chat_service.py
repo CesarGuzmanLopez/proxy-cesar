@@ -15,6 +15,7 @@ Capabilities:
 # HTTPException is only raised at the router boundary, not in service logic.
 # python.md §3: errors as data in domain, exceptions at boundary.
 
+import asyncio
 import logging
 import time
 import uuid
@@ -215,7 +216,7 @@ async def process_chat_request(
         active_messages = messages_for_llm
 
     # Step 12: Check input threshold
-    est_input = estimate_tokens(messages_for_llm)
+    est_input = await estimate_tokens(messages_for_llm)
     threshold_check = _check_input_threshold(
         est_input, pm_schema, pseudo_model_name
     )
@@ -253,13 +254,8 @@ async def process_chat_request(
         case Ok():
             pass  # Context is usable
 
+    # Router LLM evaluation runs in parallel with the LLM call (see below)
     # feature Router LLM — evaluate complexity (non-blocking, never changes model)
-    router_suggestion: dict | None = await evaluate_router_suggestion(
-        pm_schema=pm_schema,
-        messages=active_messages,
-        current_pseudo_name=pseudo_model_name,
-        config=config,
-    )
 
     # Log: LLM call outbound
     if trace:
@@ -268,6 +264,17 @@ async def process_chat_request(
             provider=provider,
             estimated_tokens=est_input,
         )
+
+    # Router LLM and LLM call run in parallel — Router LLM evaluation is
+    # non-blocking (suggestion is only used for logging/reporting, not model selection).
+    router_task = asyncio.create_task(
+        evaluate_router_suggestion(
+            pm_schema=pm_schema,
+            messages=active_messages,
+            current_pseudo_name=pseudo_model_name,
+            config=config,
+        )
+    )
 
     # Step 13: Call LiteLLM with fallback
     _t_llm_start = time.monotonic()
@@ -287,6 +294,21 @@ async def process_chat_request(
         affinity=affinity,
     )
     _t_llm_elapsed = time.monotonic() - _t_llm_start
+
+    # Collect router suggestion result (fire-and-forget — model already chosen)
+    router_suggestion: dict | None = None
+    if router_task.done():
+        try:
+            router_suggestion = router_task.result()
+        except Exception as exc:
+            logger.warning("router_llm_result_error: %s", exc)
+    else:
+        # Router LLM still running — cancel it, model is already chosen
+        router_task.cancel()
+        try:
+            await router_task
+        except asyncio.CancelledError:
+            pass
 
     # Log: LLM response inbound
     _log_llm_response(response, physical_model, trace, _req_id)
@@ -701,31 +723,13 @@ def _extract_cmd_name(messages: list[dict]) -> str:
 # ── Shared helpers (exported for streaming path) ──────────────────────────────
 
 
-async def evaluate_router_suggestion(
+async def _evaluate_router_llm(
     pm_schema,
     messages: list[dict],
     current_pseudo_name: str,
     config,
 ) -> dict | None:
-    """Evaluate task complexity via Router LLM — shared between paths.
-
-    Non-blocking: if the feature is disabled or evaluation fails, returns
-    ``None`` and the request continues unchanged.
-    Only evaluates the **last user message** (never the full conversation).
-
-    Args:
-        pm_schema: Current pseudo-model schema.
-        messages: Full message list (only last user evaluated internally).
-        current_pseudo_name: Current pseudo-model name.
-        config: Proxy config.
-
-    Returns:
-        Suggestion dict with ``complexity``, ``suggested``, ``reason``.
-        ``None`` if disabled or evaluation fails.
-    """
-    if not pm_schema.router_llm.enabled:
-        return None
-
+    """Run the Router LLM evaluation (slow — makes an LLM call)."""
     suggester_pm = config.pseudo_models.get(pm_schema.router_llm.suggester)
     if not suggester_pm or not suggester_pm.physical_models:
         return None
@@ -751,3 +755,31 @@ async def evaluate_router_suggestion(
             return suggestion
         return None
     return suggestion
+
+
+async def evaluate_router_suggestion(
+    pm_schema,
+    messages: list[dict],
+    current_pseudo_name: str,
+    config,
+) -> dict | None:
+    """Evaluate task complexity via Router LLM — shared between paths.
+
+    Non-blocking: if the feature is disabled or evaluation fails, returns
+    ``None`` and the request continues unchanged.
+    Only evaluates the **last user message** (never the full conversation).
+
+    Args:
+        pm_schema: Current pseudo-model schema.
+        messages: Full message list (only last user evaluated internally).
+        current_pseudo_name: Current pseudo-model name.
+        config: Proxy config.
+
+    Returns:
+        Suggestion dict with ``complexity``, ``suggested``, ``reason``.
+        ``None`` if disabled or evaluation fails.
+    """
+    if not pm_schema.router_llm.enabled:
+        return None
+
+    return await _evaluate_router_llm(pm_schema, messages, current_pseudo_name, config)
