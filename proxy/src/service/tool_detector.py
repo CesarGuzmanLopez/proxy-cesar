@@ -419,17 +419,15 @@ def _build_blob_text(h: str, mime: str, sz: int | str, label: str, desc: str = "
     """Build blob text representation."""
     desc = _truncate_desc(desc, sz)
     t = f"[Content provided: {label}\n"
-    t += f"  blob_ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"
+    t += f"  ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"
     if filename:
         t += f" | filename: {filename}"
     if extraction_method:
         t += f"\n  extraction: {extraction_method}"
     if desc:
         t += f"\n\nExtracted content:\n{desc}"
-        t += "\n\nNote: If you have specialized tools for analyzing this content, you can:"
-        t += "\n  • Use the blob reference to retrieve raw data if needed"
-        t += "\n  • Apply your own analysis tools for custom extraction"
-        t += "\n  • Combine your analysis with the provided extraction"
+        t += "\n\nIMPORTANT: The 'ref' above is an INTERNAL reference only — you cannot access it."
+        t += "\nUse ONLY the extracted content provided above."
     else:
         t += "\n\nWarning: Extraction failed or produced empty result."
         t += "\n  • Check if a specialized tool is available for this content type"
@@ -738,12 +736,10 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
         "  • Described images using vision models\n"
         "  • Transcribed audio using speech-to-text\n"
         "  • Extracted text from PDFs and Word documents (DOCX)\n\n"
-        "**If you have specialized tools available**, you can:\n"
-        "  1. Use the blob reference (format: BLOB:hash:mimetype) to access raw data\n"
-        "  2. Apply your own analysis for custom extraction or more detailed processing\n"
-        "  3. Combine your specialized analysis with the provided extraction\n\n"
-        "The extracted content is provided as text context above. "
-        "Use your tools if you need alternative analysis or higher precision."
+        "**IMPORTANT: The blob references (format: BLOB:hash:mimetype) are INTERNAL references "
+        "only and CANNOT be accessed externally. Do NOT try to fetch, retrieve, or resolve them.**\n\n"
+        "Use ONLY the extracted content provided in the message.\n\n"
+        "If you need the original file, ask the user to provide it directly."
     )
 
     return [{"role": "system", "content": system_message}] + messages

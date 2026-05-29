@@ -182,7 +182,7 @@ class TestBuildBlobOutput:
         assert len(out) == 1
         text = str(out[0]["text"])
         assert "Content provided: image" in text
-        assert "blob_ref: BLOB:abc123:image/png" in text
+        assert "ref: BLOB:abc123:image/png" in text
         assert "size: 10 KB" in text
         assert "filename: screenshot.png" in text
         assert "A login screen" in text
@@ -232,8 +232,8 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], images, descs, [], [], [], [])
         text = str(out[0]["text"])
         # The description inside should be truncated
-        extracted = text.split("Extracted content:\n")[1].split("\n\nNote:")[0]
-        assert len(extracted) <= 630
+        extracted = text.split("Extracted content:\n")[1].split("\n\nIMPORTANT:")[0]
+        assert len(extracted) <= 700
 
     def test_others_preserved(self):
         others = [{"type": "text", "text": "Regular text"}]
