@@ -101,6 +101,27 @@ class SaveContext:
 
 
 @dataclass
+class StreamingRequestContext:
+    """Context for streaming request setup — reduces params from 15 to 1."""
+
+    config: object
+    affinity: object
+    db_session_factory: object
+    conversation_id: str
+    pseudo_model_name: str
+    messages: list[dict]
+    stream: bool = True
+    temperature: float | None = None
+    max_tokens: int | None = None
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
+    stream_options: dict | None = None
+    thinking: dict | str | bool | None = None
+    trace: PipelineTrace | None = None
+    request: object | None = None
+
+
+@dataclass
 class MetadataContext:
     """Context for building proxy_metadata — reduces params from 22 to 1."""
 

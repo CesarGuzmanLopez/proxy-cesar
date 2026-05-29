@@ -218,22 +218,25 @@ async def chat_completions(
             conversation_id[:12],
             request.model,
         )
+        from src.service.chat_models import StreamingRequestContext
         result = await _handle_streaming(
-            config=config,
-            affinity=affinity,
-            db_session_factory=app_state.db_session_factory,
-            conversation_id=conversation_id,
-            pseudo_model_name=request.model,
-            messages=messages,
-            stream=True,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            tools=request.tools,
-            tool_choice=request.tool_choice,
-            stream_options=request.stream_options,
-            thinking=request.thinking,
-            trace=trace,
-            request=fastapi_request,
+            StreamingRequestContext(
+                config=config,
+                affinity=affinity,
+                db_session_factory=app_state.db_session_factory,
+                conversation_id=conversation_id,
+                pseudo_model_name=request.model,
+                messages=messages,
+                stream=True,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                tools=request.tools,
+                tool_choice=request.tool_choice,
+                stream_options=request.stream_options,
+                thinking=request.thinking,
+                trace=trace,
+                request=fastapi_request,
+            )
         )
         logger.info(
             "chat_request_streaming_returned request_id=%s conv=%s",
@@ -391,7 +394,7 @@ async def _handle_non_streaming(
 
     # Log full response for debugging
     resp_content = (
-        response_dict.get("choices", [{}])[0].get("message", {}).get("content", "")
+        response_dict.get("choices", [{}])[0].get("message", {}).get("content") or ""
     )
     logger.info(
         "chat_response_full conv=%s model=%s physical=%s "

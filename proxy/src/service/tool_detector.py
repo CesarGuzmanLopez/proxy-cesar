@@ -390,77 +390,71 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
     return user_text, images, audios, files, others
 
 
+def _truncate_desc(desc: str, sz_kb: int | str) -> str:
+    """Truncate description so the full blob text ≤ original file size in tokens."""
+    if not desc:
+        return desc
+    sz = int(sz_kb) if isinstance(sz_kb, str) else sz_kb
+    max_desc_chars = max(sz * 1024 - 400, 500)
+    if len(desc) > max_desc_chars:
+        return desc[:max_desc_chars] + "..."
+    return desc
+
+
+def _build_blob_text(h: str, mime: str, sz: int | str, label: str, desc: str = "", extraction_method: str = "", filename: str = "") -> str:
+    """Build blob text representation."""
+    desc = _truncate_desc(desc, sz)
+    t = f"[Content provided: {label}\n"
+    t += f"  blob_ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"
+    if filename:
+        t += f" | filename: {filename}"
+    if extraction_method:
+        t += f"\n  extraction: {extraction_method}"
+    if desc:
+        t += f"\n\nExtracted content:\n{desc}"
+        t += "\n\nNote: If you have specialized tools for analyzing this content, you can:"
+        t += "\n  • Use the blob reference to retrieve raw data if needed"
+        t += "\n  • Apply your own analysis tools for custom extraction"
+        t += "\n  • Combine your analysis with the provided extraction"
+    else:
+        t += "\n\nWarning: Extraction failed or produced empty result."
+        t += "\n  • Check if a specialized tool is available for this content type"
+    t += "\n]"
+    return t
+
+
+_EXTRACTION_LABELS = {
+    "image": "Vision model (description via Groq/similar)",
+    "audio": "Speech-to-text (Whisper/similar transcription)",
+}
+
+
+def _determine_doc_extraction(mime: str) -> str:
+    """Determine extraction method label based on MIME type."""
+    mime_lower = mime.lower()
+    if "pdf" in mime_lower:
+        return "PDF text extraction"
+    if "wordprocessingml" in mime_lower or "word" in mime_lower:
+        return "DOCX text extraction"
+    return "Document text extraction"
+
+
 def _build_blob_output(others, images, descs, audios, aresults, files, fresults):
-    """Build output content list from classified parts and descriptions.
-
-    Each blob is sent with:
-    1. Metadata: blob hash, MIME type, size
-    2. Auto-extracted information (description, transcription, text)
-    3. Guidance: model can use tools to extract alternative information if needed
-
-    This allows models with specialized tools (PDF extraction, image analysis,
-    audio processing) to decide whether to use the proxy's extraction or
-    invoke their own tools for custom analysis.
-    """
+    """Build output content list from classified parts and descriptions."""
     out: list[dict[str, object]] = list(others)
 
-    def _truncate_desc(desc: str, sz_kb: int | str) -> str:
-        """Truncate description so the full blob text ≤ original file size in tokens."""
-        if not desc:
-            return desc
-        sz = int(sz_kb) if isinstance(sz_kb, str) else sz_kb
-        # Original file: sz_kb * 1024 bytes ≈ sz_kb * 1024 chars ≈ sz_kb * 256 tokens.
-        # Overhead per blob (header + instructions) is ~400 chars.
-        # Max desc = original_chars - overhead, min 500 chars for useful output.
-        max_desc_chars = max(sz * 1024 - 400, 500)
-        if len(desc) > max_desc_chars:
-            return desc[:max_desc_chars] + "..."
-        return desc
-
-    def _bt(h, mime, sz, label, desc="", extraction_method="", filename=""):
-        desc = _truncate_desc(desc, sz)
-        # Header: what was sent and how to access it
-        t = f"[Content provided: {label}\n"
-        t += f"  blob_ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"
-        if filename:
-            t += f" | filename: {filename}"
-
-        # Extraction info: how it was processed
-        if extraction_method:
-            t += f"\n  extraction: {extraction_method}"
-
-        # Content: the extracted/described information
-        if desc:
-            t += f"\n\nExtracted content:\n{desc}"
-            t += "\n\nNote: If you have specialized tools for analyzing this content,"
-            t += " you can:"
-            t += "\n  • Use the blob reference to retrieve raw data if needed"
-            t += "\n  • Apply your own analysis tools for custom extraction"
-            t += "\n  • Combine your analysis with the provided extraction"
-        else:
-            t += "\n\nWarning: Extraction failed or produced empty result."
-            t += "\n  • Check if a specialized tool is available for this content type"
-
-        t += "\n]"
-        return {"type": "text", "text": t}
-
     for (h, _, mime, sz, filename), d in zip(images, descs):
-        extraction = "Vision model (description via Groq/similar)"
-        out.append(_bt(h, mime, sz, "image", d, extraction, filename))
+        text = _build_blob_text(h, mime, sz, "image", d, _EXTRACTION_LABELS["image"], filename)
+        out.append({"type": "text", "text": text})
 
     for (h, _, mime, sz, filename), d in zip(audios, aresults):
-        extraction = "Speech-to-text (Whisper/similar transcription)"
-        out.append(_bt(h, mime, sz, "audio", d, extraction, filename))
+        text = _build_blob_text(h, mime, sz, "audio", d, _EXTRACTION_LABELS["audio"], filename)
+        out.append({"type": "text", "text": text})
 
     for (h, _, mime, sz, filename), d in zip(files, fresults):
-        # Determine extraction method based on MIME type
-        if "pdf" in mime.lower():
-            extraction = "PDF text extraction"
-        elif "wordprocessingml" in mime.lower() or "word" in mime.lower():
-            extraction = "DOCX text extraction"
-        else:
-            extraction = "Document text extraction"
-        out.append(_bt(h, mime, sz, "document", d, extraction, filename))
+        extraction = _determine_doc_extraction(mime)
+        text = _build_blob_text(h, mime, sz, "document", d, extraction, filename)
+        out.append({"type": "text", "text": text})
 
     return out
 
@@ -672,28 +666,25 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     Returns:
         messages with injected system message if blobs detected, otherwise unchanged
     """
-    # Check if any message contains blob references (extracted content)
-    has_blobs = False
-    for msg in messages:
+
+    def _message_has_blobs(msg: dict) -> bool:
         content = msg.get("content", "")
         if isinstance(content, str):
-            if "[Content provided:" in content or f"[{BLOB_PREFIX}:" in content:
-                has_blobs = True
-                break
-        elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and isinstance(part.get("text"), str):
-                    if "[Content provided:" in part["text"]:
-                        has_blobs = True
-                        break
-        if has_blobs:
-            break
+            return "[Content provided:" in content or f"[{BLOB_PREFIX}:" in content
+        if isinstance(content, list):
+            return any(
+                isinstance(part, dict)
+                and isinstance(part.get("text"), str)
+                and "[Content provided:" in part["text"]
+                for part in content
+            )
+        return False
 
-    if not has_blobs:
+    if not any(_message_has_blobs(m) for m in messages):
         return messages
 
-    # Check if system message already exists
-    has_system = any(m.get("role") == "system" for m in messages)
+    if any(m.get("role") == "system" for m in messages):
+        return messages
 
     system_message = (
         "**Blob Content Processing Guide**\n\n"
@@ -711,10 +702,4 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
         "Use your tools if you need alternative analysis or higher precision."
     )
 
-    # Insert system message at the beginning if not already present
-    if has_system:
-        # System message exists, don't add another (user may have custom instructions)
-        return messages
-    else:
-        # Add as first message
-        return [{"role": "system", "content": system_message}] + messages
+    return [{"role": "system", "content": system_message}] + messages

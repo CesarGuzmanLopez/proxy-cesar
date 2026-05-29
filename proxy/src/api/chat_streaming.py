@@ -20,7 +20,7 @@ from src.adapters.cache.provider_cache import (
 )
 from src.adapters.db.models import Conversation
 from src.domain.types import Ok, Err
-from src.service.chat_models import StreamContext
+from src.service.chat_models import StreamContext, StreamingRequestContext
 from src.service.context_alert import get_context_alert
 from src.service.chat_fallback import _try_physical_model, call_with_fallback
 from src.service.chat_messages import handle_auto_describe
@@ -50,6 +50,28 @@ from src.api.chat_stream_persistence import (
 logger = logging.getLogger(__name__)
 
 
+type _ContentType = str
+
+
+_CONTENT_TYPE_MAP: dict[_ContentType, list[_ContentType]] = {
+    "images": ["image_url", "image"],
+    "pdfs": ["pdf"],
+    "audios": ["audio", "wav", "mp3"],
+    "documents": ["word", "docx", "text", "csv", "excel"],
+}
+
+
+def _classify_file(mime_type: str) -> str:
+    """Classify a file mime_type into a content category."""
+    lower = mime_type.lower()
+    for category, keywords in _CONTENT_TYPE_MAP.items():
+        if category == "images":
+            continue
+        if any(k in lower for k in keywords):
+            return category
+    return "documents"
+
+
 def _count_content_types(messages: list[dict]) -> dict[str, int]:
     """Count images, PDFs, audios, and other content types in messages."""
     counts = {"images": 0, "pdfs": 0, "audios": 0, "documents": 0}
@@ -60,23 +82,14 @@ def _count_content_types(messages: list[dict]) -> dict[str, int]:
             continue
 
         for item in content:
-            if isinstance(item, dict):
-                if item.get("type") == "image_url":
-                    counts["images"] += 1
-                elif item.get("type") == "image":
-                    counts["images"] += 1
-                elif item.get("type") == "file":
-                    mime_type = item.get("file", {}).get("mime_type", "").lower()
-                    if "pdf" in mime_type:
-                        counts["pdfs"] += 1
-                    elif "audio" in mime_type or "wav" in mime_type or "mp3" in mime_type:
-                        counts["audios"] += 1
-                    elif "word" in mime_type or "docx" in mime_type:
-                        counts["documents"] += 1
-                    elif "text" in mime_type or "csv" in mime_type or "excel" in mime_type:
-                        counts["documents"] += 1
-                    else:
-                        counts["documents"] += 1
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type", "")
+            if item_type in _CONTENT_TYPE_MAP["images"]:
+                counts["images"] += 1
+            elif item_type == "file":
+                mime_type = item.get("file", {}).get("mime_type", "")
+                counts[_classify_file(mime_type)] += 1
 
     return counts
 
@@ -100,23 +113,7 @@ def _build_analysis_message(counts: dict[str, int], images_described: int) -> st
     return f"Analizando {', '.join(parts)}..."
 
 
-async def _handle_streaming(
-    config,
-    affinity,
-    db_session_factory,
-    conversation_id: str,
-    pseudo_model_name: str,
-    messages: list[dict],
-    stream: bool,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-    tools: list[dict] | None = None,
-    tool_choice: str | dict | None = None,
-    stream_options: dict | None = None,
-    thinking: dict | str | bool | None = None,
-    trace: PipelineTrace | None = None,
-    request = None,
-):
+async def _handle_streaming(ctx: StreamingRequestContext):
     """Streaming request: return SSE StreamingResponse.
 
     Capability detection, threshold check, and compaction run synchronously
@@ -127,31 +124,31 @@ async def _handle_streaming(
     caller) because the generator runs lazily after this function returns.
     The generator is responsible for closing the session.
     """
-    db = db_session_factory()
+    db = ctx.db_session_factory()
     try:
         return await _handle_streaming_with_db(
             db=db,
-            config=config,
-            affinity=affinity,
-            conversation_id=conversation_id,
-            pseudo_model_name=pseudo_model_name,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            tools=tools,
-            tool_choice=tool_choice,
-            stream_options=stream_options,
-            thinking=thinking,
-            trace=trace,
-            request=request,
+            config=ctx.config,
+            affinity=ctx.affinity,
+            conversation_id=ctx.conversation_id,
+            pseudo_model_name=ctx.pseudo_model_name,
+            messages=ctx.messages,
+            temperature=ctx.temperature,
+            max_tokens=ctx.max_tokens,
+            tools=ctx.tools,
+            tool_choice=ctx.tool_choice,
+            stream_options=ctx.stream_options,
+            thinking=ctx.thinking,
+            trace=ctx.trace,
+            request=ctx.request,
         )
     except HTTPException:
         try:
             await db.close()
         except Exception as exc:
             logger.debug("stream_db_close_error err=%s", exc)
-        if trace:
-            trace.proxy_out(http_status=400, stream=True)
+        if ctx.trace:
+            ctx.trace.proxy_out(http_status=400, stream=True)
         raise
     except ValueError as e:
         try:
@@ -160,8 +157,8 @@ async def _handle_streaming(
             logger.debug("stream_db_close_error err=%s", exc)
         error_msg = str(e)
         status_code, error_detail = _map_stream_domain_error(error_msg)
-        if trace:
-            trace.proxy_out(http_status=status_code, stream=True)
+        if ctx.trace:
+            ctx.trace.proxy_out(http_status=status_code, stream=True)
         raise HTTPException(
             status_code=status_code,
             detail=error_detail,
@@ -172,8 +169,8 @@ async def _handle_streaming(
         except Exception as exc:
             logger.debug("stream_db_close_error err=%s", exc)
         metrics.record_error(502, "PROXY_ERROR")
-        if trace:
-            trace.proxy_out(http_status=502, stream=True)
+        if ctx.trace:
+            ctx.trace.proxy_out(http_status=502, stream=True)
         raise HTTPException(
             status_code=502,
             detail={

@@ -246,6 +246,54 @@ def _extract_usage(chunks: list) -> tuple[int, int]:
     return 0, 0
 
 
+def _extract_chunk_metadata(chunk) -> tuple[str | None, int | None, str | None]:
+    """Extract id, created, model from a chunk if not already found."""
+    return (
+        getattr(chunk, "id", None),
+        getattr(chunk, "created", None),
+        getattr(chunk, "model", None),
+    )
+
+
+def _accumulate_tool_call_delta(tc, tool_calls_map: dict[int, dict]) -> None:
+    """Accumulate a single tool_call delta into the index map."""
+    idx = getattr(tc, "index", None) or 0
+    if idx not in tool_calls_map:
+        tool_calls_map[idx] = {
+            "id": None,
+            "type": "function",
+            "function": {"name": None, "arguments": ""},
+        }
+    tc_id = getattr(tc, "id", None)
+    if tc_id and isinstance(tc_id, str):
+        tool_calls_map[idx]["id"] = tc_id
+    func = getattr(tc, "function", None)
+    if func:
+        func_name = getattr(func, "name", None)
+        if func_name and isinstance(func_name, str):
+            tool_calls_map[idx]["function"]["name"] = func_name
+        func_args = getattr(func, "arguments", None)
+        if func_args and isinstance(func_args, str):
+            tool_calls_map[idx]["function"]["arguments"] += func_args
+
+
+def _build_tool_calls_list(tool_calls_map: dict[int, dict]) -> list[dict[str, object]]:
+    """Convert accumulated tool_calls map to validated list."""
+    result: list[dict[str, object]] = []
+    for idx in sorted(tool_calls_map.keys()):
+        tc = tool_calls_map[idx]
+        if tc["id"] and tc["function"]["name"]:
+            result.append({
+                "id": tc["id"],
+                "type": "function",
+                "function": {
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"]["arguments"],
+                },
+            })
+    return result
+
+
 def _extract_message_and_metadata(chunks: list) -> tuple[dict, str | None, int | None, str | None, str | None]:
     """Reconstruct message, tool_calls, finish_reason and metadata from ALL chunks."""
     content_parts: list[str] = []
@@ -258,12 +306,13 @@ def _extract_message_and_metadata(chunks: list) -> tuple[dict, str | None, int |
 
     for chunk in chunks:
         try:
+            chunk_id, chunk_created, chunk_model = _extract_chunk_metadata(chunk)
             if response_id is None:
-                response_id = getattr(chunk, "id", None)
+                response_id = chunk_id
             if response_created is None:
-                response_created = getattr(chunk, "created", None)
+                response_created = chunk_created
             if response_model is None:
-                response_model = getattr(chunk, "model", None)
+                response_model = chunk_model
 
             choices = getattr(chunk, "choices", None)
             if not choices:
@@ -284,24 +333,7 @@ def _extract_message_and_metadata(chunks: list) -> tuple[dict, str | None, int |
                 if tc_deltas:
                     for tc in tc_deltas:
                         try:
-                            idx = getattr(tc, "index", None) or 0
-                            if idx not in tool_calls_map:
-                                tool_calls_map[idx] = {
-                                    "id": None,
-                                    "type": "function",
-                                    "function": {"name": None, "arguments": ""},
-                                }
-                            tc_id = getattr(tc, "id", None)
-                            if tc_id and isinstance(tc_id, str):
-                                tool_calls_map[idx]["id"] = tc_id
-                            func = getattr(tc, "function", None)
-                            if func:
-                                func_name = getattr(func, "name", None)
-                                if func_name and isinstance(func_name, str):
-                                    tool_calls_map[idx]["function"]["name"] = func_name
-                                func_args = getattr(func, "arguments", None)
-                                if func_args and isinstance(func_args, str):
-                                    tool_calls_map[idx]["function"]["arguments"] += func_args
+                            _accumulate_tool_call_delta(tc, tool_calls_map)
                         except Exception as e:
                             logger.warning(
                                 "extract_tool_delta_error | idx=%s error=%s",
@@ -318,19 +350,7 @@ def _extract_message_and_metadata(chunks: list) -> tuple[dict, str | None, int |
 
     content = "".join(content_parts) if content_parts else None
     reasoning_content = "".join(reasoning_parts) if reasoning_parts else None
-
-    tool_calls_list: list[dict[str, object]] = []
-    for idx in sorted(tool_calls_map.keys()):
-        tc = tool_calls_map[idx]
-        if tc["id"] and tc["function"]["name"]:
-            tool_calls_list.append({
-                "id": tc["id"],
-                "type": "function",
-                "function": {
-                    "name": tc["function"]["name"],
-                    "arguments": tc["function"]["arguments"],
-                },
-            })
+    tool_calls_list = _build_tool_calls_list(tool_calls_map)
 
     message: dict[str, object] = {"role": "assistant", "content": content}
     if reasoning_content:

@@ -39,50 +39,55 @@ def _get_encoding():
         return tiktoken.get_encoding("cl100k_base")
 
 
+def _detect_image(part: dict) -> bool:
+    """Detect if a content part contains an image."""
+    part_type = part.get("type", "")
+    if part_type == "image_url":
+        return True
+    if part_type == "image" and part.get("image"):
+        return True
+    if part_type == "text":
+        text = part.get("text", "")
+        return isinstance(text, str) and text.startswith("data:image/")
+    return False
+
+
+def _detect_file_type(part: dict) -> str | None:
+    """Detect file type from a content part. Returns category or None."""
+    mime = part.get("mime_type", part.get("mimetype", "")).lower()
+    if "pdf" in mime:
+        return "pdf"
+    if any(v in mime for v in ("video/", "mp4", "webm", "avi")):
+        return "video"
+    return None
+
+
+_TYPE_FLAGS: dict[str, str] = {
+    "input_audio": "has_audio",
+    "video_url": "has_video",
+    "video": "has_video",
+}
+
+
 def _scan_multimodal_content(content: list, caps: TurnCapabilities) -> None:
-    """Scan multimodal content parts for images, audio, PDF, video.
-
-    Supports multiple image formats:
-    - OpenAI standard: {"type": "image_url", "image_url": {"url": "..."}}
-    - Base64: {"type": "image", "image": "data:image/...;base64,..."}
-    - Text with base64: {"type": "text", "text": "data:image/...;base64,..."}
-    - LibreChat/Anthropic: variations of above
-    """
+    """Scan multimodal content parts for images, audio, PDF, video."""
     for part in content:
-        part_type = part.get("type", "")
-
-        # OpenAI image_url format (with nested image_url object)
-        if part_type == "image_url":
+        if _detect_image(part):
             caps.has_images = True
+            continue
 
-        # Base64 inline image format (type="image")
-        elif part_type == "image":
-            # Could be base64 string, data URL, or reference
-            if part.get("image"):
-                caps.has_images = True
-
-        # Some clients send images as text with data: URL
-        elif part_type == "text":
-            text_content = part.get("text", "")
-            if isinstance(text_content, str) and text_content.startswith("data:image/"):
-                caps.has_images = True
-
-        # Audio input
-        elif part_type == "input_audio":
-            caps.has_audio = True
-
-        # File uploads (PDF, video, etc.)
-        elif part_type == "file":
-            mime = part.get("mime_type", part.get("mimetype", ""))
-            mime_lower = mime.lower()
-            if "pdf" in mime_lower:
+        part_type = part.get("type", "")
+        if part_type == "file":
+            file_type = _detect_file_type(part)
+            if file_type == "pdf":
                 caps.has_pdf = True
-            elif any(v in mime_lower for v in ("video/", "mp4", "webm", "avi")):
+            elif file_type == "video":
                 caps.has_video = True
+            continue
 
-        # Video URLs/references
-        elif part_type in ("video_url", "video"):
-            caps.has_video = True
+        flag = _TYPE_FLAGS.get(part_type)
+        if flag:
+            setattr(caps, flag, True)
 
 
 def _scan_tool_calls(msg: dict, caps: TurnCapabilities) -> None:
