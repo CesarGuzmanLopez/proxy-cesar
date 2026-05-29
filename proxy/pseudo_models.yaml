@@ -51,8 +51,8 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/qwen3.6-plus
-        api_base: https://opencode.ai/zen/go/v1
+        model: anthropic/qwen3.6-plus
+        api_base: https://opencode.ai/zen/go
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
@@ -253,8 +253,8 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/minimax-m2.7
-        api_base: https://opencode.ai/zen/go/v1
+        model: anthropic/minimax-m2.7
+        api_base: https://opencode.ai/zen/go
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
@@ -284,8 +284,8 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/qwen3.5-plus
-        api_base: https://opencode.ai/zen/go/v1
+        model: anthropic/qwen3.5-plus
+        api_base: https://opencode.ai/zen/go
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
