@@ -827,6 +827,10 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
             current_idx += 1
             next_phys = phys_models[current_idx]
 
+            # Reset keyvault buffer for new model (don't carry over from previous stream)
+            ctx._keyvault_buf = ""
+            ctx._keyvault_pending = []
+
             # Build continuation messages: full history + partial assistant
             cont_messages = list(ctx.active_messages or ctx.messages or [])
             assistant_msg: dict[str, object] = {
