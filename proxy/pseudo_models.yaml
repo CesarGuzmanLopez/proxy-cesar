@@ -210,16 +210,14 @@ pseudo_models:
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
         note: "Primary: GPT-OSS 20B vía Groq (1000 t/s). Sin tools paralelas. System prompt para forzar tool calling correcto."
-      - provider: opencode-go
-        model: openai/deepseek-v4-flash
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
+      - provider: deepseek
+        model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Fallback: DeepSeek V4 Flash vía Go (~158.150 req/mes)."
+        note: "Fallback: DeepSeek V4 Flash directo. Rápido, 1M contexto."
     fallback_strategy: sequential
 
   # ── Compactador (con helpers internos) ────────────────────────────────────
