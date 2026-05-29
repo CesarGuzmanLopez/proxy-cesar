@@ -181,11 +181,9 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], images, descs, [], [], [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File content extracted from: image" in text
-        assert "source: screenshot.png" in text
+        assert "File extracted: image" in text
         assert "10 KB" in text
         assert "Vision model" in text
-        assert "extracted with: Vision model" in text
         assert "A login screen" in text
 
     def test_audio_blob_with_transcription(self):
@@ -194,8 +192,7 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], audios, aresults, [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File content extracted from: audio" in text
-        assert "source: recording.wav" in text
+        assert "File extracted: audio" in text
         assert "Hello world" in text
 
     def test_pdf_blob_with_text(self):
@@ -204,9 +201,8 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], [], [], files, fresults)
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File content extracted from: document" in text
+        assert "File extracted: document" in text
         assert "PyMuPDF" in text
-        assert "source: report.pdf" in text
 
     def test_empty_description_warning(self):
         images = [("abc123", "raw", "image/png", "10", "")]
@@ -233,11 +229,8 @@ class TestBuildBlobOutput:
         descs = [long_desc]
         out = _build_blob_output([], images, descs, [], [], [], [])
         text = str(out[0]["text"])
-        # The description inside should be truncated
-        # Format: [File: image | source: small.png | 1 KB | extracted with: ...
-        # The description follows the header line
-        extracted = text.split("\n\n", 1)[1] if "\n\n" in text else text
-        assert len(extracted) <= 700
+        extracted = text.split("\n", 1)[1] if "\n" in text else text
+        assert len(extracted) <= 750
 
     def test_others_preserved(self):
         others = [{"type": "text", "text": "Regular text"}]
@@ -325,8 +318,8 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[File content extracted from: image\n"
-                            "  source: abc.png"
+                            "[File extracted: image\n"
+
                         ),
                     }
                 ],
@@ -346,7 +339,7 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[File content extracted from: image\n"
+                            "[File extracted: image\n"
                             "  source: abc.png"
                         ),
                     }

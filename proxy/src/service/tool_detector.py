@@ -418,17 +418,19 @@ def _truncate_desc(desc: str, sz_kb: int | str) -> str:
 def _build_blob_text(h: str, mime: str, sz: int | str, label: str, desc: str = "", extraction_method: str = "", filename: str = "") -> str:
     """Build blob text representation."""
     desc = _truncate_desc(desc, sz)
-    t = f"[File content extracted from: {label}"
+    t = f"[File extracted: {label}"
     if filename:
-        t += f" | source: {filename}"
+        t += f" | name: {filename}"
     t += f" | {sz} KB"
     if extraction_method:
-        t += f" | extracted with: {extraction_method}"
+        t += f" | tool: {extraction_method}"
+    t += "]\n"
+    t += "You sent this file — read with tools if it exists in your workspace, "
+    t += "or use the extracted content below.\n"
     if desc:
-        t += f"\n\n{desc}"
+        t += f"\n{desc}"
     else:
-        t += "\n\nWarning: Content extraction failed or produced empty result."
-    t += "\n]"
+        t += "\nWarning: Content extraction failed.\n"
     return t
 
 
@@ -687,20 +689,20 @@ async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> 
     return desc
 
 
-def inject_blob_extraction_guidance(
-    messages: list[dict],
-    content_counts: dict[str, int] | None = None,
-) -> list[dict]:
+def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     """Inject system message explaining blob extraction and tool availability.
 
     When the proxy auto-extracts content (describes images, transcribes audio,
     extracts PDF text), it sends the extracted information in the message.
-    This system message tells the model what was extracted and how.
+    This system message tells the model:
 
-    Args:
-        messages: Message list to inject into.
-        content_counts: Optional dict with counts of what was extracted.
-            Keys: images, pdfs, audios, documents. If None, detected from messages.
+    1. Content was auto-extracted from blobs (multimodal content the model can't process)
+    2. The model can choose to use its own specialized tools for alternative analysis
+    3. How to access the blob reference if needed for custom processing
+
+    This allows models with specialized tools (PDF parsers, image recognition,
+    audio analysis) to decide whether to use the proxy's extraction or invoke
+    their own tools for custom or more accurate analysis.
 
     Returns:
         messages with injected system message if blobs detected, otherwise unchanged
@@ -709,12 +711,12 @@ def inject_blob_extraction_guidance(
     def _message_has_blobs(msg: dict) -> bool:
         content = msg.get("content", "")
         if isinstance(content, str):
-            return "[File content extracted from:" in content or f"[{BLOB_PREFIX}:" in content
+            return "[File extracted:" in content or f"[{BLOB_PREFIX}:" in content
         if isinstance(content, list):
             return any(
                 isinstance(part, dict)
                 and isinstance(part.get("text"), str)
-                and ("[File content extracted from:" in part["text"])
+                and ("[File extracted:" in part["text"])
                 for part in content
             )
         return False
@@ -725,67 +727,62 @@ def inject_blob_extraction_guidance(
     if any(m.get("role") == "system" for m in messages):
         return messages
 
-    # Detect content types from messages if not provided
-    counts = content_counts or {"images": 0, "pdfs": 0, "audios": 0, "documents": 0}
-    if not content_counts:
-        for msg in messages or []:
-            content = msg.get("content", [])
-            if isinstance(content, str):
-                # Already formatted text — detect from keywords in the block text
-                text = content.lower()
-                if "[file content extracted from: image" in text:
-                    counts["images"] += 1
-                if "[file content extracted from: document" in text or "[file content extracted from: pdf" in text:
-                    counts["pdfs"] += 1
-                if "[file content extracted from: audio" in text:
-                    counts["audios"] += 1
-            elif isinstance(content, list):
-                for item in content:
-                    if not isinstance(item, dict):
-                        continue
-                    # Check raw content types
-                    if item.get("type") in {"image_url", "image"}:
-                        counts["images"] += 1
-                    elif item.get("type") == "file":
-                        mime = (item.get("file", {}) or {}).get("mime_type", "")
-                        if "pdf" in mime.lower():
-                            counts["pdfs"] += 1
-                        else:
-                            counts["documents"] += 1
-                    elif item.get("type") == "input_audio":
-                        counts["audios"] += 1
-                    # Check already formatted text content
-                    elif item.get("type") == "text":
-                        text = str(item.get("text", "")).lower()
-                        if "[file content extracted from: image" in text:
-                            counts["images"] += 1
-                        if "[file content extracted from: document" in text or "[file content extracted from: pdf" in text:
-                            counts["pdfs"] += 1
-                        if "[file content extracted from: audio" in text:
-                            counts["audios"] += 1
+    # Detect which content types are in the messages
+    counts: dict[str, int] = {}
+    for msg in messages or []:
+        content = msg.get("content", [])
+        if isinstance(content, str):
+            text = content.lower()
+            if "[file extracted: image" in text:
+                counts["images"] = counts.get("images", 0) + 1
+            if "[file extracted: document" in text or "[file extracted: pdf" in text:
+                counts["pdfs"] = counts.get("pdfs", 0) + 1
+            if "[file extracted: audio" in text:
+                counts["audios"] = counts.get("audios", 0) + 1
+        elif isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") in {"image_url", "image"}:
+                    counts["images"] = counts.get("images", 0) + 1
+                elif item.get("type") == "file":
+                    mime = (item.get("file", {}) or {}).get("mime_type", "")
+                    if "pdf" in mime.lower():
+                        counts["pdfs"] = counts.get("pdfs", 0) + 1
+                    else:
+                        counts["documents"] = counts.get("documents", 0) + 1
+                elif item.get("type") == "input_audio":
+                    counts["audios"] = counts.get("audios", 0) + 1
+                elif item.get("type") == "text":
+                    text = str(item.get("text", "")).lower()
+                    if "[file extracted: image" in text:
+                        counts["images"] = counts.get("images", 0) + 1
+                    if "[file extracted: document" in text or "[file extracted: pdf" in text:
+                        counts["pdfs"] = counts.get("pdfs", 0) + 1
+                    if "[file extracted: audio" in text:
+                        counts["audios"] = counts.get("audios", 0) + 1
 
-    # Build only the relevant extraction methods
     methods = []
     if counts.get("images", 0) > 0:
         methods.append("  • Images → Vision models (Llama 4 Scout / MiMo Omni)")
     if counts.get("audios", 0) > 0:
         methods.append("  • Audio → Whisper speech-to-text")
-    if counts.get("pdfs", 0) > 0:
-        methods.append("  • PDFs → PyMuPDF (Python library)")
-    if counts.get("documents", 0) > 0:
-        methods.append("  • Word/docs → python-docx (Python library)")
+    if counts.get("pdfs", 0) > 0 or counts.get("documents", 0) > 0:
+        methods.append("  • PDFs/Docs → PyMuPDF / python-docx (Python)")
 
-    if not methods:
-        return messages
+    methods_text = "\n".join(methods) if methods else (
+        "  • Images → Vision models (Llama 4 Scout / MiMo Omni)\n"
+        "  • Audio → Whisper speech-to-text\n"
+        "  • PDFs/Docs → PyMuPDF / python-docx (Python)"
+    )
 
-    methods_text = "\n".join(methods)
     system_message = (
         "**File Content Extraction**\n\n"
-        "Some content in this conversation was auto-extracted from files "
-        "that the current model cannot process natively.\n\n"
-        "The extracted content is included in [File content extracted from: ...] blocks below. "
-        "You can read it directly from there.\n\n"
-        f"Extraction methods used:\n{methods_text}"
+        "Some content was auto-extracted from files you sent. "
+        "The original files are in [File extracted: ...] blocks below — "
+        "read with tools if they exist in your workspace, or use the extracted text.\n\n"
+        f"Extraction methods:\n{methods_text}"
     )
 
     return [{"role": "system", "content": system_message}] + messages
+
