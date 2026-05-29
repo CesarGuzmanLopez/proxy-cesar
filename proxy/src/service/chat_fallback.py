@@ -188,6 +188,8 @@ async def _try_physical_model(
     )
 
     call_messages = ordered_messages
+    if phys.system_prompt:
+        call_messages = [{"role": "system", "content": phys.system_prompt}] + call_messages
     provider = phys.provider.lower()
     model_prefix = phys.model.split("/")[0].lower() if "/" in phys.model else provider
     cache_provider = model_prefix if model_prefix in ("anthropic",) else provider
@@ -237,6 +239,13 @@ async def _try_physical_model(
 
     call_kwargs = {k: v for k, v in kwargs.items() if v is not None}
     call_kwargs.pop("thinking", None)
+    # Force physical model defaults (override client values)
+    if phys.temperature is not None:
+        call_kwargs["temperature"] = phys.temperature
+    if phys.top_p is not None:
+        call_kwargs["top_p"] = phys.top_p
+    if not phys.parallel_tools:
+        call_kwargs["parallel_tool_calls"] = False
 
     if supports_anthropic and thinking_dict is not None:
         call_kwargs["thinking"] = thinking_dict

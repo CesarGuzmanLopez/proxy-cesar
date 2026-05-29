@@ -71,7 +71,7 @@ pseudo_models:
   # ── Normal (punto de entrada) ─────────────────────────────────────────────
   normal:
     display_name: Normal
-    description: "Punto de entrada recomendado. Qwen3.5 Plus vía Go. Coding extenso."
+    description: "Punto de entrada recomendado. MiMo-V2.5 vía Go. Coding extenso."
     input_token_threshold: 1000000
     context_window: 1000000
     router_llm:
@@ -80,15 +80,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/qwen3.5-plus
-        api_base: https://opencode.ai/zen/go
+        model: openai/mimo-v2.5
+        api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go: Qwen3.5 Plus vía Anthropic /messages (~50.500 req/mes)."
+        note: "Go: MiMo-V2.5 vía OpenAI /chat/completions (~150.400 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -159,19 +159,39 @@ pseudo_models:
         context_window: 131072
     fallback_strategy: sequential
 
-  # ── Flash Lowcost ──────────────────────────────────────────────────
-  flash-lowcost:
-    display_name: Flash Lowcost
-    description: "Sub-agentes baratos. Clasificación, extracción, parsing. MiMo-V2.5 vía Go."
-    input_token_threshold: 1000000
-    context_window: 1000000
+  # ── Flash ────────────────────────────────────────────────────────────────
+  flash:
+    display_name: Flash
+    description: "Sub-agentes rápidos. Clasificación, extracción, parsing. GPT-OSS 20B (Groq) + fallback Go Flash."
+    input_token_threshold: 128000
+    context_window: 128000
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
+      - provider: groq
+        model: groq/openai/gpt-oss-20b
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: false
+        vision: false
+        context_window: 128000
+        temperature: 0.1
+        top_p: 0.9
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
+        note: "Primary: GPT-OSS 20B vía Groq (1000 t/s). Sin tools paralelas. System prompt para forzar tool calling correcto."
       - provider: opencode-go
-        model: openai/mimo-v2.5
+        model: openai/deepseek-v4-flash
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -179,15 +199,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go: MiMo-V2.5 vía OpenAI /chat/completions (~150.400 req/mes)."
-      - provider: deepseek
-        model: deepseek/deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-        note: "Fallback: DeepSeek V4 Flash directo."
+        note: "Fallback: DeepSeek V4 Flash vía Go (~158.150 req/mes)."
     fallback_strategy: sequential
 
   # ── Compactador (con helpers internos) ────────────────────────────────────
@@ -253,5 +265,5 @@ model_aliases:
   gemini-2.5-flash: vision
   gemini-2.5-pro: tareas-avanzadas
   claude-sonnet-4-20250514: tareas-avanzadas
-  claude-haiku-3-5-20241022: flash-lowcost
+  claude-haiku-3-5-20241022: flash
   default: normal

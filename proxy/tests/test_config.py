@@ -17,7 +17,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "pseudo_models.yaml"
 def test_1_valid_config_loads():
     """Valid pseudo_models.yaml loads without error."""
     config = load_config(CONFIG_PATH)
-    assert len(config.pseudo_models) == 10
+    assert len(config.pseudo_models) == 7
 
 
 def test_2_missing_file():
@@ -270,16 +270,13 @@ def test_15_all_pseudo_models_loaded():
     config = load_config(CONFIG_PATH)
     expected = [
         "pensamiento-profundo-caro",
-        "pensamiento-rapido",
         "tareas-avanzadas",
-        "codigo-preciso",
-        "vision",
         "normal",
+        "vision",
         "normal-gratis",
-        "massive-fast",
-        "flash-lowcost",
+        "flash",
         "compactador",
     ]
     for name in expected:
         assert name in config.pseudo_models, f"Missing pseudo-model: {name}"
-    assert len(config.pseudo_models) == 10
+    assert len(config.pseudo_models) == 7

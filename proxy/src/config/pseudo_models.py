@@ -31,6 +31,12 @@ class PhysicalModelSchema(BaseModel, extra="forbid"):
     """Custom API base URL (e.g. https://opencode.ai/zen/go/v1)."""
     api_key_env: str | None = None
     """Env var name holding the API key (e.g. OPENCODE_API_KEY)."""
+    temperature: float | None = None
+    """Default temperature — overrides client value when set."""
+    top_p: float | None = None
+    """Default top_p — overrides client value when set."""
+    system_prompt: str | None = None
+    """System prompt injected before user messages for this model."""
 
 
 # ── Sub-configs ─────────────────────────────────────────────────────────────
