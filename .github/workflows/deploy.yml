@@ -5,6 +5,7 @@
 #   PLATA_SSH_PORT   — SSH port (default 22)
 #   PLATA_USER       — deploy user on the server (must have sudo for systemctl)
 #   PLATA_SSH_KEY    — private SSH key for the deploy user
+#   DATABASE_URL     — PostgreSQL connection string
 #   PROXY_API_KEY    — Bearer token for API access
 #   DEEPSEEK_API_KEY
 #   GROQ_API_KEY
@@ -27,6 +28,7 @@ jobs:
     if: github.repository == 'CesarGuzmanLopez/proxy-cesar'
 
     env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       PROXY_API_KEY: ${{ secrets.PROXY_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       DEEPSEEK_API_KEY_2: ${{ secrets.DEEPSEEK_API_KEY_2 }}
@@ -50,6 +52,7 @@ jobs:
           username: ${{ secrets.PLATA_USER }}
           key: ${{ secrets.PLATA_SSH_KEY }}
           envs: |
+            DATABASE_URL
             PROXY_API_KEY
             DEEPSEEK_API_KEY
             DEEPSEEK_API_KEY_2
@@ -71,15 +74,7 @@ jobs:
             echo "=== proxy-cesar deploy ==="
             echo "[deploy] Target: ${REPO_DIR}"
 
-            # ── 1. Preserve database across deploys ───────────────
-            DB_PATH="${REPO_DIR}/proxy/proxy.db"
-            DB_BAK="/tmp/proxy-cesar-db.bak"
-            if [ -f "$DB_PATH" ]; then
-              echo "[deploy] Backing up database..."
-              cp "$DB_PATH" "$DB_BAK"
-            fi
-
-            # ── 2. Git pull (incremental, preserves .env) ───────────
+            # ── 1. Git pull (incremental, preserves .env) ───────────
             echo "[deploy] Updating repository..."
             if [ -d "$REPO_DIR/.git" ]; then
               cd "$REPO_DIR"
@@ -97,13 +92,6 @@ jobs:
               exit 1
             fi
             echo "[deploy] Repo OK"
-
-            # Restore database
-            if [ -f "$DB_BAK" ]; then
-              mkdir -p "${REPO_DIR}/proxy"
-              mv "$DB_BAK" "${REPO_DIR}/proxy/proxy.db"
-              echo "[deploy] Database restored from backup"
-            fi
 
             # ── 3. Fix ownership ──────────────────────────────────
             echo "[deploy] Fixing permissions for user ${PROXY_USER}..."
@@ -136,7 +124,7 @@ jobs:
             PROXY_HOST=0.0.0.0
             PROXY_PORT=9110
             PROXY_API_KEY=${{ secrets.PROXY_API_KEY }}
-            DATABASE_URL=sqlite+aiosqlite:///./proxy.db
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
             VALKEY_URL=${{ secrets.VALKEY_URL || 'valkey://localhost:6380' }}
             DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}
             DEEPSEEK_API_KEY_2=${{ secrets.DEEPSEEK_API_KEY_2 }}

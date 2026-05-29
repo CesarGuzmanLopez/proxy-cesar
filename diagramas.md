@@ -204,9 +204,7 @@ sequenceDiagram
     GH->>GA: trigger deploy.yml
     GA->>Server: ssh root@plata
     Server->>Server: git clone --branch main --depth 1 /tmp/proxy-cesar
-    Server->>Server: Backup SQLite DB (proxy.db → proxy.db.bak)
     Server->>Server: chown -R proxy:proxy /tmp/proxy-cesar
-    Server->>Server: Restore SQLite DB (proxy.db.bak → proxy.db)
     Server->>Server: systemctl restart proxy-cesar
     Server->>Server: Health check (curl localhost:9110/health)
     Server-->>GA: Deploy result (OK/FAIL)

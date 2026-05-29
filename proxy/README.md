@@ -173,7 +173,7 @@ Per-pseudo-model fixed-window rate limiter in Redis. Headers: `X-RateLimit-Limit
 |---|---|---|
 | `PROXY_PORT` | `9110` | HTTP port |
 | `PROXY_API_KEY` | — | Bearer token (empty = dev mode) |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./proxy.db` | SQLite |
+| `DATABASE_URL` | `postgresql+asyncpg://...` | PostgreSQL (producción) / SQLite (dev) |
 | `VALKEY_URL` | `valkey://localhost:6380` | Redis native port 6380 |
 | `KEYCLAW_ENABLED` | `false` | KeyClaw disabled |
 | `LOG_LEVEL` | `INFO` | Log level |
@@ -285,7 +285,7 @@ GitHub Actions → `chat.guzman-lopez.com`:
 - Target: `plata` (Ubuntu 22.04)
 - Service user: `proxy` (hardcoded)
 - Cache: Redis native :6380
-- DB: SQLite (preserved between deploys)
+- DB: PostgreSQL 14 (persistent, no backup needed between deploys)
 - Verification: Health check post-deploy
 
 Config: [.github/workflows/deploy.yml](../.github/workflows/deploy.yml)
