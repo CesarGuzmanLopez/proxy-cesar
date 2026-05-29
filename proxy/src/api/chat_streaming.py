@@ -771,6 +771,9 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                 ctx._keyvault_buf = ""
                                 ctx._keyvault_pending = []
 
+                        # Track finish_reason even when keyvault skips normal yield
+                        if fr:
+                            finish_reason = fr
                         continue  # Skip normal yield — already handled
 
                     # Use chunk_dict (may have keyvault secrets re-injected)
