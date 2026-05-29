@@ -181,10 +181,10 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], images, descs, [], [], [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "Content provided: image" in text
-        assert "ref: BLOB:abc123:image/png" in text
-        assert "size: 10 KB" in text
-        assert "filename: screenshot.png" in text
+        assert "File: image" in text
+        assert "source: screenshot.png" in text
+        assert "10 KB" in text
+        assert "Vision model" in text
         assert "A login screen" in text
 
     def test_audio_blob_with_transcription(self):
@@ -193,7 +193,8 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], audios, aresults, [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "Content provided: audio" in text
+        assert "File: audio" in text
+        assert "source: recording.wav" in text
         assert "Hello world" in text
 
     def test_pdf_blob_with_text(self):
@@ -202,16 +203,16 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], [], [], files, fresults)
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "Content provided: document" in text
-        assert "PDF text extraction" in text
-        assert "report.pdf" in text
+        assert "File: document" in text
+        assert "PyMuPDF" in text
+        assert "source: report.pdf" in text
 
     def test_empty_description_warning(self):
         images = [("abc123", "raw", "image/png", "10", "")]
         descs = [""]
         out = _build_blob_output([], images, descs, [], [], [], [])
         text = str(out[0]["text"])
-        assert "Warning: Extraction failed" in text
+        assert "Warning: Content extraction failed" in text
 
     def test_multiple_blobs(self):
         images = [
@@ -232,7 +233,9 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], images, descs, [], [], [], [])
         text = str(out[0]["text"])
         # The description inside should be truncated
-        extracted = text.split("Extracted content:\n")[1].split("\n\nIMPORTANT:")[0]
+        # Format: [File: image | source: small.png | 1 KB | extracted with: ...
+        # The description follows the header line
+        extracted = text.split("\n\n", 1)[1] if "\n\n" in text else text
         assert len(extracted) <= 700
 
     def test_others_preserved(self):
@@ -321,8 +324,8 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[Content provided: image\n"
-                            "  blob_ref: BLOB:abc:image/png"
+                            "[File: image\n"
+                            "  source: abc.png"
                         ),
                     }
                 ],
@@ -331,7 +334,7 @@ class TestInjectBlobExtractionGuidance:
         result = inject_blob_extraction_guidance(messages)
         assert len(result) == 2
         assert result[0]["role"] == "system"
-        assert "Blob Content Processing Guide" in str(result[0]["content"])
+        assert "File Content Extraction" in str(result[0]["content"])
 
     def test_existing_system_no_duplicate(self):
         messages: list[dict] = [
@@ -342,8 +345,8 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[Content provided: image\n"
-                            "  blob_ref: BLOB:abc:image/png"
+                            "[File: image\n"
+                            "  source: abc.png"
                         ),
                     }
                 ],

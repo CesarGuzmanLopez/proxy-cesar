@@ -416,28 +416,29 @@ def _truncate_desc(desc: str, sz_kb: int | str) -> str:
 
 
 def _build_blob_text(h: str, mime: str, sz: int | str, label: str, desc: str = "", extraction_method: str = "", filename: str = "") -> str:
-    """Build blob text representation."""
+    """Build blob text representation.
+
+    Produces a clean text block with extracted content and metadata.
+    No internal blob references — use the user's filename if available.
+    """
     desc = _truncate_desc(desc, sz)
-    t = f"[Content provided: {label}\n"
-    t += f"  ref: {BLOB_PREFIX}:{h}:{mime} | size: {sz} KB"
+    t = f"[File: {label}"
     if filename:
-        t += f" | filename: {filename}"
+        t += f" | source: {filename}"
+    t += f" | {sz} KB"
     if extraction_method:
-        t += f"\n  extraction: {extraction_method}"
+        t += f" | extracted with: {extraction_method}"
     if desc:
-        t += f"\n\nExtracted content:\n{desc}"
-        t += "\n\nIMPORTANT: The 'ref' above is an INTERNAL reference only — you cannot access it."
-        t += "\nUse ONLY the extracted content provided above."
+        t += f"\n\n{desc}"
     else:
-        t += "\n\nWarning: Extraction failed or produced empty result."
-        t += "\n  • Check if a specialized tool is available for this content type"
+        t += "\n\nWarning: Content extraction failed or produced empty result."
     t += "\n]"
     return t
 
 
 _EXTRACTION_LABELS = {
-    "image": "Vision model (description via Groq/similar)",
-    "audio": "Speech-to-text (Whisper/similar transcription)",
+    "image": "Vision model (Llama 4 Scout / MiMo Omni)",
+    "audio": "Speech-to-text (Whisper)",
 }
 
 
@@ -445,10 +446,10 @@ def _determine_doc_extraction(mime: str) -> str:
     """Determine extraction method label based on MIME type."""
     mime_lower = mime.lower()
     if "pdf" in mime_lower:
-        return "PDF text extraction"
-    if "wordprocessingml" in mime_lower or "word" in mime_lower:
-        return "DOCX text extraction"
-    return "Document text extraction"
+        return "PyMuPDF (Python)"
+    if "wordprocessingml" in mime_lower or "word" in mime_lower or "docx" in mime_lower:
+        return "python-docx (Python)"
+    return "text decode (UTF-8)"
 
 
 def _build_blob_output(others, images, descs, audios, aresults, files, fresults):
@@ -712,12 +713,12 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     def _message_has_blobs(msg: dict) -> bool:
         content = msg.get("content", "")
         if isinstance(content, str):
-            return "[Content provided:" in content or f"[{BLOB_PREFIX}:" in content
+            return "[File:" in content or f"[{BLOB_PREFIX}:" in content
         if isinstance(content, list):
             return any(
                 isinstance(part, dict)
                 and isinstance(part.get("text"), str)
-                and "[Content provided:" in part["text"]
+                and ("[File:" in part["text"])
                 for part in content
             )
         return False
@@ -729,17 +730,16 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
         return messages
 
     system_message = (
-        "**Blob Content Processing Guide**\n\n"
-        "Some of the content in this conversation was auto-extracted from multimodal files "
+        "**File Content Extraction**\n\n"
+        "Some content in this conversation was auto-extracted from files "
         "(images, audio, PDFs, Word documents) that the current model cannot process natively. "
-        "The proxy has automatically:\n"
-        "  • Described images using vision models\n"
-        "  • Transcribed audio using speech-to-text\n"
-        "  • Extracted text from PDFs and Word documents (DOCX)\n\n"
-        "**IMPORTANT: The blob references (format: BLOB:hash:mimetype) are INTERNAL references "
-        "only and CANNOT be accessed externally. Do NOT try to fetch, retrieve, or resolve them.**\n\n"
-        "Use ONLY the extracted content provided in the message.\n\n"
-        "If you need the original file, ask the user to provide it directly."
+        "The proxy has automatically extracted the content:\n"
+        "  • Images described via Vision models (Llama 4 Scout)\n"
+        "  • Audio transcribed via Whisper\n"
+        "  • PDF text extracted via PyMuPDF (Python)\n"
+        "  • Word documents extracted via python-docx\n\n"
+        "The extracted content is provided as plain text above. "
+        "Use ONLY the text content provided."
     )
 
     return [{"role": "system", "content": system_message}] + messages
