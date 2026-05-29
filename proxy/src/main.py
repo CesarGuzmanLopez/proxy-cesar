@@ -84,9 +84,9 @@ async def lifespan(app: FastAPI):
     engine = create_async_engine(
         _db_url,
         echo=False,
-        connect_args={"check_same_thread": False} if "sqlite" in _db_url else {},
+        connect_args={"check_same_thread": False, "timeout": 15} if "sqlite" in _db_url else {},
     )
-    # Enable WAL mode for SQLite
+    # Enable WAL mode for SQLite — allows concurrent reads
     if "sqlite" in _db_url:
         async with engine.begin() as conn:
             await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
