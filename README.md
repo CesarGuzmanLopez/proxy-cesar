@@ -109,18 +109,20 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 
 OpenCode Go expone dos endpoints compatibles:
 
-| Endpoint | URL | Adapter liteLLM |
-|----------|-----|-----------------|
-| OpenAI-compatible | `https://opencode.ai/zen/go/v1` | `openai/` |
-| Anthropic-compatible | `https://opencode.ai/zen/go` | `anthropic/` |
+| Endpoint | URL | Adapter liteLLM | Modelos |
+|----------|-----|-----------------|---------|
+| OpenAI-compatible | `https://opencode.ai/zen/go/v1` | `openai/` | kimi-k2.5, kimi-k2.6, mimo-v2.5-pro, mimo-v2-pro, mimo-v2-omni, glm-5.1 |
+| Anthropic-compatible | `https://opencode.ai/zen/go` | `anthropic/` | qwen3.7-max, qwen3.6-plus, qwen3.5-plus, minimax-m2.7 |
+
+La división no es arbitraria: los modelos Qwen y MiniMax requieren el formato de mensajes Anthropic (`/v1/messages` con `content` como lista de bloques) porque el API de OpenCode Go los sirve a través de su endpoint Anthropic-compatible. Enviarlos al endpoint OpenAI (`/v1/chat/completions`) resulta en error 400/401 del proveedor.
 
 **Model naming:** La API de OpenCode Go (`/v1/models`) devuelve los modelos sin prefijo de proveedor. Por ejemplo, `kimi-k2.6`, `qwen3.6-plus`, no `openai/kimi-k2.6`.
 
-El proxy usa el prefijo (`openai/`, `anthropic/`) únicamente para que liteLLM seleccione el adaptador correcto. Antes de enviar la request a OpenCode Go, el prefijo se elimina del model name ([`call_litellm`](proxy/src/adapters/litellm/client.py)):
+El proxy usa el prefijo (`openai/`, `anthropic/`) únicamente para que liteLLM seleccione el adaptador correcto. liteLLM elimina el prefijo automáticamente antes de enviar la request al API ([referencia](https://docs.litellm.ai/docs/providers/openai_compatible)):
 ```
-openai/kimi-k2.5  →  liteLLM usa adapter OpenAI  →  envía kimi-k2.5  ✅
-anthropic/qwen3.7-max  →  liteLLM usa adapter Anthropic  →  envía qwen3.7-max  ✅
-openai/kimi-k2.6 (sin strip)  →  liteLLM usa adapter OpenAI  →  envía openai/kimi-k2.6  ❌ (401)
+openai/kimi-k2.5    →  liteLLM usa adapter OpenAI    →  envía kimi-k2.5    ✅
+anthropic/qwen3.7-max →  liteLLM usa adapter Anthropic →  envía qwen3.7-max ✅
+anthropic/qwen3.6-plus → liteLLM usa adapter Anthropic →  envía qwen3.6-plus ✅
 ```
 
 **Razonamiento multi-proveedor:** El proxy acepta el parámetro `thinking` del cliente y lo traduce al formato que cada proveedor entiende (`budget_tokens` para Anthropic, `reasoning_effort` para OpenAI, auto para otros).
