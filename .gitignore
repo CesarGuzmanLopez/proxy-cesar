@@ -18,6 +18,9 @@ venv/
 *.swp
 *.swo
 
+# Opencode (local per-project config with absolute paths)
+opencode.json
+
 # OS
 .DS_Store
 Thumbs.db
