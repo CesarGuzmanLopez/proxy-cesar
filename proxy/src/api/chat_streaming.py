@@ -753,7 +753,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                                 found_end = True
                                             pc["choices"][0]["delta"][tf] = ""
                                 # Yield all modified pending chunks
-                                 for pc in pending:
+                                for pc in pending:
                                     yield f"data: {json.dumps(pc)}\n\n"
                                 ctx._keyvault_pending = []
                                 ctx._keyvault_buf = ""
