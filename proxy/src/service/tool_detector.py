@@ -416,18 +416,15 @@ def _truncate_desc(desc: str, sz_kb: int | str) -> str:
 
 
 def _build_blob_text(h: str, mime: str, sz: int | str, label: str, desc: str = "", extraction_method: str = "", filename: str = "") -> str:
-    """Build blob text representation.
-
-    Produces a clean text block with extracted content and metadata.
-    No internal blob references — use the user's filename if available.
-    """
+    """Build blob text representation."""
     desc = _truncate_desc(desc, sz)
-    t = f"[File: {label}"
+    t = f"[File content extracted from: {label}"
     if filename:
         t += f" | source: {filename}"
     t += f" | {sz} KB"
     if extraction_method:
         t += f" | extracted with: {extraction_method}"
+    t += "\n(Sent as file — read the content below directly.)"
     if desc:
         t += f"\n\n{desc}"
     else:
@@ -713,12 +710,12 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     def _message_has_blobs(msg: dict) -> bool:
         content = msg.get("content", "")
         if isinstance(content, str):
-            return "[File:" in content or f"[{BLOB_PREFIX}:" in content
+            return "[File content extracted from:" in content or f"[{BLOB_PREFIX}:" in content
         if isinstance(content, list):
             return any(
                 isinstance(part, dict)
                 and isinstance(part.get("text"), str)
-                and ("[File:" in part["text"])
+                and ("[File content extracted from:" in part["text"])
                 for part in content
             )
         return False
@@ -732,14 +729,15 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
     system_message = (
         "**File Content Extraction**\n\n"
         "Some content in this conversation was auto-extracted from files "
-        "(images, audio, PDFs, Word documents) that the current model cannot process natively. "
-        "The proxy has automatically extracted the content:\n"
-        "  • Images described via Vision models (Llama 4 Scout)\n"
-        "  • Audio transcribed via Whisper\n"
-        "  • PDF text extracted via PyMuPDF (Python)\n"
-        "  • Word documents extracted via python-docx\n\n"
-        "The extracted content is provided as plain text above. "
-        "Use ONLY the text content provided."
+        "(images, audio, PDFs, Word documents) that the current model cannot process natively.\n\n"
+        "The extracted content is ALREADY included below in [File: ...] blocks within this conversation. "
+        "Read the extracted text directly from those blocks — do NOT try to find, open, or read "
+        "the original files from disk. The original files are NOT accessible in this workspace.\n\n"
+        "Extraction methods used:\n"
+        "  • Images → Vision models (Llama 4 Scout)\n"
+        "  • Audio → Whisper speech-to-text\n"
+        "  • PDFs → PyMuPDF (Python library)\n"
+        "  • Word docs → python-docx (Python library)"
     )
 
     return [{"role": "system", "content": system_message}] + messages

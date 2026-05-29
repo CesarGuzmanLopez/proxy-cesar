@@ -181,10 +181,11 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], images, descs, [], [], [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File: image" in text
+        assert "File content extracted from: image" in text
         assert "source: screenshot.png" in text
         assert "10 KB" in text
         assert "Vision model" in text
+        assert "read the content below" in text
         assert "A login screen" in text
 
     def test_audio_blob_with_transcription(self):
@@ -193,7 +194,7 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], audios, aresults, [], [])
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File: audio" in text
+        assert "File content extracted from: audio" in text
         assert "source: recording.wav" in text
         assert "Hello world" in text
 
@@ -203,7 +204,7 @@ class TestBuildBlobOutput:
         out = _build_blob_output([], [], [], [], [], files, fresults)
         assert len(out) == 1
         text = str(out[0]["text"])
-        assert "File: document" in text
+        assert "File content extracted from: document" in text
         assert "PyMuPDF" in text
         assert "source: report.pdf" in text
 
@@ -324,7 +325,7 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[File: image\n"
+                            "[File content extracted from: image\n"
                             "  source: abc.png"
                         ),
                     }
@@ -345,7 +346,7 @@ class TestInjectBlobExtractionGuidance:
                     {
                         "type": "text",
                         "text": (
-                            "[File: image\n"
+                            "[File content extracted from: image\n"
                             "  source: abc.png"
                         ),
                     }
