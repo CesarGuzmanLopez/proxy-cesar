@@ -190,7 +190,15 @@ async def _try_physical_model(
 
     call_messages = ordered_messages
     if phys.system_prompt:
-        call_messages = [{"role": "system", "content": phys.system_prompt}] + call_messages
+        # Merge into first existing system message (don't add separate one)
+        merged = False
+        for msg in call_messages:
+            if msg.get("role") == "system":
+                msg["content"] = phys.system_prompt + "\n\n" + (msg.get("content") or "")
+                merged = True
+                break
+        if not merged:
+            call_messages = [{"role": "system", "content": phys.system_prompt}] + call_messages
     provider = phys.provider.lower()
     model_prefix = phys.model.split("/")[0].lower() if "/" in phys.model else provider
     cache_provider = model_prefix if model_prefix in ("anthropic",) else provider
