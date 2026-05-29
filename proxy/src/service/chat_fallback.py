@@ -311,6 +311,7 @@ def _log_model_call_result(
         # Extract cache tokens from response
         cache_hit = 0
         cache_write = 0
+        cache_miss = 0
         prompt_tokens = 0
         if usage:
             prompt_tokens = (
@@ -338,6 +339,11 @@ def _log_model_call_result(
                 if not isinstance(usage, dict)
                 else usage.get("cache_creation_input_tokens", 0)
             )
+            cache_miss = (
+                getattr(usage, "prompt_cache_miss_tokens", 0)
+                if not isinstance(usage, dict)
+                else usage.get("prompt_cache_miss_tokens", 0)
+            )
             cache_hit = cache_hit or cache_read
 
         cache_str = ""
@@ -345,6 +351,8 @@ def _log_model_call_result(
             cache_str = f" cache_hit={cache_hit}"
         if cache_write:
             cache_str += f" cache_write={cache_write}"
+        if cache_miss:
+            cache_str += f" cache_miss={cache_miss}"
 
         logger.info(
             "llm_ok    | trace=%s model=%s elapsed=%.1fs content_len=%d finish=%s prompt_tokens=%d%s",

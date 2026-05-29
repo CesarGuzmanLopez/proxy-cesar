@@ -194,6 +194,19 @@ def build_cache_metadata(
             )
         return metadata
 
+    # DeepSeek native: prompt_cache_miss_tokens (not normalized by LiteLLM)
+    # Useful for diagnosing why cache isn't hitting (conversations too short, etc.)
+    cache_miss = usage.get("prompt_cache_miss_tokens", 0)
+    cache_hit_ds = usage.get("prompt_cache_hit_tokens", 0)
+    if cache_miss > 0 or cache_hit_ds > 0:
+        metadata["provider_cache_hit"] = cache_hit_ds > 0
+        metadata["prompt_cache_miss_tokens"] = cache_miss
+        metadata["prompt_cache_hit_tokens"] = cache_hit_ds
+        total = usage.get("prompt_tokens", 0)
+        if total > 0:
+            metadata["cache_hit_pct"] = round(cache_hit_ds / total * 100, 1)
+        return metadata
+
     # No cache info found
     metadata["provider_cache_hit"] = False
     return metadata
