@@ -498,9 +498,7 @@ async def _process_msg_blobs(
     pdf_results = (
         await asyncio.gather(
             *[
-                _describe_pdf(valkey, f"{prefix}:{h}:desc", r)
-                if "pdf" in mime.lower()
-                else _describe_docx(valkey, f"{prefix}:{h}:desc", r)
+                _describe_file_generic(valkey, f"{prefix}:{h}:desc", r, mime)
                 for h, r, mime, _, _ in file_blobs
             ]
         )
@@ -643,6 +641,38 @@ async def _describe_docx(valkey, desc_key: str, raw: str) -> str:
     except Exception as exc:
         logger.warning("blob_docx_cache_error key=%s err=%s", desc_key, exc)
     desc = await _try_extract_docx_text(raw)
+    if desc:
+        await _store_desc(valkey, desc_key, desc)
+    return desc
+
+
+async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> str:
+    """Extract text from a file — PDF, DOCX, or plain text fallback."""
+    try:
+        cached = await valkey.get(desc_key)
+        if cached:
+            return cached
+    except Exception as exc:
+        logger.warning("blob_file_cache_error key=%s err=%s", desc_key, exc)
+
+    mime_lower = mime.lower()
+    if "pdf" in mime_lower:
+        desc = await _describe_pdf(valkey, desc_key, raw)
+    elif "wordprocessingml" in mime_lower or "word" in mime_lower or "docx" in mime_lower or "opendocument" in mime_lower:
+        desc = await _describe_docx(valkey, desc_key, raw)
+    else:
+        # Generic text fallback: decode base64 as UTF-8
+        try:
+            decoded = base64.b64decode(raw.split(",", 1)[-1].strip())
+            text = decoded.decode("utf-8", errors="replace")[:5000]
+            if text.strip():
+                desc = f"[Text extracted ({len(decoded)} bytes)]\n\n{text}"
+            else:
+                desc = ""
+        except Exception as exc:
+            logger.debug("blob_text_decode_error mime=%s err=%s", mime, exc)
+            desc = ""
+
     if desc:
         await _store_desc(valkey, desc_key, desc)
     return desc

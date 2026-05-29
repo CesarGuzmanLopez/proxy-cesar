@@ -75,8 +75,10 @@ def _detect_file_type(part: dict) -> str | None:
     mime = mime.lower()
     if "pdf" in mime:
         return "pdf"
-    if any(v in mime for v in ("video/", "mp4", "webm", "avi")):
+    if any(v in mime for v in ("video", "mp4", "webm", "mkv", "avi")):
         return "video"
+    if any(v in mime for v in ("word", "docx", "officedocument", "opendocument", "text/")):
+        return "documents"
     return None
 
 
@@ -101,6 +103,8 @@ def _scan_multimodal_content(content: list, caps: TurnCapabilities) -> None:
                 caps.has_pdf = True
             elif file_type == "video":
                 caps.has_video = True
+            elif file_type == "documents":
+                caps.has_documents = True
             continue
 
         flag = _TYPE_FLAGS.get(part_type)

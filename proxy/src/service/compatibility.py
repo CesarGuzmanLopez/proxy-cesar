@@ -143,6 +143,7 @@ def validate_physical_model_content(
         ("has_images", "vision"),
         ("has_audio", "audio"),
         ("has_pdf", "vision"),
+        ("has_documents", "vision"),
         ("has_video", "video"),
     ]
 

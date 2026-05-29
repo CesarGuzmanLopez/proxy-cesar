@@ -21,6 +21,7 @@ class TurnCapabilities:
     has_images: bool = False
     has_audio: bool = False
     has_pdf: bool = False
+    has_documents: bool = False
     has_video: bool = False
     has_tools: bool = False
     has_parallel_tools: bool = False
@@ -52,6 +53,7 @@ class SessionCapabilities:
     has_images: bool = False
     has_audio: bool = False
     has_pdf: bool = False
+    has_documents: bool = False
     has_video: bool = False
     has_tools: bool = False
     has_parallel_tools: bool = False
@@ -69,6 +71,7 @@ class SessionCapabilities:
         self.has_images = self.has_images or turn_caps.has_images
         self.has_audio = self.has_audio or turn_caps.has_audio
         self.has_pdf = self.has_pdf or turn_caps.has_pdf
+        self.has_documents = self.has_documents or turn_caps.has_documents
         self.has_video = self.has_video or turn_caps.has_video
         self.has_tools = self.has_tools or turn_caps.has_tools
         self.has_parallel_tools = (
