@@ -1,7 +1,6 @@
 """Tests for explicit compaction service.
 
-Sprint 6 §3: POST /conversations/{id}/compact.
-Minimum 9 tests per sprint spec.
+Minimum 9 tests.
 """
 
 import uuid

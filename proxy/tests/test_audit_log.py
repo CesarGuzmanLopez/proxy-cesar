@@ -1,7 +1,6 @@
 """Tests for the audit log endpoint.
 
-Sprint 6 §5: GET /conversations/{id}/audit-log.
-Minimum 4 tests per sprint spec.
+Minimum 4 tests.
 """
 
 import uuid

@@ -1,6 +1,5 @@
 """Tests for GET /v1/models and GET /health.
 
-sprint §13.6 — minimum 5 test cases.
 """
 
 import pytest
@@ -81,4 +80,4 @@ async def test_5_health_no_auth(async_client: AsyncClient):
     """GET /health does not require auth."""
     response = await async_client.get("/health")
     assert response.status_code == 200
-    # In Sprint 1, no auth is enforced anywhere
+    # In feature, no auth is enforced anywhere

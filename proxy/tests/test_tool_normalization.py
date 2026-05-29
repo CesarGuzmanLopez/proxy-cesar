@@ -1,6 +1,5 @@
 """Tests for tool normalization (tools_normalizer.py).
 
-Sprint 3 §6.2 — minimum 10 tests.
 """
 
 from src.service.tools_normalizer import generate_preview, normalize_history

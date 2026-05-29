@@ -1,4 +1,4 @@
-"""Inline command handler — Sprint 9.
+"""Inline command handler — feature
 
 Commands the user types directly in the chat message.
 

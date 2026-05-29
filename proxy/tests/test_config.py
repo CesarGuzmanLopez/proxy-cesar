@@ -1,6 +1,5 @@
 """Tests for pseudo-models YAML validation.
 
-sprint §13.1 — minimum 15 test cases for the 14 validation rules.
 """
 
 from pathlib import Path

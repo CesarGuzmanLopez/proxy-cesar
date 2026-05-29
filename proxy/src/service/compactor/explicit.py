@@ -1,4 +1,4 @@
-"""Explicit compaction service for Sprint 6.
+"""Explicit compaction service for feature
 
 plan-proxy.md §11: POST /conversations/{id}/compact.
 Reuses existing ConversationSnapshot table with snapshot_type="explicit".

@@ -1,6 +1,5 @@
 """Tests for fallback within pseudo-model.
 
-sprint §13.5 — minimum 6 test cases.
 Uses 'tareas-avanzadas' which has 2 physical models (deepseek-v4-pro → deepseek-v4-flash).
 """
 

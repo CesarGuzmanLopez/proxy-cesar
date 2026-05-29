@@ -1,4 +1,4 @@
-"""Context alert service for Sprint 6.
+"""Context alert service for feature
 
 plan-proxy.md §11.1: Warns user about context usage before it becomes critical.
 python.md §3: Pure data types for alert results.

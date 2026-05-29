@@ -1,11 +1,11 @@
-"""SQLModel ORM models — Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4.
+"""SQLModel ORM models — Feature+ Feature+ Feature+ feature
 
 python.md §6.2: SQLModel combines SQLAlchemy + Pydantic.
-Sprint 1: conversations + conversation_turns (basic).
-Sprint 2: +capability_* columns, turn_type, had_* flags.
-Sprint 3: +tool_definitions, thinking_blocks, tools_incomplete,
+# Feature: conversations + conversation_turns (basic).
+# Feature: +capability_* columns, turn_type, had_* flags.
+# Feature: +tool_definitions, thinking_blocks, tools_incomplete,
           tools_level_used, max_tools_level.
-Sprint 4: +conversation_snapshots table, +active_snapshot_id on conversations.
+# Feature: +conversation_snapshots table, +active_snapshot_id on conversations.
 """
 
 import uuid
@@ -26,7 +26,7 @@ class ConversationBase(SQLModel):
     physical_model: str = Field(max_length=256)
     total_tokens: int = Field(default=0, ge=0)
 
-    # Sprint 2: Capability flags (additive, never reset)
+    # feature Capability flags (additive, never reset)
     capability_has_images: bool = Field(default=False)
     capability_has_audio: bool = Field(default=False)
     capability_has_pdf: bool = Field(default=False)
@@ -34,10 +34,10 @@ class ConversationBase(SQLModel):
     capability_has_tools: bool = Field(default=False)
     capability_has_parallel_tools: bool = Field(default=False)
 
-    # Sprint 3: max tool complexity level used in this conversation
+    # feature max tool complexity level used in this conversation
     max_tools_level: int = Field(default=0, ge=0)
 
-    # Sprint 5: image degradation tracking
+    # feature image degradation tracking
     images_described: int = Field(default=0, ge=0)
     images_degraded_manually: bool = Field(default=False)
 
@@ -57,7 +57,7 @@ class Conversation(ConversationBase, table=True):
         sa_column=Column(DateTime(), server_default=_SERVER_NOW, onupdate=func.now()),
     )
 
-    # Sprint 4: active snapshot for compacted conversations
+    # feature active snapshot for compacted conversations
     active_snapshot_id: uuid.UUID | None = Field(
         default=None, sa_type=SA_Uuid(), foreign_key="conversation_snapshots.id"
     )
@@ -89,13 +89,13 @@ class ConversationTurnBase(SQLModel):
     fallback_applied: bool = False
     fallback_reason: str | None = Field(default=None, max_length=256)
 
-    # Sprint 2: Turn type and capability flags
+    # feature Turn type and capability flags
     turn_type: str = Field(default="normal", max_length=32)
     had_images: bool = Field(default=False)
     had_tools: bool = Field(default=False)
     had_parallel_tools: bool = Field(default=False)
 
-    # Sprint 3: Tool canonical storage columns
+    # feature Tool canonical storage columns
     tool_definitions: dict | None = Field(default=None, sa_type=SA_JSON)
     thinking_blocks: dict | None = Field(default=None, sa_type=SA_JSON)
     tools_incomplete: bool = Field(default=False)
@@ -122,14 +122,14 @@ class ConversationSnapshotBase(SQLModel):
     plan-proxy.md §11.3: Stores a Markdown snapshot preserving decisions,
     code, state, and pending items. Original history is never modified.
 
-    Sprint 4: used by continuous compaction and (later) explicit compaction.
+    feature used by continuous compaction and (later) explicit compaction.
     """
 
     conversation_id: uuid.UUID = Field(
         foreign_key="conversations.id", sa_type=SA_Uuid()
     )
     snapshot_type: str = Field(max_length=32)
-    """'continuous', 'explicit' (Sprint 6), or 'external' (client-side)."""
+    """'continuous', 'explicit' (feature), or 'external' (client-side)."""
 
     tokens_before: int = Field(ge=0)
     """Tokens in the history at compaction time."""

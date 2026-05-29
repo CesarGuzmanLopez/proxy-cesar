@@ -1,4 +1,4 @@
-"""Tests for rate limiting middleware (Sprint 8 §4)."""
+"""Tests for rate limiting middleware (Feature)."""
 
 import pytest
 from fastapi import FastAPI

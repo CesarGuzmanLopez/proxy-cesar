@@ -76,7 +76,7 @@ async def chat_completions(
     request: ChatRequest,
     fastapi_request: Request,
 ):
-    """Main chat completions endpoint with Sprint 2 capability checks.
+    """Main chat completions endpoint with Featurecapability checks.
 
     Flow:
     1. Resolve conversation + detect capabilities
@@ -86,7 +86,7 @@ async def chat_completions(
     5. Check input threshold
     6. Call LiteLLM with fallback
     7. Save turn with capability flags
-    8. Build proxy_metadata with Sprint 2 fields
+    8. Build proxy_metadata with Featurefields
     """
     app_state = fastapi_request.app.state
     config = app_state.config
@@ -176,7 +176,7 @@ async def chat_completions(
         " | ".join(_msg_summaries),
     )
 
-    # Sprint 9: Check for inline commands early — if detected, respond
+    # feature Check for inline commands early — if detected, respond
     # with the command output instead of calling the LLM.
     cmd_result = await handle_inline_command(
         messages=messages,
@@ -354,7 +354,7 @@ async def _handle_non_streaming(
         trace=trace,
     )
 
-    # Build response with Sprint 2 + Sprint 4 proxy_metadata
+    # Build response with Feature+ Featureproxy_metadata
     response_dict = result.response
     response_dict["proxy_metadata"] = build_proxy_metadata(
         MetadataContext(

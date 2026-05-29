@@ -98,7 +98,7 @@ def _extract_cache_metadata(
     provider: str,
     fallback_info: FallbackInfo,
 ) -> dict:
-    """Sprint 7: Extract cache hit/miss metadata from the provider response.
+    """feature Extract cache hit/miss metadata from the provider response.
 
     Uses provider_cache.build_cache_metadata() for standard extraction and
     adds cache destruction info when fallback occurred.

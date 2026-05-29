@@ -1,4 +1,4 @@
-"""Tests for authentication middleware (Sprint 8 §2)."""
+"""Tests for authentication middleware (Feature)."""
 
 import pytest
 from fastapi import FastAPI

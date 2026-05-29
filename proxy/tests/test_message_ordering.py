@@ -1,4 +1,4 @@
-"""Tests for canonical message ordering (Sprint 7 §2).
+"""Tests for canonical message ordering (Feature).
 
 Verifies that messages are assembled in canonical order for cache hit maximization.
 """

@@ -1,4 +1,4 @@
-"""Rate limiting middleware per pseudo-model (Sprint 8 §4).
+"""Rate limiting middleware per pseudo-model (Feature).
 
 Sliding-window rate limiter using Valkey sorted sets.
 Key: ratelimit:{ip}:{pseudo_model}

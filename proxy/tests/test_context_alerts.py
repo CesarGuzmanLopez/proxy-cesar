@@ -1,7 +1,6 @@
 """Tests for context alert service.
 
-Sprint 6 §2: Alert thresholds and CONTEXT_UNUSABLE.
-Minimum 9 tests per sprint spec.
+Minimum 9 tests.
 """
 
 import pytest

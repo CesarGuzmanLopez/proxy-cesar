@@ -1,6 +1,6 @@
 """Bearer token authentication middleware.
 
-Feature validates PROXY_API_KEY / PROXY_API_KEYS on all non-public endpoints.
+Validates PROXY_API_KEY / PROXY_API_KEYS on all non-public endpoints.
 PROXY_API_KEYS supports multiple comma-separated keys for multi-user access.
 When all keys are empty/missing → dev mode (auth disabled).
 """

@@ -1,4 +1,4 @@
-"""Sprint 5 — Router LLM evaluation service tests.
+"""Feature— Router LLM evaluation service tests.
 
 Pure unit tests (no DB, no API). Tests the suggester module:
 - evaluate_complexity() — 6 tests

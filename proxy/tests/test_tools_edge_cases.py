@@ -1,6 +1,5 @@
 """Tests for tool edge cases (tools_edge_cases.py).
 
-Sprint 3 §6.3 — minimum 8 tests.
 """
 
 import json

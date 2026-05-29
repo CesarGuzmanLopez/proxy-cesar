@@ -15,7 +15,7 @@ class TurnCapabilities:
     These flags are computed from the raw messages array.
     Rules are deterministic — no ML, no heuristics, no fuzzy matching.
 
-    Sprint 3 extensions: tools_incomplete, thinking_blocks, tools_level_used.
+    Featureextensions: tools_incomplete, thinking_blocks, tools_level_used.
     """
 
     has_images: bool = False
@@ -25,14 +25,14 @@ class TurnCapabilities:
     has_tools: bool = False
     has_parallel_tools: bool = False
 
-    # Sprint 3: tool-specific state
+    # feature tool-specific state
     tools_incomplete: bool = False
     thinking_blocks: dict | None = None
     tools_level_used: int = (
         0  # ToolLevel as int (0=NONE, 1=BASIC, 2=STANDARD, 3=PARALLEL_STRICT)
     )
 
-    # Sprint 5: image description tracking per turn
+    # feature image description tracking per turn
     images_described_count: int = 0
     images_described_by: str | None = None
     images_degraded_manually: bool = False
@@ -45,7 +45,7 @@ class SessionCapabilities:
     Flags are additive — once set to True they are NEVER reset.
     (except via explicit operations like normalize-tools or degrade-images)
 
-    Sprint 3 extension: max_tools_level tracks highest tool complexity used.
+    Featureextension: max_tools_level tracks highest tool complexity used.
     """
 
     conversation_id: str
@@ -57,10 +57,10 @@ class SessionCapabilities:
     has_parallel_tools: bool = False
     total_tokens: int = 0
 
-    # Sprint 3: highest tool level ever used in this conversation
+    # feature highest tool level ever used in this conversation
     max_tools_level: int = 0
 
-    # Sprint 5: image degradation tracking (cumulative, never reset)
+    # feature image degradation tracking (cumulative, never reset)
     images_described: int = 0
     images_degraded_manually: bool = False
 
@@ -75,7 +75,7 @@ class SessionCapabilities:
             self.has_parallel_tools or turn_caps.has_parallel_tools
         )
         self.max_tools_level = max(self.max_tools_level, turn_caps.tools_level_used)
-        # Sprint 5: images_described is additive (count of described images)
+        # feature images_described is additive (count of described images)
         self.images_described += turn_caps.images_described_count
         self.images_degraded_manually = (
             self.images_degraded_manually or turn_caps.images_degraded_manually
@@ -107,7 +107,7 @@ class CompatibilityResult:
     remediation: list[str] = field(default_factory=list)
     details: dict = field(default_factory=dict)
 
-    # Sprint 5: carries auto-described messages from validate_switch → caller
+    # feature carries auto-described messages from validate_switch → caller
     # Avoids re-scanning the full conversation history for images.
     auto_described_messages: list[dict] | None = None
     auto_describe_metadata: dict | None = None

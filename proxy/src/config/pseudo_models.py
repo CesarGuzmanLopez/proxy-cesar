@@ -1,7 +1,7 @@
 """Pseudo-models YAML loader with strict Pydantic validation at startup.
 
 Fail-fast: any validation error → SystemExit(1) with clear FATAL message.
-Exact 14 validation rules from sprint §3.2.
+Exact 14 validation rules from feature
 """
 
 import logging

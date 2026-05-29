@@ -1,7 +1,7 @@
 """Tool filter: filter physical model pool based on session capabilities.
 
 All models in config already have openai_tools_compatible: true
-(validated at startup in Sprint 1). The main filter in Sprint 2 is
+(validated at startup in feature). The main filter in Featureis
 parallel_tools: filter to only models that support parallel tool calls.
 
 python.md §4: pure functions, declarative style.

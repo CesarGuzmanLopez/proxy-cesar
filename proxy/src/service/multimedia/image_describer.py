@@ -1,4 +1,4 @@
-"""Image description service — Sprint 5.
+"""Image description service — feature
 
 Auto-describes images in conversation history when switching from a vision
 pseudo-model to a non-vision one with ``on_downgrade: auto_describe``.

@@ -1,6 +1,5 @@
 """Tests for tool filter (get_eligible_models).
 
-Sprint 2 §9.3 — minimum 8 tests.
 """
 
 from src.config.pseudo_models import load_config

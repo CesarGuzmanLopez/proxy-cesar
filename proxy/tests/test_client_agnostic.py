@@ -1,4 +1,4 @@
-"""Client-agnostic model name normalization tests (Sprint 7 §4.8).
+"""Client-agnostic model name normalization tests (Feature).
 
 Verifies that ANY client (OpenCode, Cline, RooCode, Continue, Aider, curl)
 can send model names in various formats and the proxy normalizes them correctly.

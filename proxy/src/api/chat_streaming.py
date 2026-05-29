@@ -335,7 +335,7 @@ async def _handle_streaming_with_db(
         db.add(conv)
         await db.flush()
 
-    # Sprint 5: Auto-describe images on pseudo-model switch (Bug 6 fix)
+    # feature Auto-describe images on pseudo-model switch (Bug 6 fix)
     auto_describe_meta: dict | None = None
     messages_for_llm: list[dict] = messages
     if conv is not None and not is_new and resolved_model != conv.pseudo_model:
@@ -394,7 +394,7 @@ async def _handle_streaming_with_db(
             },
         )
 
-    # ── Sprint 6: Context alerts (total = history + current request) ────
+    # ── feature Context alerts (total = history + current request) ────
     _total_for_alert = (conv.total_tokens if conv else 0) + estimated_input
     context_alert = get_context_alert(
         total_tokens=_total_for_alert,
@@ -414,7 +414,7 @@ async def _handle_streaming_with_db(
             },
         )
 
-    # ── Sprint 5: Router LLM ──────────────────────────────────────────────
+    # ── feature Router LLM ──────────────────────────────────────────────
     # Shared with non-streaming path via evaluate_router_suggestion().
     router_suggestion: dict | None = await evaluate_router_suggestion(
         pm_schema=pm_schema,
@@ -452,7 +452,7 @@ async def _handle_streaming_with_db(
         thinking=thinking,
     )
 
-    # Sprint 11: Update physical_model from actual response when fallback occurred
+    # feature Update physical_model from actual response when fallback occurred
     if fallback_info.applied:
         if hasattr(litellm_response, "model") and litellm_response.model:
             logger.debug(
@@ -529,7 +529,7 @@ async def _handle_streaming_with_db(
                 tool_choice=tool_choice,
                 resolved_model=resolved_model,
                 is_new=is_new,
-                # Sprint 11: pass schema + kwargs for token-limit continuation
+                # feature pass schema + kwargs for token-limit continuation
                 pm_schema=pm_schema,
                 call_kwargs={
                     "temperature": temperature,
@@ -567,7 +567,7 @@ def _dump_chunk_for_sse(chunk) -> str:
 async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[str, str] | None = None):
     """SSE streaming: forward chunks, persist turn on success, append metadata.
 
-    Sprint 11: supports token-limit continuation — when a model finishes with
+    feature supports token-limit continuation — when a model finishes with
     ``finish_reason="length"`` and more physical models are available, the
     generator suppresses the ``"length"`` finish_reason (sets to ``null``),
     appends the accumulated content as an assistant message, and seamlessly
@@ -581,7 +581,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
     chunks: list = []
     db = ctx.db
 
-    # Sprint 11: prepare for token-limit continuation across multiple models
+    # feature prepare for token-limit continuation across multiple models
     current_stream = ctx.litellm_response
     phys_models = (
         list(ctx.pm_schema.physical_models) if ctx.pm_schema and ctx.call_kwargs else []
@@ -864,7 +864,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
             _content[:2000],
         )
 
-        # Sprint 7: extract cache metadata from streaming response
+        # feature extract cache metadata from streaming response
         if ctx.cache_metadata is None:
             provider = ctx.provider or ""
             cache_applied = _should_stream_cache_be_applied(ctx)
@@ -973,7 +973,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
 
 
 def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
-    """Sprint 7: check if cache optimization was applied for the streaming path."""
+    """feature check if cache optimization was applied for the streaming path."""
     if not ctx.provider:
         return False
     from src.adapters.cache.provider_cache import should_apply_cache_control

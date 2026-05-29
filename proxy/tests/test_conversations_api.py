@@ -1,6 +1,5 @@
 """Tests for conversation state and compatibility endpoints.
 
-Sprint 2 §9.5 — minimum 8 tests.
 Tests the GET endpoints on api/conversations.py.
 """
 

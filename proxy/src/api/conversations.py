@@ -1,7 +1,7 @@
 """Conversation state, compatibility, and tool normalization endpoints.
 
-Sprint 2 §6: GET /conversations/{id}, GET /compatible-models, GET /tools-compatibility.
-Sprint 3 §4.3: POST /conversations/{id}/normalize-tools.
+# Feature: GET /conversations/{id}, GET /compatible-models, GET /tools-compatibility.
+# Feature: POST /conversations/{id}/normalize-tools.
 """
 
 import uuid

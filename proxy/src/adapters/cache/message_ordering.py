@@ -1,6 +1,6 @@
 """Canonical message ordering for deterministic provider cache hits.
 
-Sprint 7 §2.3: assemble messages in identical order across turns so the provider
+# Feature: assemble messages in identical order across turns so the provider
 recognizes the unchanged prefix and reuses its cache.
 
 Order:

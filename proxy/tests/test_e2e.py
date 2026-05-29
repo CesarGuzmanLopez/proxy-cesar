@@ -1,4 +1,4 @@
-"""End-to-end tests — OpenCode → Proxy → Provider flow (Sprint 7 §5).
+"""End-to-end tests — OpenCode → Proxy → Provider flow (Feature).
 
 Simulates multiple turns of a real conversation and verifies:
   - Affinity maintained (same physical model)
@@ -174,7 +174,7 @@ class TestE2EOpenCodeFlow:
 
 @pytest.mark.integration
 class TestSprint7Comprehensive:
-    """Comprehensive HTTP integration tests for Sprint 7 features."""
+    """Comprehensive HTTP integration tests for Featurefeatures."""
 
     async def test_canonical_order_applied(self, async_client, mock_litellm):
         """Messages are assembled in canonical order before LLM call."""

@@ -1,6 +1,6 @@
 """GET /v1/models — List available pseudo-models + local models.
 
-sprint §10 — optimistic capability advertising to prevent silent content stripping.
+Optimistic capability advertising to prevent silent content stripping.
 analisis.md: all capabilities advertised as true for all pseudo-models.
 
 Local models (Ollama, LM Studio) are discovered live and included with

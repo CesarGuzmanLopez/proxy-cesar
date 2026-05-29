@@ -1,6 +1,5 @@
 """Tests for Valkey affinity operations.
 
-sprint §13.2 — minimum 6 test cases.
 """
 
 import pytest

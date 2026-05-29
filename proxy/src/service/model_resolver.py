@@ -1,6 +1,6 @@
 """Pseudo-model to physical model resolution logic.
 
-Exact logic from sprint §7. No prefix manipulation, no string concatenation.
+Exact logic from feature No prefix manipulation, no string concatenation.
 """
 
 from src.config.pseudo_models import (
@@ -17,7 +17,7 @@ from src.domain.types import Err, Ok, Result
 def normalize_model_name(raw_model: str, config: ProxyConfigSchema) -> str:
     """Normalize incoming model name by stripping provider/ prefix and resolving aliases.
 
-    Rules (sprint §7.3 + Sprint 7 §4.3):
+    Rules (feature + Feature):
     1. Exact pseudo-model match → as-is
     2. Contains '/' → strip prefix before last '/' and try remainder
     3. Exact alias match → resolved pseudo-model name

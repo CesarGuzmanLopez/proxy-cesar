@@ -1,6 +1,5 @@
 """Tests for POST /v1/chat/completions.
 
-sprint §13.3 — minimum 12 test cases.
 """
 
 import uuid
@@ -78,7 +77,7 @@ async def test_3_unknown_pseudo_model(async_client: AsyncClient, mock_litellm):
             "messages": [{"role": "user", "content": "Hello"}],
         },
     )
-    # Sprint 7: default alias maps unknown models to "normal"
+    # feature default alias maps unknown models to "normal"
     assert response.status_code == 200
     data = response.json()
     assert data["proxy_metadata"]["pseudo_model"] == "normal"
@@ -166,7 +165,7 @@ async def test_7_turn_saved(async_client: AsyncClient, mock_litellm):
 
 @pytest.mark.asyncio
 async def test_8_tools_forwarded(async_client: AsyncClient, mock_litellm):
-    """Request with tools is forwarded (no filtering in Sprint 1)."""
+    """Request with tools is forwarded (no filtering in feature)."""
     response = await async_client.post(
         "/v1/chat/completions",
         json={

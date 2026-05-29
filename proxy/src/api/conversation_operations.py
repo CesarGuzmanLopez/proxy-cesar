@@ -1,7 +1,7 @@
 """Compact, audit log, and blob retrieval endpoints.
 
-Sprint 6: POST /conversations/{id}/compact, GET /conversations/{id}/audit-log, GET /blobs/{hash}.
-Sprint 5: POST /conversations/{id}/degrade-images.
+# Feature: POST /conversations/{id}/compact, GET /conversations/{id}/audit-log, GET /blobs/{hash}.
+# Feature: POST /conversations/{id}/degrade-images.
 """
 
 import uuid
@@ -103,7 +103,7 @@ async def degrade_images(
     """Manually describe all images in a conversation to enable switching.
 
     POST /conversations/{id}/degrade-images
-    Sprint 5: Manual degradation of images so the conversation can switch
+    feature Manual degradation of images so the conversation can switch
     to pseudo-models without vision support.
 
     Returns:
@@ -229,7 +229,7 @@ async def audit_log(
 
     GET /conversations/{id}/audit-log
     Constructed by scanning conversation_turns + conversation_snapshots.
-    No separate audit table needed — Sprint 6 §5.
+    No separate audit table needed — Feature
 
     Events include: conversation_created, pseudo_model_switched,
     fallback_applied, compaction_explicit, compaction_continuous,

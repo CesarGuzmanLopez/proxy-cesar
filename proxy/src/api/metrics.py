@@ -1,4 +1,4 @@
-"""Metrics endpoint (Sprint 8 §6).
+"""Metrics endpoint (Feature).
 
 GET /metrics returns aggregated stats persisted to Valkey (survives restarts).
 In-memory counters serve as the fast path; Valkey persists every write

@@ -59,7 +59,7 @@ class StreamContext:
     tool_choice: str | dict | None = None
     resolved_model: str | None = None
     is_new: bool | None = None
-    # Sprint 11: fields for token-limit fallback continuation
+    # feature fields for token-limit fallback continuation
     pm_schema: PseudoModelSchema | None = None
     """Pseudo-model schema with physical_models list — needed for continuing."""
     call_kwargs: dict | None = None
@@ -157,26 +157,26 @@ class ChatResult:
     total_tokens: int
     context_window: int | None
 
-    # Sprint 2 fields
+    # Featurefields
     session_caps: SessionCapabilities | None = None
     compatibility_warning: str | None = None
     compatibility_details: dict | None = None
     tools_filter_applied: bool = False
     tools_filter_reason: str | None = None
 
-    # Sprint 3 fields
+    # Featurefields
     tools_level_used: int = 0
     tools_incomplete: bool = False
     thinking_content: str | None = None
     tool_result_truncated: bool = False
 
-    # Sprint 5 fields
+    # Featurefields
     images_described: int = 0
     images_described_by: str | None = None
     images_degraded_manually: bool = False
     router_suggestion: dict | None = None
 
-    # Sprint 6 fields
+    # Featurefields
     context_alert: ContextAlert | None = None
     cache_metadata: dict | None = None
 
@@ -184,9 +184,9 @@ class ChatResult:
 def build_proxy_metadata(ctx: MetadataContext) -> dict:
     """Build proxy_metadata dict for API response.
 
-    Sprint 1: basic fields (physical_model, pseudo_model, affinity, fallback).
-    Sprint 2: +capabilities_detected, warning, tools_filter.
-    Sprint 5: +images_described, +images_described_by, +router_suggestion.
+    feature basic fields (physical_model, pseudo_model, affinity, fallback).
+    feature +capabilities_detected, warning, tools_filter.
+    feature +images_described, +images_described_by, +router_suggestion.
     """
     metadata: dict = {
         "physical_model": ctx.physical_model,
@@ -205,7 +205,7 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
     else:
         metadata["context_usage_pct"] = None
 
-    # Sprint 2: capabilities detected
+    # feature capabilities detected
     if ctx.session_caps:
         metadata["capabilities_detected"] = {
             "has_images": ctx.session_caps.has_images,
@@ -214,12 +214,12 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
     else:
         metadata["capabilities_detected"] = None
 
-    # Sprint 2: compatibility warning
+    # feature compatibility warning
     metadata["warning"] = ctx.compatibility_warning
     if ctx.compatibility_details:
         metadata["warning_details"] = ctx.compatibility_details
 
-    # Sprint 2: tool filter
+    # feature tool filter
     metadata["tools_filter_applied"] = ctx.tools_filter_applied
     metadata["tools_filter_reason"] = ctx.tools_filter_reason
 
@@ -229,11 +229,11 @@ def build_proxy_metadata(ctx: MetadataContext) -> dict:
 
     metadata["router_suggestion"] = ctx.router_suggestion
 
-    # Sprint 7: provider cache
+    # feature provider cache
     if ctx.cache_metadata:
         metadata["cache"] = ctx.cache_metadata
 
-    # Sprint 6: context alerts
+    # feature context alerts
     if ctx.context_alert:
         alert_dict: dict = {
             "alert_level": ctx.context_alert.alert_level,

@@ -1,7 +1,7 @@
 """FastAPI application entry point.
 
-sprint §12 — Lifespan manages startup/shutdown of all services.
-Sprint 8 — Auth, CORS, rate limiting, structured logging, metrics.
+Lifespan manages startup/shutdown of all services.
+Registers: Auth, CORS, rate limiting, structured logging, metrics.
 """
 
 import logging
@@ -54,7 +54,7 @@ from src.middleware.rate_limiter import RateLimitMiddleware  # noqa: E402
 from src.middleware.keyvault import KeyVaultMiddleware  # noqa: E402
 from src.utils.sanitize import sanitize, sanitize_dict  # noqa: E402
 
-# Configure structured JSON logging (Sprint 8)
+# Configure structured JSON logging (feature)
 setup_logging(level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Determine config path relative to project root
@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
     # LiteLLM
     setup_litellm(settings)
 
-    # Sprint 6: Optional arq pool for async compaction
+    # feature Optional arq pool for async compaction
     arq_pool = None
     try:
         from src.tasks.arq_app import create_arq_pool as _create_arq_pool
@@ -170,7 +170,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── Sprint 8: Middleware registration (order matters!) ──────────────────────
+# ── feature Middleware registration (order matters!) ──────────────────────
 
 # FastAPI wraps middleware in LIFO order: last registered = outermost (runs first).
 # Current order: 1st=KeyVault(inner) → 2nd=RateLimit → 3rd=Auth(middle) → 4th=CORS(outer)

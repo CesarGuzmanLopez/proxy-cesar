@@ -1,6 +1,5 @@
 """Tests for capability detection logic.
 
-Sprint 2 §9.1 — minimum 15 tests.
 """
 
 from src.domain.capabilities import TurnCapabilities

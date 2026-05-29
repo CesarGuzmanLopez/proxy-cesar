@@ -4,10 +4,11 @@ Central business logic for POST /v1/chat/completions.
 Uses Result monad for domain errors, HTTPException for transport errors (routers only).
 python.md §3: errors as data in domain, exceptions at boundary.
 
-Sprint 1: basic pseudo-model resolution, affinity, fallback.
-Sprint 2: +capability detection, compatibility validation, threshold guard, tool filter.
-Sprint 3: +canonical tool storage, tiktoken, thinking blocks, tool edge cases.
-Sprint 4: +pre-compaction, continuous compaction, external compaction detection.
+Capabilities:
+- Pseudo-model resolution with affinity and fallback chains
+- Capability detection, compatibility validation, threshold guards, tool filtering
+- Canonical tool storage, tiktoken counting, thinking blocks, tool edge cases
+- Pre-compaction, continuous compaction, external compaction detection
 """
 
 # ── Service layer uses Result monad for domain errors ──────────────────────
@@ -126,7 +127,7 @@ async def process_chat_request(
         tools,
         config,
     )
-    # Sprint 8: track request metrics
+    # feature track request metrics
     metrics.record_request(pseudo_model_name)
     conv_id = conversation_id or str(uuid.uuid4())
     conv_uuid = _parse_uuid(conv_id)
@@ -185,7 +186,7 @@ async def process_chat_request(
     from src.service.tool_detector import inject_blob_extraction_guidance
     messages = inject_blob_extraction_guidance(messages)
 
-    # Sprint 5: Auto-describe images on pseudo-model switch
+    # feature Auto-describe images on pseudo-model switch
     auto_describe_meta: dict | None = None
     messages_for_llm: list[dict] = messages  # May be replaced by described version
     if conv is not None and not is_new and pseudo_model_name != conv.pseudo_model:
@@ -229,7 +230,7 @@ async def process_chat_request(
 
     active_messages = messages_for_llm
 
-    # Sprint 6: Context alerts (total = history + current request)
+    # feature Context alerts (total = history + current request)
     context_alert = get_context_alert(
         total_tokens=(conv.total_tokens if conv else 0) + est_input,
         context_window=pm_schema.context_window,
@@ -249,7 +250,7 @@ async def process_chat_request(
         case Ok():
             pass  # Context is usable
 
-    # Sprint 5: Router LLM — evaluate complexity (non-blocking, never changes model)
+    # feature Router LLM — evaluate complexity (non-blocking, never changes model)
     router_suggestion: dict | None = await evaluate_router_suggestion(
         pm_schema=pm_schema,
         messages=active_messages,
@@ -286,7 +287,7 @@ async def process_chat_request(
     # Log: LLM response inbound
     _log_llm_response(response, physical_model, trace, _req_id)
 
-    # Sprint 11: Update physical_model from actual response when fallback occurred.
+    # feature Update physical_model from actual response when fallback occurred.
     physical_model, provider = await _update_physical_model(
         response,
         fallback_info,

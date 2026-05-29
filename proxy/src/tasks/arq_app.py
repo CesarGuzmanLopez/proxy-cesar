@@ -1,6 +1,6 @@
 """arq worker for async compaction of large conversations (>500K tokens).
 
-Sprint 6 §4: Replaces Celery with arq (MIT, async-native, by Pydantic creator).
+# Feature: Replaces Celery with arq (MIT, async-native, by Pydantic creator).
 Uses Valkey (Redis-compatible) as broker — already deployed.
 
 python.md §7: async-first.

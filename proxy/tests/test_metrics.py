@@ -1,4 +1,4 @@
-"""Tests for metrics endpoint (Sprint 8 §6)."""
+"""Tests for metrics endpoint (Feature)."""
 
 import pytest
 from fastapi import FastAPI

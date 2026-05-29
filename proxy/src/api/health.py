@@ -1,6 +1,6 @@
 """GET /health — Service health check.
 
-sprint §11 — no auth required, never returns 500.
+No auth required, never returns 500.
 """
 
 import os

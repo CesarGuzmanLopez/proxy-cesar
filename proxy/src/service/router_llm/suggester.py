@@ -1,6 +1,6 @@
 """Router LLM — task complexity evaluation service.
 
-Sprint 5: Evaluates whether a task is simple enough to be handled by a
+# Feature: Evaluates whether a task is simple enough to be handled by a
 cheaper pseudo-model. Always non-blocking — if evaluation fails, the
 request continues to the original model unchanged.
 

@@ -1,4 +1,4 @@
-"""Structured JSON logging configuration (Sprint 8 §5).
+"""Structured JSON logging configuration (Feature).
 
 All proxy decisions are logged as JSON lines to stdout/stderr
 for collection by systemd journal, Docker, or any log aggregator.

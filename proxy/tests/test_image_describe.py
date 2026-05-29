@@ -1,4 +1,4 @@
-"""Sprint 5 — Auto-describe images service tests.
+"""Feature— Auto-describe images service tests.
 
 Pure unit tests (no DB, no API). Tests the image_describer module:
 - find_image_refs() — 5 tests

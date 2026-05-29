@@ -1,6 +1,5 @@
 """Tests for canonical tool format storage (tools_canonical.py).
 
-Sprint 3 §6.1 — minimum 10 tests.
 """
 
 from src.service.tools_canonical import (

@@ -1,6 +1,6 @@
 """Provider-specific cache optimizations.
 
-Sprint 7 §3: each provider has a different caching mechanism.
+# Feature: each provider has a different caching mechanism.
 The proxy applies the appropriate strategy based on the physical model's provider.
 
 - OpenAI/DeepSeek/Groq: automatic prefix caching (no action needed)
@@ -75,7 +75,7 @@ def _place_breakpoint_before_last(modified: list[dict]) -> int:
 def apply_anthropic_cache_control(messages: list[dict]) -> list[dict]:
     """Add cache_control breakpoints to messages for Anthropic provider.
 
-    Strategy (Sprint 7 §3.2):
+    Strategy (Feature):
       - Breakpoint 1: after system message (caches system prompt)
       - Breakpoint 2: at the last message before the final user query
         (caches conversation history prefix)
@@ -203,7 +203,7 @@ def build_cache_destruction_metadata(
 ) -> dict:
     """Build cache destruction metadata when fallback changes the physical model.
 
-    Sprint 7 §3.7: cache is destroyed on fallback — the proxy MUST report this clearly.
+    Feature cache is destroyed on fallback — the proxy MUST report this clearly.
     """
     meta: dict = {
         "previous_cache_destroyed": True,
