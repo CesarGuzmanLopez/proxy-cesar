@@ -107,11 +107,32 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 
 ## Arquitectura Clave
 
-**Dos endpoints de OpenCode Go:**
-- `openai/` → `https://opencode.ai/zen/go/v1` (OpenAI-compat, 9 modelos)
-  - Usa `reasoning_effort` (low/medium/high) para control de esfuerzo
-- `anthropic/` → `https://opencode.ai/zen/go` (Anthropic-compat, solo `qwen3.7-max`)
-  - Usa `thinking` dict con `budget_tokens` para control de esfuerzo
+### OpenCode Go: Endpoints y model naming
+
+OpenCode Go expone **dos endpoints incompatibles**. La asignación de cada modelo a su endpoint es fija y no se puede cambiar:
+
+| Endpoint | Modelos | Formato de mensajes |
+|----------|---------|---------------------|
+| `https://opencode.ai/zen/go/v1/chat/completions` | `kimi-k2.5`, `kimi-k2.6`, `mimo-v2.5-pro`, `deepseek-v4-pro`, `deepseek-v4-flash`, `glm-5.1` | OpenAI |
+| `https://opencode.ai/zen/go/v1/messages` | `qwen3.7-max`, `qwen3.6-plus`, `qwen3.5-plus`, `minimax-m2.7` | Anthropic |
+
+**Regla:** Nunca mezclar. Qwen y MiniMax SOLO funcionan vía endpoint Anthropic. Usar el endpoint OpenAI para estos modelos resulta en `RateLimitError` o `400 BadRequest` del proveedor.
+
+**Model naming en pseudo_models.yaml:**
+```yaml
+# Correcto:
+- provider: opencode-go
+  model: anthropic/qwen3.5-plus      # ← prefix anthropic + endpoint anthropic
+  api_base: https://opencode.ai/zen/go
+
+- provider: opencode-go
+  model: openai/kimi-k2.5             # ← prefix openai + endpoint openai
+  api_base: https://opencode.ai/zen/go/v1
+```
+
+El prefijo (`openai/`, `anthropic/`) lo usa liteLLM para elegir el adaptador. liteLLM lo quita automáticamente antes de enviar al API. No hay que cambiarlo ni tocarlo.
+
+**Si en el futuro un modelo no funciona, lo primero que hay que verificar es que el prefix coincida con el endpoint. Una regresión como la de v1.1 (que revirtió estos valores) causa que modelos Qwen/MiniMax se caigan con RateLimitError.**
 
 **Esfuerzo de razonamiento multi-proveedor:** El proxy acepta el parámetro `thinking` del cliente y lo traduce al formato que cada proveedor entiende (`budget_tokens` para Anthropic, `reasoning_effort` para OpenAI, auto para otros). Ver `proxy/README.md`.
 
