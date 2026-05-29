@@ -736,6 +736,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                             placeholder = f"[KEYVAULT:{secret_hash}]"
                             if placeholder in buf:
                                 found_start = False
+                                found_end = False
                                 for i, pc in enumerate(pending):
                                     for tf in ("content", "reasoning_content"):
                                         val = pc.get("choices", [{}])[0].get("delta", {}).get(tf, "") or ""
@@ -747,7 +748,9 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                                 "stream_reinject_ok conv=%s hash=%s field=%s",
                                                 ctx.conversation_id[:12], secret_hash, tf,
                                             )
-                                        elif found_start and val:
+                                        elif found_start and not found_end and val:
+                                            if "]" in val:
+                                                found_end = True
                                             pc["choices"][0]["delta"][tf] = ""
                                 # Yield all modified pending chunks
                                 for pc in pending:
