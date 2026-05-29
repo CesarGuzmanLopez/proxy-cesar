@@ -715,8 +715,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
 
                     # Re-inject secrets: cross-chunk placeholder buffering
                     # LLM tokenizers split [KEYVAULT:hash] across 3-6 SSE chunks.
-                    # We only buffer when a potential placeholder start '[' is seen,
-                    # and discard immediately if it's not followed by 'KEYVAULT'.
+                    # We check for complete placeholders first, then buffer open brackets.
                     if keyvault_secrets:
                         delta_content = ""
                         for choice in chunk_dict.get("choices", []):
@@ -728,27 +727,44 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                             buf = getattr(ctx, "_keyvault_buf", "")
                             buf += delta_content
 
-                            # Optimización: bufferizar SOLO si hay '[' abierto y sin cerrar
-                            has_open = "[" in buf.rpartition("]")[2]  # '[' después del último ']'
-                            if has_open:
-                                # Solo mantener hasta 256 chars mientras hay '[' abierto
-                                ctx._keyvault_buf = buf[-256:]
-                                for secret_hash, real_value in keyvault_secrets.items():
-                                    placeholder = f"[KEYVAULT:{secret_hash}]"
-                                    if placeholder in ctx._keyvault_buf:
-                                        chunk_json = json.dumps(chunk_dict)
-                                        if placeholder in chunk_json:
+                            # 1. Check for COMPLETE placeholder in current chunk
+                            chunk_json = json.dumps(chunk_dict)
+                            replaced = False
+                            for secret_hash, real_value in keyvault_secrets.items():
+                                placeholder = f"[KEYVAULT:{secret_hash}]"
+                                if placeholder in chunk_json:
+                                    chunk_json = chunk_json.replace(placeholder, real_value)
+                                    replaced = True
+                                    logger.info(
+                                        "stream_reinject_ok conv=%s hash=%s",
+                                        ctx.conversation_id[:12], secret_hash,
+                                    )
+
+                            # 2. Check for cross-chunk placeholder (fragmented across chunks)
+                            if not replaced:
+                                has_open = "[" in buf.rpartition("]")[2]
+                                if has_open:
+                                    ctx._keyvault_buf = buf[-256:]
+                                    for secret_hash, real_value in keyvault_secrets.items():
+                                        placeholder = f"[KEYVAULT:{secret_hash}]"
+                                        if placeholder in ctx._keyvault_buf:
+                                            chunk_json = json.dumps(chunk_dict)
                                             chunk_json = chunk_json.replace(placeholder, real_value)
-                                            chunk_dict = json.loads(chunk_json)
+                                            replaced = True
                                             logger.info(
-                                                "stream_reinject_ok conv=%s hash=%s",
+                                                "stream_reinject_ok conv=%s hash=%s (cross-chunk)",
                                                 ctx.conversation_id[:12], secret_hash,
                                             )
-                                        ctx._keyvault_buf = ""  # limpiar después de reemplazar
-                                        break
+                                            break
+                                    if not replaced:
+                                        ctx._keyvault_buf = buf[-256:]
+                                else:
+                                    ctx._keyvault_buf = ""  # No potential placeholder
                             else:
-                                # Sin '[' abierto → no hay placeholder potencial → limpiar buffer
                                 ctx._keyvault_buf = ""
+
+                            if replaced:
+                                chunk_dict = json.loads(chunk_json)
 
                     # Use chunk_dict (may have keyvault secrets re-injected)
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
