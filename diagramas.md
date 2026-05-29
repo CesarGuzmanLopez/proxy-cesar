@@ -240,6 +240,8 @@ sequenceDiagram
 
 ## 8. Flujo de Razonamiento (Thinking / Reasoning Effort)
 
+> **Refactorización v1.1:** `_normalise_reasoning_param` ahora usa tabla lookup (`_REASONING_MAP`) + 2 helpers (`_map_bool_thinking`, `_map_str_thinking`) en lugar de cascada de `if/elif`. Complejidad cognitiva: 55 → 17.
+
 ```mermaid
 flowchart LR
     C[Cliente<br/>thinking: 'high'] --> P[Proxy]
@@ -257,7 +259,19 @@ La normalización ocurre en `_normalise_reasoning_param()` dentro de `chat_fallb
 - Si el modelo primario es Anthropic y el fallback es OpenAI, cada uno recibe el formato correcto
 - `"auto"` y `None` siempre dejan que el proveedor decida
 
-## 9. Blob Description Cache
+## 9. Context Objects (v1.1)
+
+Para eliminar violaciones de S107 (demasiados parámetros) y reducir complejidad cognitiva, el proxy usa dataclasses como context objects:
+
+| Clase | Ubicación | Parámetros | Caso de uso |
+|---|---|---|---|
+| `StreamingRequestContext` | `chat_models.py` | 15→1 | Setup de streaming (elimina S107) |
+| `SaveContext` | `chat_models.py` | 23→1 | Persistir turno + resultado |
+| `MetadataContext` | `chat_models.py` | 22→1 | Construir `proxy_metadata` |
+
+**Patrón:** `service/` recibe Result[T,E], los routers construyen context objects y los pasan a las funciones de setup. Ver `_handle_streaming` en `chat_streaming.py`.
+
+## 10. Blob Description Cache
 
 Las descripciones de imágenes/audio/PDF generadas por el Blob Vault se
 almacenan en Redis (Valkey) con una clave compuesta:

@@ -1,11 +1,11 @@
-# proxy-cesar v1.0
+# proxy-cesar v1.1
 
 **Proxy LLM multi-modelo determinista.** Diez pseudo-modelos abstractos que mapean a modelos físicos concretos con fallback automático, KeyVault, Blob Vault, compactación explícita, métricas y autenticación Bearer.
 
 > **Stack:** FastAPI · SQLite · Redis nativo (6380) · OpenCode Go · Groq · OpenRouter · DeepSeek
 > **Despliegue:** `chat.guzman-lopez.com` vía GitHub Actions → servidor `plata`
 > **Paquetería 100% libre:** MIT, BSD, Apache 2.0
-> **Tests:** 406 tests, 72% coverage
+> **Tests:** 406 tests, 73% coverage
 > **Autor:** Cesar Gerardo Guzman Lopez
 
 ---

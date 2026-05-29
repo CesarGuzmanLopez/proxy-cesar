@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **proxy-cesar v1.0** is a deterministic multi-model LLM proxy in production at `chat.guzman-lopez.com`. It abstracts 10 pseudo-models over 30+ physical models from multiple providers (OpenCode Go, DeepSeek, Groq, OpenRouter) with automatic fallback, conversation state management, context compaction, Bearer auth, and security features (KeyVault for secret detection).
 
-**Tests:** 406 total, 72% coverage.
+**Tests:** 406 total, 73% coverage.
 **Auth:** `PROXY_API_KEY` required in production (401 without Bearer token). Public endpoints: `/health`, `/docs`, `/openapi.json`, `/redoc`.
 
 **Stack:** Python 3.13+, FastAPI, SQLite (conversations), Redis :6380 (affinity/cache/rate-limiting), async-first architecture, result monad for error handling.
@@ -68,6 +68,11 @@ proxy/
 │   │   └── models.py                 list pseudo-models
 │   ├── service/                  # Business logic (pure domain layer)
 │   │   ├── chat_service.py           main orchestrator (fallback, capability detection)
+│   │   ├── chat_fallback.py          fallback loop with SmartFallback scoring
+│   │   ├── chat_messages.py          conversation message building + history management
+│   │   ├── chat_streaming.py         streaming response generator
+│   │   ├── chat_stream_persistence.py token extraction + metadata chunk building
+│   │   ├── chat_models.py            context dataclasses (SaveContext, StreamingRequestContext, MetadataContext)
 │   │   ├── model_resolver.py         pseudo-model → physical model + aliases
 │   │   ├── capability_detector.py    turn-level/session-level capabilities
 │   │   ├── threshold_guard.py        token limit guards (Result monad)
@@ -367,6 +372,7 @@ Reference: `python.md` (comprehensive guide, includes all rules).
 6. **File size** — ideal 300–400 lines, max 600 lines
 7. **No error silencing** — propagate explicitly or convert to Result
 8. **DI with FastAPI** — use `Depends()` for injection, not `new`
+9. **Context objects** — use `@dataclass` to collapse 15+ parameters into 1 (`StreamingRequestContext`, `SaveContext`, `MetadataContext`). See `chat_models.py`
 
 **Python version:** 3.13+ (use `|` for unions, `match/case`, `type` aliases, etc.)
 
