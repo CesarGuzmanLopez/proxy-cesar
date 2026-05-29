@@ -110,13 +110,33 @@ def _normalise_reasoning_param(
     return None, None
 
 
-def _resolve_api_key(phys) -> str | None:
-    """Resolve API key from environment if the physical model has api_key_env set."""
+async def _resolve_api_key(phys, conversation_id: str | None = None, affinity=None) -> str | None:
+    """Resolve API key from environment, with key slot rotation.
+
+    If multiple keys exist for the same provider (e.g. OPENCODE_API_KEY_2),
+    the conversation's key slot determines which one to use.
+    Fallback to the default key (_1 / no suffix) if the slot-specific key
+    is not configured.
+    """
     if not phys.api_key_env:
         return None
     import os
 
-    return os.environ.get(phys.api_key_env) or None
+    env_var = phys.api_key_env  # e.g. "OPENCODE_API_KEY"
+
+    # Determine key slot for this conversation
+    slot = 1
+    if conversation_id and affinity:
+        slot = await affinity.get_key_slot(conversation_id)
+
+    # Try slot-specific key first
+    if slot > 1:
+        specific = os.environ.get(f"{env_var}_{slot}")
+        if specific:
+            return specific
+
+    # Fallback to default key
+    return os.environ.get(env_var) or None
 
 
 # ── Single model call ────────────────────────────────────────────────────────
@@ -129,6 +149,8 @@ async def _try_physical_model(
     kwargs: dict,
     _est_input: int,
     _trace_id: str,
+    conversation_id: str | None = None,
+    affinity=None,
 ) -> tuple[ModelResponse | dict, str | None]:
     """Attempt to call a single physical model.
 
@@ -181,7 +203,7 @@ async def _try_physical_model(
         )
 
     api_base = phys.api_base or None
-    api_key = _resolve_api_key(phys)
+    api_key = await _resolve_api_key(phys, conversation_id, affinity)
 
     if "deepseek" in model_prefix or "deepseek" in provider:
         for msg in call_messages:
@@ -499,6 +521,7 @@ async def call_with_fallback(
     start_index: int = 0,
     conversation_id: str | None = None,
     valkey_client=None,
+    affinity=None,
     **kwargs,
 ) -> tuple:
     """Try each physical model in order. On retryable errors, move to next.
@@ -560,7 +583,8 @@ async def call_with_fallback(
 
         try:
             response, skip_reason = await _try_physical_model(
-                phys, ordered_messages, stream, kwargs, _est_input, _trace_id
+                phys, ordered_messages, stream, kwargs, _est_input, _trace_id,
+                conversation_id=conversation_id, affinity=affinity,
             )
 
             if response is None:

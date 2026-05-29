@@ -281,6 +281,7 @@ async def process_chat_request(
         # FASE 2: SmartFallback parameters
         conversation_id=conv_id,
         valkey_client=valkey,
+        affinity=affinity,
     )
     _t_llm_elapsed = time.monotonic() - _t_llm_start
 

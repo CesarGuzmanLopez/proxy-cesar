@@ -80,6 +80,21 @@ class ValkeyAffinityAdapter:
         key = f"conv:{conversation_id}:physical_model"
         await self._client.delete(key)
 
+    async def get_key_slot(self, conversation_id: str) -> int:
+        """Get pinned key slot (1-based). Returns 1 if not set."""
+        key = f"conv:{conversation_id}:key_slot"
+        raw = await self._client.get(key)
+        if raw is not None:
+            return int(raw)
+        return 1
+
+    async def set_key_slot(
+        self, conversation_id: str, slot: int, ttl_seconds: int = 86400
+    ) -> None:
+        """Pin a key slot to a conversation with TTL (sliding window)."""
+        key = f"conv:{conversation_id}:key_slot"
+        await self._client.set(key, str(slot), ex=ttl_seconds)
+
     async def record_failure(
         self,
         conversation_id: str,

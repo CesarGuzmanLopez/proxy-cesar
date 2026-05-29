@@ -450,6 +450,9 @@ async def _handle_streaming_with_db(
         tool_choice=tool_choice,
         stream_options=stream_options,
         thinking=thinking,
+        conversation_id=conversation_id,
+        valkey_client=getattr(affinity, "_client", None),
+        affinity=affinity,
     )
 
     # feature Update physical_model from actual response when fallback occurred

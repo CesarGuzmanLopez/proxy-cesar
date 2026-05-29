@@ -304,7 +304,8 @@ def test_normalise_reasoning_param_disabled_openai():
 # ── _resolve_api_key ─────────────────────────────────────────────────────────
 
 
-def test_resolve_api_key_from_env(monkeypatch):
+@pytest.mark.asyncio
+async def test_resolve_api_key_from_env(monkeypatch):
     """API key is resolved from environment variable."""
     from src.service.chat_fallback import _resolve_api_key
 
@@ -313,27 +314,29 @@ def test_resolve_api_key_from_env(monkeypatch):
     phys.api_key = None
 
     monkeypatch.setenv("MY_API_KEY", "sk-test-key-12345")
-    result = _resolve_api_key(phys)
+    result = await _resolve_api_key(phys)
     assert result == "sk-test-key-12345"
 
 
-def test_resolve_api_key_no_env():
+@pytest.mark.asyncio
+async def test_resolve_api_key_no_env():
     """No api_key_env returns None regardless of phys.api_key."""
     from src.service.chat_fallback import _resolve_api_key
 
     phys = MagicMock()
     phys.api_key_env = None
-    result = _resolve_api_key(phys)
+    result = await _resolve_api_key(phys)
     assert result is None
 
 
-def test_resolve_api_key_env_missing():
+@pytest.mark.asyncio
+async def test_resolve_api_key_env_missing():
     """api_key_env set but env var not set returns None."""
     from src.service.chat_fallback import _resolve_api_key
 
     phys = MagicMock()
     phys.api_key_env = "MISSING_ENV_VAR"
-    result = _resolve_api_key(phys)
+    result = await _resolve_api_key(phys)
     assert result is None
 
 

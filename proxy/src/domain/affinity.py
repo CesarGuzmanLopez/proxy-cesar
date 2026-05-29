@@ -1,4 +1,4 @@
-"""Affinity port (Protocol) for physical model pinning.
+"""Affinity port (Protocol) for physical model pinning and key slot rotation.
 
 python.md §5.2: Use Protocol for ports/abstractions.
 
@@ -26,4 +26,14 @@ class AffinityPort(Protocol):
 
     async def delete(self, conversation_id: str) -> None:
         """Remove the affinity pin."""
+        ...
+
+    async def get_key_slot(self, conversation_id: str) -> int:
+        """Get the pinned key slot (1-based). Returns 1 if not set."""
+        ...
+
+    async def set_key_slot(
+        self, conversation_id: str, slot: int, ttl_seconds: int = 86400
+    ) -> None:
+        """Pin a key slot to a conversation. Slot is 1-based."""
         ...
