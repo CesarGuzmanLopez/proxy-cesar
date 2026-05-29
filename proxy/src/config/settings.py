@@ -1,6 +1,6 @@
 """Environment configuration via pydantic-settings.
 
-Reads from .env file. Exact schema from sprint §5.
+Reads from .env file. Exact schema from feature
 """
 
 import logging
@@ -18,11 +18,12 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./proxy.db"
     valkey_url: str = "valkey://localhost:6379"
 
-    # Sprint 8: Auth
+    # feature Auth
     proxy_api_key: str = ""
+    proxy_api_keys: str = ""
     """Bearer token for API access. Empty = dev mode (no auth)."""
 
-    # Sprint 8: CORS
+    # feature CORS
     cors_origins: str = "http://localhost:3000"
     """Comma-separated list of allowed origins."""
 

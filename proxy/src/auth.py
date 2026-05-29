@@ -1,7 +1,8 @@
 """Bearer token authentication middleware.
 
-Sprint 8 §2: validates PROXY_API_KEY on all non-public endpoints.
-When PROXY_API_KEY is empty/missing → dev mode (auth disabled).
+Feature validates PROXY_API_KEY / PROXY_API_KEYS on all non-public endpoints.
+PROXY_API_KEYS supports multiple comma-separated keys for multi-user access.
+When all keys are empty/missing → dev mode (auth disabled).
 """
 
 import logging
@@ -26,21 +27,25 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
 )
 
 
-def _get_api_key() -> str:
-    """Resolve API key with runtime override support.
+def _get_api_keys() -> list[str]:
+    """Resolve all valid API keys.
 
-    Primary source is settings.proxy_api_key (from .env / env vars at startup).
-    Falls back to os.environ for test compatibility (monkeypatch after import).
+    Sources (in order):
+    1. settings.proxy_api_keys (comma-separated from .env)
+    2. settings.proxy_api_key (single key, backward compat)
+    3. os.environ (for test compatibility)
     """
-    key = settings.proxy_api_key
-    if not key:
-        key = os.environ.get("PROXY_API_KEY", "")
-    return key
+    raw = os.environ.get("PROXY_API_KEYS", "") or os.environ.get("PROXY_API_KEY", "")
+    if not raw:
+        raw = getattr(settings, "proxy_api_keys", "") or getattr(settings, "proxy_api_key", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    return keys
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """Validate Bearer token on all non-public endpoints.
 
+    Accepts any token that matches one of the configured PROXY_API_KEYS.
     Registration order in main.py: AuthMiddleware FIRST.
     """
 
@@ -50,9 +55,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if normalized_path in PUBLIC_PATHS:
             return await call_next(request)
 
-        # Dev mode — auth disabled if proxy_api_key is not set
-        api_key = _get_api_key()
-        if not api_key:
+        # Dev mode — auth disabled if no api keys configured
+        valid_keys = _get_api_keys()
+        if not valid_keys:
             return await call_next(request)
 
         # Validate Bearer token
@@ -75,7 +80,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         token = auth_header.removeprefix("Bearer ").strip()
-        if token != api_key:
+        if token not in valid_keys:
             logger.warning(
                 "auth_failure | path=%s ip=%s reason=invalid_key",
                 request.url.path,
