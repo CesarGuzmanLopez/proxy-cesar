@@ -4,11 +4,28 @@ Auto-describes images in conversation history when switching from a vision
 pseudo-model to a non-vision one with ``on_downgrade: auto_describe``.
 """
 
+import json
 import logging
+import re
 from copy import deepcopy
 
 from src.adapters.litellm import call_litellm
 from src.config.constants import BLOB_STORAGE_TTL_SECONDS
+
+
+# ── Lenient JSON parser (handles trailing commas from Llama 4 Scout, etc.) ──
+
+_JSON_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
+
+
+def _parse_json_lenient(text: str):
+    """Parse JSON with lenient trailing comma handling.
+
+    Llama 4 Scout (and some other vision models) produce valid-JSON-plus-trailing-commas,
+    which strict ``json.loads`` rejects. This strips trailing commas before parsing.
+    """
+    cleaned = _JSON_TRAILING_COMMA_RE.sub(r"\1", text)
+    return json.loads(cleaned)
 
 logger = logging.getLogger(__name__)
 
@@ -252,8 +269,6 @@ async def _parse_batch_response(
     user_prompt: str | None,
 ) -> tuple[dict[str, str], int, str | None]:
     """Parse batch vision response, store in cache."""
-    import json as json_mod
-
     # Extract text from response
     text = ""
     try:
@@ -285,7 +300,7 @@ async def _parse_batch_response(
 
     general_summary: str | None = None
     try:
-        parsed = json_mod.loads(text)
+        parsed = _parse_json_lenient(text)
         if isinstance(parsed, list):
             for i, ref in enumerate(uncached):
                 desc = str(parsed[i]) if i < len(parsed) else ""
@@ -300,7 +315,7 @@ async def _parse_batch_response(
                 url_cache[ref["url"]] = desc
                 total_tokens += max(batch_tokens // len(descriptions), 1) if batch_tokens and descriptions else len(desc) // 4
                 await _cache_description(valkey, ref, desc, user_prompt)
-    except (json_mod.JSONDecodeError, IndexError, TypeError):
+    except (json.JSONDecodeError, IndexError, TypeError):
         pass
 
     return url_cache, total_tokens, general_summary

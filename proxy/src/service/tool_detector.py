@@ -12,12 +12,28 @@ model call, using the user's original text prompt for context.
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import re
 
 import fitz  # PyMuPDF — mandatory for PDF text extraction
 
 from src.config.constants import BLOB_STORAGE_TTL_SECONDS
+
+
+# ── Lenient JSON parser (handles trailing commas from Llama 4 Scout, etc.) ──
+
+_JSON_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
+
+
+def _parse_json_lenient(text: str):
+    """Parse JSON with lenient trailing comma handling.
+
+    Llama 4 Scout (and some other vision models) produce valid-JSON-plus-trailing-commas,
+    which strict ``json.loads`` rejects. This strips trailing commas before parsing.
+    """
+    cleaned = _JSON_TRAILING_COMMA_RE.sub(r"\1", text)
+    return json.loads(cleaned)
 
 logger = logging.getLogger(__name__)
 
@@ -294,9 +310,7 @@ async def _describe_single_batch(
                 text = text.strip()
                 if text.startswith("```"):
                     text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-                import json
-
-                parsed = json.loads(text)
+                parsed = _parse_json_lenient(text)
                 if isinstance(parsed, list):
                     return [str(d) for d in parsed]
     except Exception as exc:
