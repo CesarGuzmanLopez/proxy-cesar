@@ -11,8 +11,6 @@ import re
 
 from fastapi import APIRouter, Request
 
-from src.adapters.local_discovery import discover_local_models
-
 router = APIRouter()
 
 # Optimistic capabilities — always true for every pseudo-model
@@ -75,8 +73,8 @@ async def list_models(request: Request):
             }
         )
 
-    # Local models from Ollama/LM Studio (discovered live)
-    local_models = await discover_local_models()
+    # Local models from Ollama/LM Studio (feature removed)
+    local_models: list = []
     for loc in local_models:
         models.append(
             {

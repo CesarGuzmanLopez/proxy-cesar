@@ -38,36 +38,10 @@ def _load_messages_from_turns(conv: Conversation) -> list[dict]:
     return all_messages
 
 
-def build_conversation_messages(
-    conv: Conversation, current_messages: list[dict]
-) -> list[dict]:
-    """Build full conversation history by interleaving turn messages and assistant responses.
-
-    Each ConversationTurn stores:
-    - ``messages``: the client's request messages (e.g. [{"role": "user", ...}])
-    - ``response``: the full LiteLLM response dict with ``choices[0].message``
-
-    We rebuild the conversation by inserting the assistant response after each turn's messages.
-
-    FASE D: Filter out degradation_event turns (created during image auto-describe) to
-    prevent context duplication. These turns replay full history and corrupt the context
-    when re-iterated.
-
-    IMPORTANT: Conversation MUST be loaded with eager-loaded turns using:
-    ``db.get(Conversation, conv_id, options=[selectinload(Conversation.turns)])``
-    Otherwise accessing conv.turns triggers N+1 queries.
-
-    Returns a new list — does NOT mutate current_messages.
-
-    NOTE: This function deliberately IGNORES compaction snapshots (ConversationSnapshot).
-    Compaction is designed for batch processing of giant conversations and for opencode
-    endpoints that handle compaction themselves. The snapshot is an ADDITIONAL service,
-    not a replacement for the turn-based history. Modifying the real history would break
-    multi-turn consistency for clients that don't use compaction. This is NOT a bug.
-    """
+def _build_history_from_turns(conv: Conversation) -> list[dict]:
+    """Reconstruct history from stored turns, skipping degradation_event turns."""
     history: list[dict] = []
     for turn in sorted(conv.turns, key=lambda t: t.turn_number):
-        # FASE D: Skip degradation_event turns to prevent context contamination
         if getattr(turn, "turn_type", None) == "degradation_event":
             logger.debug(
                 "skip_degradation_event_turn conv=%s turn=%s",
@@ -83,56 +57,59 @@ def build_conversation_messages(
             if choices:
                 msg = choices[0].get("message", {})
                 assistant_entry: dict = {"role": "assistant"}
-                for field in (
-                    "content",
-                    "tool_calls",
-                    "reasoning_content",
-                    "name",
-                    "thinking_blocks",
-                ):
+                for field in ("content", "tool_calls", "reasoning_content", "name", "thinking_blocks"):
                     val = msg.get(field)
                     if val is not None:
                         assistant_entry[field] = val
                 if len(assistant_entry) > 1:
                     history.append(assistant_entry)
+    return history
 
-    # FASE D: Improved system prompt deduplication for both string and list content
-    # Extract system prompt contents from current_messages (both string and list forms)
-    current_system_contents: set = set()
-    for m in current_messages:
+
+def _extract_system_contents(messages: list[dict]) -> set:
+    """Extract system prompt contents for deduplication."""
+    contents: set = set()
+    for m in messages:
+        if m.get("role") != "system":
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            contents.add(("str", content))
+        elif isinstance(content, list):
+            try:
+                contents.add(("list", tuple(str(p) for p in content)))
+            except (TypeError, ValueError):
+                pass
+    return contents
+
+
+def _deduplicate_system_prompts(history: list[dict], to_remove: set) -> list[dict]:
+    """Remove system prompts whose content matches the dedup set."""
+    if not to_remove:
+        return history
+    filtered: list[dict] = []
+    for m in history:
         if m.get("role") == "system":
             content = m.get("content")
-            if isinstance(content, str):
-                current_system_contents.add(("str", content))
-            elif isinstance(content, list):
+            if isinstance(content, str) and ("str", content) in to_remove:
+                continue
+            if isinstance(content, list):
                 try:
-                    current_system_contents.add(
-                        ("list", tuple(str(p) for p in content))
-                    )
+                    if ("list", tuple(str(p) for p in content)) in to_remove:
+                        continue
                 except (TypeError, ValueError):
                     pass
+        filtered.append(m)
+    return filtered
 
-    # Remove matching system messages from history
-    if current_system_contents:
-        filtered_history: list[dict] = []
-        for m in history:
-            if m.get("role") == "system":
-                content = m.get("content")
-                if isinstance(content, str):
-                    if ("str", content) in current_system_contents:
-                        continue
-                elif isinstance(content, list):
-                    try:
-                        if (
-                            "list",
-                            tuple(str(p) for p in content),
-                        ) in current_system_contents:
-                            continue
-                    except (TypeError, ValueError):
-                        pass
-            filtered_history.append(m)
-        history = filtered_history
 
+def build_conversation_messages(
+    conv: Conversation, current_messages: list[dict]
+) -> list[dict]:
+    """Build full conversation history by interleaving turn messages and assistant responses."""
+    history = _build_history_from_turns(conv)
+    current_system = _extract_system_contents(current_messages)
+    history = _deduplicate_system_prompts(history, current_system)
     history.extend(current_messages)
     return history
 

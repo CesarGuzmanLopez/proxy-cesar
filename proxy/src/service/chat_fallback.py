@@ -52,6 +52,36 @@ __all__ = [
 # ── Helpers used by _try_physical_model ─────────────────────────────────────
 
 
+_REASONING_MAP = {
+    "low": (2048, "low"),
+    "medium": (8192, "medium"),
+    "high": (16000, "high"),
+    "xhigh": (32000, "high"),
+    "max": (64000, "high"),
+}
+
+
+def _map_bool_thinking(thinking: bool, provider_lower: str) -> tuple[dict | None, str | None]:
+    if not thinking:
+        return ({"type": "disabled"}, None) if provider_lower == "anthropic" else (None, None)
+    return ({"type": "enabled"}, None) if provider_lower == "anthropic" else (None, None)
+
+
+def _map_str_thinking(tl: str, provider_lower: str) -> tuple[dict | None, str | None]:
+    if tl in ("disabled",):
+        return ({"type": "disabled"}, None) if provider_lower == "anthropic" else (None, None)
+    if tl in ("auto",):
+        return None, None
+    if tl in ("enabled",):
+        return ({"type": "enabled"}, None) if provider_lower == "anthropic" else (None, None)
+    budget, effort = _REASONING_MAP.get(tl, (None, None))
+    if provider_lower == "anthropic" and budget is not None:
+        return {"type": "enabled", "budget_tokens": budget}, None
+    if provider_lower == "openai" and effort is not None:
+        return None, effort
+    return ({"type": "enabled"}, None) if provider_lower == "anthropic" else (None, None)
+
+
 def _normalise_reasoning_param(
     thinking: dict | str | bool | None,
     provider: str,
@@ -62,79 +92,20 @@ def _normalise_reasoning_param(
       - Anthropic → ``(thinking_dict, None)``  (``thinking`` dict with budget_tokens)
       - OpenAI   → ``(None, reasoning_effort_string)``  (``reasoning_effort`` param)
       - Others   → ``(None, None)``  (auto — provider decides)
-
-    Accepts ``thinking`` in these forms:
-      - ``None`` → auto
-      - ``True`` / ``"enabled"`` → enabled with provider default budget
-      - ``False`` / ``"disabled"`` → auto (disabled = don't send)
-      - ``"low"``, ``"medium"``, ``"high"``, ``"xhigh"``, ``"max"`` → effort mapped per provider
-      - ``"auto"`` → auto
-      - ``{"type": ..., "budget_tokens": N}`` → passthrough for Anthropic, auto for others
     """
-    _EFFORT_TO_BUDGET = {
-        "low": 2048,
-        "medium": 8192,
-        "high": 16000,
-        "xhigh": 32000,
-        "max": 64000,
-    }
-    # Map extended effort strings (xhigh, max) to max OpenAI tier
-    _EFFORT_TO_REASONING = {
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "high",
-        "max": "high",
-    }
-
-    provider_lower = provider.lower() if provider else ""
-    is_anthropic = provider_lower == "anthropic"
-    is_openai = provider_lower == "openai"
-
     if thinking is None:
         return None, None
 
+    provider_lower = provider.lower() if provider else ""
+
     if isinstance(thinking, bool):
-        if not thinking:
-            # Explicit disabled: Anthropic gets {"type": "disabled"}
-            if is_anthropic:
-                return {"type": "disabled"}, None
-            return None, None  # other providers → auto
-        # True / enabled
-        if is_anthropic:
-            return {"type": "enabled"}, None
-        return None, None  # non-Anthropic → auto (no budget param to send)
+        return _map_bool_thinking(thinking, provider_lower)
 
     if isinstance(thinking, str):
-        tl = thinking.lower()
-        if tl == "disabled":
-            if is_anthropic:
-                return {"type": "disabled"}, None
-            return None, None
-        if tl in ("auto",):
-            return None, None
-        if tl == "enabled":
-            if is_anthropic:
-                return {"type": "enabled"}, None
-            return None, None
-        # Effort string
-        if is_anthropic:
-            budget = _EFFORT_TO_BUDGET.get(tl)
-            if budget is not None:
-                return {"type": "enabled", "budget_tokens": budget}, None
-            return {"type": "enabled"}, None  # unknown string → enabled, no budget
-        if is_openai:
-            effort = _EFFORT_TO_REASONING.get(tl)
-            if effort is not None:
-                return None, effort
-            return None, None  # unknown string → auto
-        return None, None  # other providers → auto
+        return _map_str_thinking(thinking.lower(), provider_lower)
 
-    # Dict passthrough
     if isinstance(thinking, dict):
-        if is_anthropic:
-            return thinking, None
-        return None, None  # non-Anthropic → auto
+        return (thinking, None) if provider_lower == "anthropic" else (None, None)
 
     return None, None
 
@@ -212,29 +183,13 @@ async def _try_physical_model(
     api_base = phys.api_base or None
     api_key = _resolve_api_key(phys)
 
-    # Strip reasoning_content for DeepSeek — it rejects messages containing
-    # reasoning from other models. Other models (kimi, qwen, etc.) accept it.
     if "deepseek" in model_prefix or "deepseek" in provider:
         for msg in call_messages:
             if msg.get("role") == "assistant" and "reasoning_content" in msg:
                 del msg["reasoning_content"]
 
-    logger.info(
-        "llm_try_phys | trace=%s model=%s api_base=%s api_key=%s messages=%d has_reasoning=%s",
-        _trace_id,
-        phys.model,
-        api_base or "(default)",
-        "yes" if api_key else "no",
-        len(call_messages),
-        any("reasoning_content" in (m or {}) for m in ordered_messages),
-    )
-
     raw_thinking = kwargs.get("thinking", None)
 
-    # Determine reasoning capability from model prefix + provider.
-    # Only actual OpenAI o-series models (o1, o3, o4-mini, etc.) support
-    # reasoning_effort. Models with openai/ prefix that are NOT actual
-    # OpenAI models (e.g. kimi-k2.5, qwen3.6-plus) get auto.
     supports_anthropic = model_prefix == "anthropic" or provider == "anthropic"
     is_openai_reasoning_model = bool(
         re.search(r"/(?:o[1-9]\d*|o4-mini|o1-mini)\b", phys.model)
@@ -259,15 +214,12 @@ async def _try_physical_model(
     )
 
     call_kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    call_kwargs.pop(
-        "thinking", None
-    )  # Remove raw — replaced by formatted version below
+    call_kwargs.pop("thinking", None)
 
     if supports_anthropic and thinking_dict is not None:
         call_kwargs["thinking"] = thinking_dict
     elif supports_reasoning_effort and reasoning_effort is not None:
         call_kwargs["reasoning_effort"] = reasoning_effort
-    # else: auto — no param sent, provider decides
 
     response = await call_litellm(
         model=phys.model,
@@ -375,6 +327,167 @@ def _build_all_models_failed_error(
     )
 
 
+# ── Fallback orchestrator helpers ────────────────────────────────────────────
+
+
+def _prepare_messages(
+    messages: list[dict],
+    kwargs: dict,
+    _trace_id: str,
+) -> tuple[list[dict], dict, str]:
+    """Canonicalize message order, compute hash, and sort tools."""
+    ordered_messages = canonicalize_message_order(messages)
+    raw_tools = kwargs.get("tools")
+    _msg_hash = stable_message_hash(ordered_messages)
+    logger.debug(
+        "message_integrity | trace=%s hash=%s system=%s tools=%s msgs=%d",
+        _trace_id,
+        _msg_hash,
+        any(m.get("role") == "system" for m in ordered_messages),
+        bool(raw_tools),
+        len(ordered_messages),
+    )
+    if raw_tools:
+        sorted_tools = sort_tool_definitions(raw_tools)
+        kwargs["tools"] = sorted_tools
+        first_name = sorted_tools[0].get("function", {}).get("name", "?")
+        logger.debug(
+            "tools_sorted | trace=%s count=%d first=%s",
+            _trace_id,
+            len(sorted_tools),
+            first_name,
+        )
+    return ordered_messages, kwargs, _msg_hash
+
+
+def _handle_length_continuation(
+    response,
+    phys: PhysicalModelSchema,
+    ordered_messages: list[dict],
+    accumulated_parts: list[tuple[str, str]],
+    fallback_info: FallbackInfo,
+    pseudo_model_schema,
+    idx: int,
+    _trace_id: str,
+) -> bool:
+    """Check if response hit token limit and should continue with next model.
+
+    Returns True if continuation was triggered (caller should skip to next model).
+    """
+    last_model = idx >= len(pseudo_model_schema.physical_models) - 1
+    if not getattr(pseudo_model_schema, "continue_on_length", False) or last_model:
+        return False
+
+    try:
+        finish_reason = response.choices[0].finish_reason
+        if finish_reason != "length":
+            return False
+
+        partial = response.choices[0].message.content or ""
+        accumulated_parts.append((phys.model, partial))
+        fallback_info.applied = True
+        fallback_info.reason = f"token_limit_continued: {phys.model}"
+        fallback_info.attempted_models[-1] = f"{phys.model} (token_limit)"
+        ordered_messages.append({"role": "assistant", "content": partial})
+        logger.info(
+            "llm_token_limit | trace=%s model=%s "
+            "content_len=%d models_remaining=%d",
+            _trace_id,
+            phys.model,
+            len(partial),
+            len(pseudo_model_schema.physical_models) - idx - 1,
+        )
+        return True
+    except (AttributeError, IndexError) as e:
+        logger.warning("tool_call_extraction_error error=%s", str(e))
+        return False
+
+
+def _build_composite_response(
+    accumulated_parts: list[tuple[str, str]],
+    response,
+    _est_input: int,
+    _trace_id: str,
+) -> dict:
+    """Build a composite response dict from accumulated partial responses."""
+    try:
+        final_content = response.choices[0].message.content or ""
+        finish_reason = response.choices[0].finish_reason
+    except (AttributeError, IndexError):
+        final_content = ""
+        finish_reason = "stop"
+
+    accumulated_parts.append((
+        getattr(response, "model", "unknown"),
+        final_content,
+    ))
+    composite_text = "".join(c for _, c in accumulated_parts)
+
+    response_dict = {
+        "id": getattr(response, "id", f"chatcmpl-{_trace_id}"),
+        "object": "chat.completion",
+        "model": getattr(response, "model", "unknown"),
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": composite_text},
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": _est_input,
+            "completion_tokens": len(composite_text),
+        },
+    }
+    prov_h = getattr(response, "_provider_response_headers", None)
+    if prov_h:
+        response_dict["provider_headers"] = prov_h
+    return response_dict
+
+
+def _build_accumulated_only_response(
+    accumulated_parts: list[tuple[str, str]],
+    _est_input: int,
+    _trace_id: str,
+) -> dict:
+    """Build composite response when all models were exhausted."""
+    composite_text = "".join(c for _, c in accumulated_parts)
+    last_model_name = accumulated_parts[-1][0]
+    return {
+        "id": f"chatcmpl-{_trace_id}",
+        "object": "chat.completion",
+        "model": last_model_name,
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": composite_text},
+                "finish_reason": "length",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": _est_input,
+            "completion_tokens": len(composite_text),
+        },
+    }
+
+
+async def _record_fallback_metric(
+    smart_fallback: SmartFallback | None,
+    conversation_id: str | None,
+    model: str,
+    elapsed: float,
+    success: bool,
+    error: str | None = None,
+) -> None:
+    """Record success/failure metric with SmartFallback."""
+    if smart_fallback and conversation_id:
+        await smart_fallback.record_call(
+            conversation_id,
+            model,
+            elapsed_ms=int(elapsed * 1000),
+            success=success,
+            error=error,
+        )
+
+
 # ── Main fallback orchestrator ───────────────────────────────────────────────
 
 
@@ -413,7 +526,6 @@ async def call_with_fallback(
     _trace_id = str(uuid.uuid4())[:8]
     _start = time.monotonic()
 
-    # FASE 2: Initialize SmartFallback if valkey available
     smart_fallback: SmartFallback | None = None
     if valkey_client and conversation_id:
         smart_fallback = SmartFallback(valkey_client)
@@ -439,28 +551,7 @@ async def call_with_fallback(
     )
     _context_skipped: list[str] = []
 
-    ordered_messages = canonicalize_message_order(messages)
-    raw_tools = kwargs.get("tools")
-    _msg_hash = stable_message_hash(ordered_messages)
-    logger.debug(
-        "message_integrity | trace=%s hash=%s system=%s tools=%s msgs=%d",
-        _trace_id,
-        _msg_hash,
-        any(m.get("role") == "system" for m in ordered_messages),
-        bool(raw_tools),
-        len(ordered_messages),
-    )
-    if raw_tools:
-        sorted_tools = sort_tool_definitions(raw_tools)
-        kwargs["tools"] = sorted_tools
-        first_name = sorted_tools[0].get("function", {}).get("name", "?")
-        logger.debug(
-            "tools_sorted | trace=%s count=%d first=%s",
-            _trace_id,
-            len(sorted_tools),
-            first_name,
-        )
-
+    ordered_messages, kwargs, _ = _prepare_messages(messages, kwargs, _trace_id)
     accumulated_parts: list[tuple[str, str]] = []
 
     for idx, phys in enumerate(pseudo_model_schema.physical_models):
@@ -483,80 +574,22 @@ async def call_with_fallback(
 
             fallback_info.attempted_models.append(phys.model)
 
-            last_model = idx >= len(pseudo_model_schema.physical_models) - 1
-            if (
-                not stream
-                and not last_model
-                and getattr(pseudo_model_schema, "continue_on_length", False)
+            if _handle_length_continuation(
+                response, phys, ordered_messages, accumulated_parts,
+                fallback_info, pseudo_model_schema, idx, _trace_id
             ):
-                try:
-                    finish_reason = response.choices[0].finish_reason
-                    if finish_reason == "length":
-                        partial = response.choices[0].message.content or ""
-                        accumulated_parts.append((phys.model, partial))
-                        fallback_info.applied = True
-                        fallback_info.reason = f"token_limit_continued: {phys.model}"
-                        fallback_info.attempted_models[-1] = (
-                            f"{phys.model} (token_limit)"
-                        )
-                        ordered_messages.append(
-                            {"role": "assistant", "content": partial}
-                        )
-                        _est_input = estimate_tokens(ordered_messages)
-                        logger.info(
-                            "llm_token_limit | trace=%s model=%s "
-                            "content_len=%d models_remaining=%d",
-                            _trace_id,
-                            phys.model,
-                            len(partial),
-                            len(pseudo_model_schema.physical_models) - idx - 1,
-                        )
-                        continue
-                except (AttributeError, IndexError) as e:
-                    logger.warning("tool_call_extraction_error error=%s", str(e))
+                _est_input = estimate_tokens(ordered_messages)
+                continue
 
             if accumulated_parts:
-                try:
-                    final_content = response.choices[0].message.content or ""
-                    finish_reason = response.choices[0].finish_reason
-                except (AttributeError, IndexError):
-                    final_content = ""
-                    finish_reason = "stop"
-                accumulated_parts.append((phys.model, final_content))
-
-                composite_text = "".join(c for _, c in accumulated_parts)
-                response_dict = {
-                    "id": getattr(response, "id", f"chatcmpl-{_trace_id}"),
-                    "object": "chat.completion",
-                    "model": getattr(response, "model", phys.model),
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": composite_text,
-                            },
-                            "finish_reason": finish_reason,
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": _est_input,
-                        "completion_tokens": len(composite_text),
-                    },
-                }
-                prov_h = getattr(response, "_provider_response_headers", None)
-                if prov_h:
-                    response_dict["provider_headers"] = prov_h
-                response = response_dict
+                response = _build_composite_response(
+                    accumulated_parts, response, _est_input, _trace_id
+                )
 
             elapsed = time.monotonic() - _start
-            # FASE 2: Record successful call
-            if smart_fallback and conversation_id:
-                await smart_fallback.record_call(
-                    conversation_id,
-                    phys.model,
-                    elapsed_ms=int(elapsed * 1000),
-                    success=True,
-                )
+            await _record_fallback_metric(
+                smart_fallback, conversation_id, phys.model, elapsed, success=True
+            )
             _log_model_call_result(response, phys, stream, _trace_id, elapsed)
             return response, fallback_info
 
@@ -566,21 +599,15 @@ async def call_with_fallback(
             fallback_info.applied = True
             fallback_info.reason = f"{type(e).__name__}: {phys.model}"
             elapsed = time.monotonic() - _start
-            # FASE 2: Record failed call
-            if smart_fallback and conversation_id:
-                await smart_fallback.record_call(
-                    conversation_id,
-                    phys.model,
-                    elapsed_ms=int(elapsed * 1000),
-                    success=False,
-                    error=str(e)[:100],
-                )
+            await _record_fallback_metric(
+                smart_fallback, conversation_id, phys.model, elapsed,
+                success=False, error=str(e)[:100]
+            )
             logger.warning(
-                "llm_fallback | trace=%s model=%s error=%s detail=%s elapsed=%.1fs",
+                "llm_fallback | trace=%s model=%s error=%s elapsed=%.1fs",
                 _trace_id,
                 phys.model,
                 type(e).__name__,
-                str(e)[:200],
                 elapsed,
             )
             continue
@@ -588,28 +615,14 @@ async def call_with_fallback(
     elapsed = time.monotonic() - _start
 
     if accumulated_parts:
-        composite_text = "".join(c for _, c in accumulated_parts)
-        last_model_name = accumulated_parts[-1][0]
-        response_dict = {
-            "id": f"chatcmpl-{_trace_id}",
-            "object": "chat.completion",
-            "model": last_model_name,
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": composite_text},
-                    "finish_reason": "length",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": _est_input,
-                "completion_tokens": len(composite_text),
-            },
-        }
+        response_dict = _build_accumulated_only_response(
+            accumulated_parts, _est_input, _trace_id
+        )
         logger.info(
             "llm_accumulated_return | trace=%s models=%d total_len=%d finish=length",
             _trace_id,
             len(accumulated_parts),
-            len(composite_text),
+            len(response_dict["choices"][0]["message"]["content"]),
         )
         return response_dict, fallback_info
 

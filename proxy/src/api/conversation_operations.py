@@ -171,7 +171,7 @@ async def degrade_images(
         if not vision_model:
             vision_model = "groq/meta-llama/llama-4-scout-17b-16e-instruct"
 
-        described, desc_meta = await auto_describe_images(
+        _, desc_meta = await auto_describe_images(
             all_messages,
             vision_model,
             api_base=api_base,

@@ -211,7 +211,7 @@ async def process_chat_request(
     # Step 12: Check input threshold
     est_input = estimate_tokens(messages_for_llm)
     threshold_check = _check_input_threshold(
-        est_input, pm_schema, pseudo_model_name, config
+        est_input, pm_schema, pseudo_model_name
     )
     match threshold_check:
         case Err(error=err):
@@ -284,67 +284,19 @@ async def process_chat_request(
     _t_llm_elapsed = time.monotonic() - _t_llm_start
 
     # Log: LLM response inbound
-    try:
-        finish_reason = None
-        input_tokens = 0
-        output_tokens = 0
-        if hasattr(response, "choices") and response.choices:
-            finish_reason = getattr(response.choices[0], "finish_reason", None)
-        if hasattr(response, "usage"):
-            input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-            output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
-        if trace:
-            trace.llm_in(
-                physical_model=physical_model,
-                finish_reason=finish_reason,
-                input_tokens=int(input_tokens),
-                output_tokens=int(output_tokens),
-            )
-    except Exception as exc:
-        # If logging fails, continue anyway
-        logger.debug("llm_response_parsing_error err=%s", exc)
+    _log_llm_response(response, physical_model, trace, _req_id)
 
     # Sprint 11: Update physical_model from actual response when fallback occurred.
-    # FASE 1: Record failure if pinned model failed
-    if fallback_info.applied and existing_affinity:
-        await affinity.record_failure(
-            conv_id,
-            existing_affinity,
-            error=fallback_info.reason or "fallback_applied",
-        )
-
-    if fallback_info.applied:
-        actual_model: str | None = None
-        if hasattr(response, "model"):
-            actual_model = response.model
-        elif isinstance(response, dict):
-            actual_model = response.get("model")
-        if actual_model:
-            logger.debug(
-                "physical_model_update | trace=%s old=%s new=%s",
-                _req_id,
-                physical_model,
-                actual_model,
-            )
-            physical_model = actual_model
-            provider = (
-                physical_model.split("/")[0] if "/" in physical_model else provider
-            )
-        elif fallback_info.attempted_models:
-            last_model = fallback_info.attempted_models[-1]
-            if "(" not in last_model:
-                logger.debug(
-                    "physical_model_update (fallback) | trace=%s old=%s new=%s",
-                    _req_id,
-                    physical_model,
-                    last_model,
-                )
-                physical_model = last_model
-                provider = (
-                    physical_model.split("/")[0] if "/" in physical_model else provider
-                )
-
-    await affinity.set(conv_id, physical_model)
+    physical_model, provider = await _update_physical_model(
+        response,
+        fallback_info,
+        existing_affinity,
+        physical_model,
+        provider,
+        affinity,
+        conv_id,
+        _req_id,
+    )
 
     _elapsed = time.monotonic() - _t0
     logger.info(
@@ -360,25 +312,11 @@ async def process_chat_request(
         _elapsed,
     )
 
-    images_described = 0
-    images_described_by: str | None = None
-    if auto_describe_meta:
-        images_described = auto_describe_meta.get("images_described", 0)
-        images_described_by = auto_describe_meta.get("described_by")
+    images_described = auto_describe_meta.get("images_described", 0) if auto_describe_meta else 0
+    images_described_by = auto_describe_meta.get("described_by") if auto_describe_meta else None
 
     try:
-        # Build compatibility info for response metadata
-        compatibility_info = {}
-        if turn_caps.has_images and not any(
-            m.vision for m in pm_schema.physical_models
-        ):
-            compatibility_info["images_delegated"] = True
-        if turn_caps.has_audio and not any(
-            m.audio for m in pm_schema.physical_models
-        ):
-            compatibility_info["audio_delegated"] = True
-        if turn_caps.has_pdf and not any(m.vision for m in pm_schema.physical_models):
-            compatibility_info["pdf_delegated"] = True
+        compatibility_info = _build_compatibility_info(turn_caps, pm_schema)
 
         return await _save_and_return(
             SaveContext(
@@ -415,6 +353,93 @@ async def process_chat_request(
             conv_id[:12],
         )
         raise
+
+
+def _log_llm_response(
+    response, physical_model: str, trace: PipelineTrace | None, _req_id: str
+) -> None:
+    """Extract tokens/finish_reason from response and log via PipelineTrace."""
+    try:
+        finish_reason = None
+        input_tokens = 0
+        output_tokens = 0
+        if hasattr(response, "choices") and response.choices:
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if hasattr(response, "usage"):
+            input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
+            output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+        if trace:
+            trace.llm_in(
+                physical_model=physical_model,
+                finish_reason=finish_reason,
+                input_tokens=int(input_tokens),
+                output_tokens=int(output_tokens),
+            )
+    except Exception as exc:
+        logger.debug("llm_response_parsing_error err=%s", exc)
+
+
+async def _update_physical_model(
+    response,
+    fallback_info: FallbackInfo,
+    existing_affinity: str | None,
+    physical_model: str,
+    provider: str,
+    affinity: AffinityPort,
+    conv_id: str,
+    _req_id: str,
+) -> tuple[str, str]:
+    """Update physical_model from actual response when fallback occurred."""
+    if fallback_info.applied and existing_affinity:
+        await affinity.record_failure(
+            conv_id,
+            existing_affinity,
+            error=fallback_info.reason or "fallback_applied",
+        )
+
+    if fallback_info.applied:
+        actual_model: str | None = None
+        if hasattr(response, "model"):
+            actual_model = response.model
+        elif isinstance(response, dict):
+            actual_model = response.get("model")
+        if actual_model:
+            logger.debug(
+                "physical_model_update | trace=%s old=%s new=%s",
+                _req_id,
+                physical_model,
+                actual_model,
+            )
+            physical_model = actual_model
+            provider = physical_model.split("/")[0] if "/" in physical_model else provider
+        elif fallback_info.attempted_models:
+            last_model = fallback_info.attempted_models[-1]
+            if "(" not in last_model:
+                logger.debug(
+                    "physical_model_update (fallback) | trace=%s old=%s new=%s",
+                    _req_id,
+                    physical_model,
+                    last_model,
+                )
+                physical_model = last_model
+                provider = physical_model.split("/")[0] if "/" in physical_model else provider
+
+    await affinity.set(conv_id, physical_model)
+    return physical_model, provider
+
+
+def _build_compatibility_info(
+    turn_caps: TurnCapabilities, pm_schema: object
+) -> dict:
+    """Build compatibility info for response metadata."""
+    info: dict = {}
+    if turn_caps.has_images and not any(m.vision for m in pm_schema.physical_models):
+        info["images_delegated"] = True
+    if turn_caps.has_audio and not any(m.audio for m in pm_schema.physical_models):
+        info["audio_delegated"] = True
+    if turn_caps.has_pdf and not any(m.vision for m in pm_schema.physical_models):
+        info["pdf_delegated"] = True
+    return info
 
 
 # ── Step helpers ──────────────────────────────────────────────────────────────
@@ -531,7 +556,6 @@ def _check_input_threshold(
     estimated_input: int,
     pm_schema: PseudoModelSchema,
     pseudo_model_name: str,
-    config: ProxyConfigSchema,
 ) -> Result[None, InputExceedsThreshold]:
     """Step 12: Check if input exceeds threshold.
 

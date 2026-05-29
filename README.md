@@ -92,6 +92,8 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 ## Variables de Entorno
 
 | Variable | Default | Descripción |
+|---|---|---|
+| Variable | Default | Descripción |
 |---|---|---|---|
 | `PROXY_PORT` | `9110` | Puerto |
 | `PROXY_API_KEY` | — | Bearer token (vacío = dev mode; **requerido en producción**) |
@@ -105,27 +107,11 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 
 ## Arquitectura Clave
 
-### Integración con OpenCode Go
-
-OpenCode Go expone dos endpoints. La asignación de modelos a endpoint es fija según la [documentación oficial](https://opencode.ai/docs/go/#endpoints):
-
-| Endpoint | Modelos |
-|----------|---------|
-| `https://opencode.ai/zen/go/v1/chat/completions` (OpenAI) | kimi-k2.5, kimi-k2.6, mimo-v2.5-pro, deepseek-v4-pro, deepseek-v4-flash, glm-5.1 |
-| `https://opencode.ai/zen/go/v1/messages` (Anthropic) | qwen3.7-max, qwen3.6-plus, qwen3.5-plus, minimax-m2.7 |
-
-Los modelos Qwen y MiniMax requieren el endpoint Anthropic (`/v1/messages`). Enviarlos al endpoint OpenAI (`/v1/chat/completions`) resulta en error del proveedor (400/401). No es intercambiable.
-
-**Model naming:** La API lista los modelos sin prefijo (`kimi-k2.6`, no `openai/kimi-k2.6`). El proxy usa el prefijo `openai/` o `anthropic/` para que liteLLM seleccione el adaptador correcto; liteLLM lo elimina automáticamente antes de enviar la request ([referencia](https://docs.litellm.ai/docs/providers/openai_compatible)):
-```
-openai/kimi-k2.5    →  liteLLM usa adapter OpenAI    →  envía kimi-k2.5    ✅
-anthropic/qwen3.7-max →  liteLLM usa adapter Anthropic →  envía qwen3.7-max ✅
-anthropic/qwen3.6-plus → liteLLM usa adapter Anthropic →  envía qwen3.6-plus ✅
-```
-
-**Razonamiento multi-proveedor:** El proxy acepta el parámetro `thinking` del cliente y lo traduce al formato que cada proveedor entiende (`budget_tokens` para Anthropic, `reasoning_effort` para OpenAI, auto para otros).
-
-**`reasoning_content` entre modelos:** Cuando hay fallback entre modelos de distintos proveedores, el `reasoning_content` (trazas de razonamiento interno) generado por un modelo es rechazado por otros (DeepSeek lanza `BadRequestError: "The reasoning_content in the thinking mode must be passed back to the API."`). El proxy solo strippe `reasoning_content` cuando el destino es un modelo DeepSeek. Para el resto de los modelos (kimi, qwen, mimo, etc.), el razonamiento se conserva intacto porque el sistema de afinidad (affinity) asegura que el mismo modelo maneje toda la conversación en el flujo normal.
+**Dos endpoints de OpenCode Go:**
+- `openai/` → `https://opencode.ai/zen/go/v1` (OpenAI-compat, 9 modelos)
+  - Usa `reasoning_effort` (low/medium/high) para control de esfuerzo
+- `anthropic/` → `https://opencode.ai/zen/go` (Anthropic-compat, solo `qwen3.7-max`)
+  - Usa `thinking` dict con `budget_tokens` para control de esfuerzo
 
 **Esfuerzo de razonamiento multi-proveedor:** El proxy acepta el parámetro `thinking` del cliente y lo traduce al formato que cada proveedor entiende (`budget_tokens` para Anthropic, `reasoning_effort` para OpenAI, auto para otros). Ver `proxy/README.md`.
 

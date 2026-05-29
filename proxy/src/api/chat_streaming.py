@@ -649,48 +649,13 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                         if tc_deltas:
                             for tcd in tc_deltas:
                                 try:
-                                    # Extract index safely (default to 0)
-                                    idx = getattr(tcd, "index", None)
-                                    if idx is None:
-                                        idx = 0
-
-                                    # Initialize tool_calls_by_index entry if needed
-                                    if idx not in tool_calls_by_index:
-                                        tool_calls_by_index[idx] = {
-                                            "id": getattr(tcd, "id", "") or "",
-                                            "type": "function",
-                                            "function": {
-                                                "name": "",
-                                                "arguments_parts": [],
-                                            },
-                                        }
-
-                                    entry = tool_calls_by_index[idx]
-
-                                    # Update id if present
-                                    tc_id = getattr(tcd, "id", None)
-                                    if tc_id:
-                                        entry["id"] = tc_id
-
-                                    # Extract and accumulate function details
-                                    func = getattr(tcd, "function", None)
-                                    if func:
-                                        func_name = getattr(func, "name", None)
-                                        if func_name:
-                                            entry["function"]["name"] += func_name
-
-                                        func_args = getattr(func, "arguments", None)
-                                        if func_args:
-                                            entry["function"]["arguments_parts"].append(
-                                                func_args
-                                            )
+                                    _accumulate_tool_call_delta(tcd, tool_calls_by_index)
                                 except Exception as e:
                                     logger.warning(
                                         "stream_tool_call_delta_error conv=%s | error=%s",
                                         ctx.conversation_id[:12],
                                         str(e),
                                     )
-                                    # Continue processing other tool_calls
                                     continue
 
                     if not _first_chunk_logged:
@@ -937,6 +902,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
         conv = ctx.conv
         match persist_result:
             case Ok(value=(db, conv, session_caps)):
+                # Persistence succeeded, use returned values
                 pass
             case Err(error=error):
                 logger.error(
@@ -1037,6 +1003,29 @@ def _map_stream_domain_error(error_msg: str) -> tuple[int, dict]:
     if error_msg.startswith("ParallelToolsNotSupported:"):
         return 400, _openai_error_detail("Parallel tool calls are not supported by any physical model.", "unsupported_parameters")
     return 502, _openai_error_detail(str(error_msg), "server_error")
+
+
+def _accumulate_tool_call_delta(tcd, tool_calls_by_index: dict[int, dict]) -> None:
+    """Accumulate a single tool_call delta into the running index map."""
+    idx = getattr(tcd, "index", None) or 0
+    if idx not in tool_calls_by_index:
+        tool_calls_by_index[idx] = {
+            "id": getattr(tcd, "id", "") or "",
+            "type": "function",
+            "function": {"name": "", "arguments_parts": []},
+        }
+    entry = tool_calls_by_index[idx]
+    tc_id = getattr(tcd, "id", None)
+    if tc_id:
+        entry["id"] = tc_id
+    func = getattr(tcd, "function", None)
+    if func:
+        func_name = getattr(func, "name", None)
+        if func_name:
+            entry["function"]["name"] += func_name
+        func_args = getattr(func, "arguments", None)
+        if func_args:
+            entry["function"]["arguments_parts"].append(func_args)
 
 
 def _openai_error_detail(message: str, code: str) -> dict:

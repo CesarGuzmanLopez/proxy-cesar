@@ -227,33 +227,27 @@ async def _persist_stream_turn(
         )
 
 
-def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
-    """Extract input/output tokens and response dict from collected chunks.
-
-    Reconstructs a non-streaming response dict by iterating ALL chunks:
-    concatenates content deltas, assembles tool_calls with partial arguments,
-    and captures usage + finish_reason.
-    """
-    input_tokens = 0
-    output_tokens = 0
-
+def _extract_usage(chunks: list) -> tuple[int, int]:
+    """Extract prompt/completion tokens from the last chunk."""
     if not chunks:
-        return 0, 0, {}
-
-    last_chunk = chunks[-1]
-
-    # Extract usage from the last chunk
+        return 0, 0
+    last = chunks[-1]
     try:
-        usage = getattr(last_chunk, "usage", None)
+        usage = getattr(last, "usage", None)
         if usage is not None:
             pt = getattr(usage, "prompt_tokens", 0)
             ct = getattr(usage, "completion_tokens", 0)
-            input_tokens = int(pt) if isinstance(pt, (int, float)) else 0
-            output_tokens = int(ct) if isinstance(ct, (int, float)) else 0
+            return (
+                int(pt) if isinstance(pt, (int, float)) else 0,
+                int(ct) if isinstance(ct, (int, float)) else 0,
+            )
     except (TypeError, ValueError):
         pass
+    return 0, 0
 
-    # Reconstruct content, reasoning_content, and tool_calls from ALL chunks
+
+def _extract_message_and_metadata(chunks: list) -> tuple[dict, str | None, int | None, str | None, str | None]:
+    """Reconstruct message, tool_calls, finish_reason and metadata from ALL chunks."""
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
     tool_calls_map: dict[int, dict[str, object]] = {}
@@ -286,14 +280,11 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
                 if isinstance(reasoning_val, str) and reasoning_val:
                     reasoning_parts.append(reasoning_val)
 
-                # Tool calls: extract with defensive handling
                 tc_deltas = getattr(delta, "tool_calls", None)
                 if tc_deltas:
                     for tc in tc_deltas:
                         try:
-                            idx = getattr(tc, "index", None)
-                            if idx is None:
-                                idx = 0
+                            idx = getattr(tc, "index", None) or 0
                             if idx not in tool_calls_map:
                                 tool_calls_map[idx] = {
                                     "id": None,
@@ -310,9 +301,7 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
                                     tool_calls_map[idx]["function"]["name"] = func_name
                                 func_args = getattr(func, "arguments", None)
                                 if func_args and isinstance(func_args, str):
-                                    tool_calls_map[idx]["function"]["arguments"] += (
-                                        func_args
-                                    )
+                                    tool_calls_map[idx]["function"]["arguments"] += func_args
                         except Exception as e:
                             logger.warning(
                                 "extract_tool_delta_error | idx=%s error=%s",
@@ -334,22 +323,51 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
     for idx in sorted(tool_calls_map.keys()):
         tc = tool_calls_map[idx]
         if tc["id"] and tc["function"]["name"]:
-            tool_calls_list.append(
-                {
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {
-                        "name": tc["function"]["name"],
-                        "arguments": tc["function"]["arguments"],
-                    },
-                }
-            )
+            tool_calls_list.append({
+                "id": tc["id"],
+                "type": "function",
+                "function": {
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"]["arguments"],
+                },
+            })
 
     message: dict[str, object] = {"role": "assistant", "content": content}
     if reasoning_content:
         message["reasoning_content"] = reasoning_content
     if tool_calls_list:
         message["tool_calls"] = tool_calls_list
+
+    return message, response_id, response_created, response_model, finish_reason
+
+
+def _extract_usage_dict(chunks: list) -> dict[str, object] | None:
+    """Extract usage dict from the last chunk."""
+    if not chunks:
+        return None
+    last = chunks[-1]
+    try:
+        usage = getattr(last, "usage", None)
+        if usage is not None:
+            result: dict[str, object] = {}
+            for attr in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                val = getattr(usage, attr, None)
+                if val is not None:
+                    result[attr] = int(val) if isinstance(val, (int, float)) else val
+            return result
+    except Exception:
+        pass
+    return None
+
+
+def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
+    """Extract input/output tokens and response dict from collected chunks."""
+    if not chunks:
+        return 0, 0, {}
+
+    input_tokens, output_tokens = _extract_usage(chunks)
+    message, response_id, response_created, response_model, finish_reason = _extract_message_and_metadata(chunks)
+    usage_dict = _extract_usage_dict(chunks)
 
     response_dict: dict[str, object] = {}
     if response_id:
@@ -360,27 +378,10 @@ def _extract_tokens_from_chunks(chunks: list) -> tuple[int, int, dict]:
         response_dict["model"] = response_model
     response_dict["object"] = "chat.completion"
     response_dict["choices"] = [
-        {
-            "message": message,
-            "finish_reason": finish_reason or "stop",
-        }
+        {"message": message, "finish_reason": finish_reason or "stop"}
     ]
-
-    # Attach usage dict from the last chunk
-    try:
-        usage = getattr(last_chunk, "usage", None)
-        if usage is not None:
-            usage_dict: dict[str, object] = {}
-            for attr in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                val = getattr(usage, attr, None)
-                if val is not None:
-                    usage_dict[attr] = (
-                        int(val) if isinstance(val, (int, float)) else val
-                    )
-            if usage_dict:
-                response_dict["usage"] = usage_dict
-    except Exception:
-        pass
+    if usage_dict:
+        response_dict["usage"] = usage_dict
 
     return input_tokens, output_tokens, response_dict
 

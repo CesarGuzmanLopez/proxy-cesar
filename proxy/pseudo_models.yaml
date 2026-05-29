@@ -51,15 +51,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/qwen3.6-plus
-        api_base: https://opencode.ai/zen/go
+        model: openai/qwen3.6-plus
+        api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go primary: Qwen3.6 Plus (Anthropic endpoint). Razonamiento ligero (~16.300 req/mes)."
+        note: "Go primary: Qwen3.6 Plus. Razonamiento ligero (~16.300 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -253,15 +253,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/minimax-m2.7
-        api_base: https://opencode.ai/zen/go
+        model: openai/minimax-m2.7
+        api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 196608
-        note: "Go primary: MiniMax M2.7 (192K, Anthropic endpoint). Velocidad extrema (~17.000 req/mes)."
+        note: "Go primary: MiniMax M2.7 (192K contexto). Velocidad extrema (~17.000 req/mes)."
       - provider: groq
         model: groq/openai/gpt-oss-20b
         context_window: 131072
@@ -284,15 +284,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/qwen3.5-plus
-        api_base: https://opencode.ai/zen/go
+        model: openai/qwen3.5-plus
+        api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go primary: Qwen3.5 Plus (Anthropic endpoint). El más barato de Go (~50.500 req/mes)."
+        note: "Go primary: Qwen3.5 Plus. El más barato de Go (~50.500 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true

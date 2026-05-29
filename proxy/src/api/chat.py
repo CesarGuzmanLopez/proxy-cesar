@@ -391,7 +391,7 @@ async def _handle_non_streaming(
 
     # Log full response for debugging
     resp_content = (
-        response_dict.get("choices", [{}])[0].get("message", {}).get("content") or ""
+        response_dict.get("choices", [{}])[0].get("message", {}).get("content", "")
     )
     logger.info(
         "chat_response_full conv=%s model=%s physical=%s "
