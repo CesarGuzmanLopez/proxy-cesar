@@ -447,18 +447,20 @@ class KeyVaultMiddleware(BaseHTTPMiddleware):
             request.app.state._kv_tasks.add(task)
             task.add_done_callback(request.app.state._kv_tasks.discard)
 
-        # ── Inject system prompt so LLM knows about placeholders ──────────
-        # Bug 8 fix: insert AFTER any existing system messages to preserve
-        # canonical order (system messages first, in order). Placing at
-        # position 0 would put our prompt before the original system prompt,
-        # potentially confusing the model.
+        # ── Inject keyvault instructions into last system message ──────────
+        # Multiple system messages confuse some models (GPT-OSS produces empty output
+        # with 2+ system prompts). We append to the last existing system message
+        # instead of inserting a new one.
         msgs = body.setdefault("messages", [])
-        insert_pos = 0
+        last_sys_idx = -1
         for i, m in enumerate(msgs):
-            if m.get("role") != "system":
-                break
-            insert_pos = i + 1
-        msgs.insert(insert_pos, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
+            if m.get("role") == "system":
+                last_sys_idx = i
+        if last_sys_idx >= 0:
+            existing = msgs[last_sys_idx].get("content", "")
+            msgs[last_sys_idx]["content"] = existing + "\n\n" + _KEYVAULT_SYSTEM_PROMPT
+        else:
+            msgs.insert(0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
 
         # If streaming: pass through unmodified. BaseHTTPMiddleware breaks
         # streaming responses when request.state is touched. The handler

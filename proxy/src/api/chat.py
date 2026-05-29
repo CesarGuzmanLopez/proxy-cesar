@@ -137,14 +137,18 @@ async def chat_completions(
             body_copy = {"messages": [dict(m) for m in messages]}
             _mask_messages(body_copy, secrets)
             if secrets:
-                # Inject KeyVault system prompt
+                # Inject KeyVault instructions into LAST system message
+                # (multiple system prompts confuse some models like GPT-OSS)
                 msgs = body_copy["messages"]
-                insert_pos = 0
+                last_sys_idx = -1
                 for i, m in enumerate(msgs):
-                    if m.get("role") != "system":
-                        break
-                    insert_pos = i + 1
-                msgs.insert(insert_pos, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
+                    if m.get("role") == "system":
+                        last_sys_idx = i
+                if last_sys_idx >= 0:
+                    existing = msgs[last_sys_idx].get("content", "")
+                    msgs[last_sys_idx]["content"] = existing + "\n\n" + _KEYVAULT_SYSTEM_PROMPT
+                else:
+                    msgs.insert(0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
                 messages = msgs
                 fastapi_request.state.keyvault_secrets = secrets
                 logger.info("keyvault_handler_stream secrets=%d", len(secrets))
