@@ -740,7 +740,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                     for tf in ("content", "reasoning_content"):
                                         val = pc.get("choices", [{}])[0].get("delta", {}).get(tf, "") or ""
                                         if "[" in val and not found_start:
-                                            # This field starts the placeholder → replace with real value
                                             pc["choices"][0]["delta"][tf] = real_value
                                             found_start = True
                                             replaced = True
@@ -749,10 +748,7 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                                 ctx.conversation_id[:12], secret_hash, tf,
                                             )
                                         elif found_start and val:
-                                            # Subsequent fragments → clear
                                             pc["choices"][0]["delta"][tf] = ""
-                                    if found_start and replaced:
-                                        break
                                 # Yield all modified pending chunks
                                 for pc in pending:
                                     yield f"data: {json.dumps(pc)}\n\n"
