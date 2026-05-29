@@ -713,67 +713,20 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                     # The normalise_stream_chunk is intentionally a no-op for this reason.
                     normalise_stream_chunk(chunk_dict)
 
-                    # Re-inject secrets: cross-chunk placeholder buffering
-                    # LLM tokenizers split [KEYVAULT:hash] across 3-6 SSE chunks.
-                    # We check for complete placeholders first, then buffer open brackets.
+                    # Re-inject secrets: simple chunk-level replacement
+                    # Full placeholders only — fragmented across chunks are not replaced
+                    # in streaming (non-streaming always replaces correctly).
                     if keyvault_secrets:
-                        delta_content = ""
-                        for choice in chunk_dict.get("choices", []):
-                            delta = choice.get("delta", {})
-                            for text_field in ("content", "reasoning_content"):
-                                dc = delta.get(text_field, "") or ""
-                                delta_content += dc
-
-                        # Accumulate text buffer and deferred chunks
-                        buf = getattr(ctx, "_keyvault_buf", "")
-                        pending = getattr(ctx, "_keyvault_pending", [])
-                        buf += delta_content
-                        pending.append(chunk_dict)
-
-                        # Check if buffer now has a complete placeholder
-                        replaced = False
+                        chunk_json = json.dumps(chunk_dict)
                         for secret_hash, real_value in keyvault_secrets.items():
                             placeholder = f"[KEYVAULT:{secret_hash}]"
-                            if placeholder in buf:
-                                found_start_field = None
-                                found_end = False
-                                for i, pc in enumerate(pending):
-                                    for tf in ("content", "reasoning_content"):
-                                        val = pc.get("choices", [{}])[0].get("delta", {}).get(tf, "") or ""
-                                        if "[" in val and found_start_field is None:
-                                            pc["choices"][0]["delta"][tf] = real_value
-                                            found_start_field = tf
-                                            replaced = True
-                                            logger.info(
-                                                "stream_reinject_ok conv=%s hash=%s field=%s",
-                                                ctx.conversation_id[:12], secret_hash, tf,
-                                            )
-                                        elif found_start_field is not None and not found_end and val and tf == found_start_field:
-                                            if "]" in val:
-                                                found_end = True
-                                            pc["choices"][0]["delta"][tf] = ""
-                                # Yield all modified pending chunks
-                                for pc in pending:
-                                    yield f"data: {json.dumps(pc)}\n\n"
-                                ctx._keyvault_pending = []
-                                ctx._keyvault_buf = ""
-                                break
-
-                        if not replaced:
-                            has_open = "[" in buf.rpartition("]")[2]
-                            if has_open:
-                                ctx._keyvault_buf = buf[-512:]
-                                ctx._keyvault_pending = pending
-                            else:
-                                for pc in pending:
-                                    yield f"data: {json.dumps(pc)}\n\n"
-                                ctx._keyvault_buf = ""
-                                ctx._keyvault_pending = []
-
-                        # Track finish_reason even when keyvault skips normal yield
-                        if fr:
-                            finish_reason = fr
-                        continue  # Skip normal yield — already handled
+                            if placeholder in chunk_json:
+                                chunk_json = chunk_json.replace(placeholder, real_value)
+                                logger.info(
+                                    "stream_reinject_ok conv=%s hash=%s",
+                                    ctx.conversation_id[:12], secret_hash,
+                                )
+                        chunk_dict = json.loads(chunk_json)
 
                     # Use chunk_dict (may have keyvault secrets re-injected)
                     yield f"data: {json.dumps(chunk_dict)}\n\n"

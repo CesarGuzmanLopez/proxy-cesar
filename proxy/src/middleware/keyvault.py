@@ -86,21 +86,8 @@ _PLACEHOLDER_RE = re.compile(rf"\[{PLACEHOLDER_PREFIX}:([a-f0-9]{{8}})\]")
 _CHAT_PATH = "/v1/chat/completions"
 
 _KEYVAULT_SYSTEM_PROMPT = (
-    "When you see placeholders like [KEYVAULT:abc12345] in user messages, "
-    "they represent sensitive values (API keys, tokens, passwords) that were "
-    "replaced with a hash for security. The ORIGINAL value is NOT available to you.\n\n"
-    "IMPORTANT RULES:\n"
-    "1. [KEYVAULT:...] is PLAIN TEXT, NOT a tool call. Do NOT try to invoke a tool "
-    "for it. Respond as if the real value was in its place.\n"
-    "2. You MUST use the placeholder as-is in your responses. The server will "
-    "automatically replace it with the real value before the user sees it.\n"
-    "3. If you need to STORE or PROCESS this value (e.g. save to a file, write to "
-    "disk), use the placeholder [KEYVAULT:hash] — that's the ONLY value "
-    "you have access to. The server will NOT replace placeholders in stored data, "
-    "only in the response the user sees.\n"
-    "4. NEVER try to guess, generate, or reconstruct the real value.\n"
-    "5. If asked about the value, refer to it as 'your [KEYVAULT:hash]' or "
-    "'the value you provided' — the user will understand after the replacement."
+    "[KEYVAULT:...] = sensitive value (placeholder, not a tool). "
+    "Use as-is in your response. Server replaces it later."
 )
 # NOTE: This system prompt is a CONSTANT string — it uses "[KEYVAULT:abc12345]"
 # as a literal example, NOT actual placeholders. The prompt is IDENTICAL across
