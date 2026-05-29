@@ -308,7 +308,7 @@ async def process_chat_request(
         try:
             await router_task
         except asyncio.CancelledError:
-            pass
+            pass  # nosonarc S7497: router_task is fire-and-forget — suppressing is intentional
 
     # Log: LLM response inbound
     _log_llm_response(response, physical_model, trace, _req_id)

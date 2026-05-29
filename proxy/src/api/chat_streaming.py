@@ -19,7 +19,7 @@ from src.adapters.cache.provider_cache import (
     build_cache_metadata,
 )
 from src.adapters.db.models import Conversation
-from src.domain.types import Ok, Err
+from src.domain.types import Err
 from src.service.chat_models import StreamContext, StreamingRequestContext
 from src.service.context_alert import get_context_alert
 from src.service.chat_fallback import _try_physical_model, call_with_fallback
@@ -931,8 +931,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                 ctx, response_dict, input_tokens, output_tokens
             )
             match persist_result:
-                case Ok(value=(db, conv, session_caps)):
-                    pass
                 case Err(error=error):
                     logger.error(
                         "stream_persist_failed conv=%s turn=%s reason=%s",
