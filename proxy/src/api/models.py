@@ -13,11 +13,12 @@ from fastapi import APIRouter, Request
 
 router = APIRouter()
 
-# Optimistic capabilities for tools/streaming — always true for every pseudo-model.
-# Prevents clients (Continue, LibreChat, etc.) from silently stripping content.
-# Vision is determined by actual physical model capabilities (not optimistic).
+# Optimistic capabilities — always true for every pseudo-model
+# Prevents clients (Continue, LibreChat, etc.) from silently stripping content
+# Vision is optimistic: even non-vision models receive descriptions via the
+# proxy's auto-describe feature (images → described by vision model → injected).
 ALL_CAPABILITIES = {
-    "vision": True,  # overridden per pseudo-model below
+    "vision": True,
     "tools": True,
     "parallel_tools": True,
     "streaming": True,
@@ -39,14 +40,11 @@ async def list_models(request: Request):
     for name, pm in config.pseudo_models.items():
         supports_thinking = False
         supports_reasoning_effort = False
-        has_vision = False
         for phys in pm.physical_models:
             prov = phys.provider.lower() if phys.provider else ""
             model_prefix = (
                 phys.model.split("/")[0].lower() if "/" in phys.model else prov
             )
-            if phys.vision:
-                has_vision = True
             if prov == "anthropic" or model_prefix == "anthropic":
                 supports_thinking = True
             # Only actual OpenAI o-series models (o1, o3, o4-mini, etc.) support
@@ -63,7 +61,6 @@ async def list_models(request: Request):
                 supports_reasoning_effort = True
 
         caps = dict(ALL_CAPABILITIES)
-        caps["vision"] = has_vision
         caps["thinking"] = supports_thinking
         caps["reasoning_effort"] = supports_reasoning_effort
 
