@@ -424,7 +424,6 @@ def _build_blob_text(h: str, mime: str, sz: int | str, label: str, desc: str = "
     t += f" | {sz} KB"
     if extraction_method:
         t += f" | extracted with: {extraction_method}"
-    t += "\n(Sent as file — read the content below directly.)"
     if desc:
         t += f"\n\n{desc}"
     else:
@@ -730,11 +729,10 @@ def inject_blob_extraction_guidance(messages: list[dict]) -> list[dict]:
         "**File Content Extraction**\n\n"
         "Some content in this conversation was auto-extracted from files "
         "(images, audio, PDFs, Word documents) that the current model cannot process natively.\n\n"
-        "The extracted content is ALREADY included below in [File: ...] blocks within this conversation. "
-        "Read the extracted text directly from those blocks — do NOT try to find, open, or read "
-        "the original files from disk. The original files are NOT accessible in this workspace.\n\n"
+        "The extracted content is included in [File content extracted from: ...] blocks below. "
+        "You can read it directly from there.\n\n"
         "Extraction methods used:\n"
-        "  • Images → Vision models (Llama 4 Scout)\n"
+        "  • Images → Vision models (Llama 4 Scout / MiMo Omni)\n"
         "  • Audio → Whisper speech-to-text\n"
         "  • PDFs → PyMuPDF (Python library)\n"
         "  • Word docs → python-docx (Python library)"

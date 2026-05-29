@@ -185,7 +185,7 @@ class TestBuildBlobOutput:
         assert "source: screenshot.png" in text
         assert "10 KB" in text
         assert "Vision model" in text
-        assert "read the content below" in text
+        assert "extracted with: Vision model" in text
         assert "A login screen" in text
 
     def test_audio_blob_with_transcription(self):
