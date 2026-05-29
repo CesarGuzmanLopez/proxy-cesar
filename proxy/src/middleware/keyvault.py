@@ -87,11 +87,18 @@ _CHAT_PATH = "/v1/chat/completions"
 
 _KEYVAULT_SYSTEM_PROMPT = (
     "When you see placeholders like [KEYVAULT:abc12345] in user messages, "
-    "they represent sensitive values (API keys, tokens) that were replaced "
-    "for security. You can freely reference these placeholders in your "
-    "responses — the server will automatically replace them with the "
-    "real values before the user sees your response. Never try to guess "
-    "or generate the real values; just use the placeholder as-is."
+    "they represent sensitive values (API keys, tokens, passwords) that were "
+    "replaced with a hash for security. The ORIGINAL value is NOT available to you.\n\n"
+    "IMPORTANT RULES:\n"
+    "1. You MUST use the placeholder as-is in your responses. The server will "
+    "automatically replace it with the real value before the user sees it.\n"
+    "2. If you need to STORE or PROCESS this value (e.g. save to a file, call a tool, "
+    "write to disk), use the placeholder [KEYVAULT:hash] — that's the ONLY value "
+    "you have access to. The server will NOT replace placeholders in stored data, "
+    "only in the response the user sees.\n"
+    "3. NEVER try to guess, generate, or reconstruct the real value.\n"
+    "4. If asked about the value, refer to it as 'your [KEYVAULT:hash]' or "
+    "'the value you provided' — the user will understand after the replacement."
 )
 # NOTE: This system prompt is a CONSTANT string — it uses "[KEYVAULT:abc12345]"
 # as a literal example, NOT actual placeholders. The prompt is IDENTICAL across
