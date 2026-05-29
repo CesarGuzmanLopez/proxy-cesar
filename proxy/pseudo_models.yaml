@@ -13,9 +13,7 @@ pseudo_models:
     input_token_threshold: 1000000
     context_window: 1000000
     router_llm:
-      enabled: true
-      suggester: pensamiento-rapido
-      suggest_on_downgrade_only: true
+      enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
@@ -28,7 +26,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go primary: Qwen3.7 Max vía Anthropic /messages. Premium reasoning (~4.770 req/mes)."
+        note: "Go: Qwen3.7 Max vía Anthropic /messages. Premium reasoning (~4.770 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
         openai_tools_compatible: true
@@ -39,10 +37,41 @@ pseudo_models:
         note: "Fallback: DeepSeek V4 Pro directo. Razonamiento profundo."
     fallback_strategy: sequential
 
-  # ── Razonamiento ligero ────────────────────────────────────────────────────
-  pensamiento-rapido:
-    display_name: Pensamiento Rápido
-    description: "Razonamiento ligero. Debug, code review, análisis rápidos. Límite 1M tokens — usa /compact si lo superas."
+  # ── Desarrollo sostenido ──────────────────────────────────────────────────
+  tareas-avanzadas:
+    display_name: Tareas Avanzadas
+    description: "Desarrollo profundo y sostenido. MiniMax M2.7 vía Go."
+    input_token_threshold: 196608
+    context_window: 196608
+    router_llm:
+      enabled: false
+    image_handling:
+      on_downgrade: auto_describe
+    physical_models:
+      - provider: opencode-go
+        model: anthropic/minimax-m2.7
+        api_base: https://opencode.ai/zen/go
+        api_key_env: OPENCODE_API_KEY
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: true
+        vision: false
+        context_window: 196608
+        note: "Go: MiniMax M2.7 (192K contexto) vía Anthropic /messages (~17.000 req/mes)."
+      - provider: deepseek
+        model: deepseek/deepseek-v4-flash
+        openai_tools_compatible: true
+        tools_strict: true
+        parallel_tools: true
+        vision: false
+        context_window: 1000000
+        note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
+    fallback_strategy: sequential
+
+  # ── Normal (punto de entrada) ─────────────────────────────────────────────
+  normal:
+    display_name: Normal
+    description: "Punto de entrada recomendado. Qwen3.5 Plus vía Go. Coding extenso."
     input_token_threshold: 1000000
     context_window: 1000000
     router_llm:
@@ -51,7 +80,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/qwen3.6-plus
+        model: anthropic/qwen3.5-plus
         api_base: https://opencode.ai/zen/go
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -59,95 +88,15 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go primary: Qwen3.6 Plus. Razonamiento ligero (~16.300 req/mes)."
+        note: "Go: Qwen3.5 Plus vía Anthropic /messages (~50.500 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-        note: "Fallback: DeepSeek V4 Flash directo."
-    fallback_strategy: sequential
-
-  # ── Desarrollo sostenido ──────────────────────────────────────────────────
-  tareas-avanzadas:
-    display_name: Tareas Avanzadas
-    description: "Desarrollo profundo y sostenido. Límite 262K tokens — usa /compact si lo superas."
-    input_token_threshold: 262144
-    context_window: 262144
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: auto_describe
-    physical_models:
-      - provider: opencode-go
-        model: openai/kimi-k2.6
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 262144
-        note: "Go primary: Kimi K2.6 (256K contexto). Coding avanzado (~5.750 req/mes)."
-      - provider: deepseek
-        model: deepseek/deepseek-v4-pro
-        openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Fallback 1: DeepSeek V4 Pro directo."
-      - provider: deepseek
-        model: deepseek/deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-        note: "Fallback 2: DeepSeek V4 Flash directo."
-    fallback_strategy: sequential
-
-  # ── Código preciso ────────────────────────────────────────────────
-  codigo-preciso:
-    display_name: Código Preciso
-    description: "Generación de código puro. Refactors, tests, parches. Límite 1M tokens — usa /compact si lo superas."
-    input_token_threshold: 1000000
-    context_window: 1000000
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: auto_describe
-    physical_models:
-      - provider: opencode-go
-        model: openai/mimo-v2.5-pro
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 1048576
-        note: "Go primary: MiMo V2.5 Pro (1M contexto). Especializado en código (~6.450 req/mes)."
-      - provider: opencode-go
-        model: openai/mimo-v2-pro
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 1048576
-        note: "Go fallback: MiMo V2 Pro (1M contexto)."
-      - provider: deepseek
-        model: deepseek/deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-        note: "Fallback: DeepSeek V4 Flash directo."
+        note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
     fallback_strategy: sequential
 
   # ── Visión ────────────────────────────────────────────────────────────────
@@ -181,37 +130,6 @@ pseudo_models:
         note: "Fallback: MiMo V2 Omni (256K contexto). Visión nativa + texto."
     fallback_strategy: sequential
 
-  # ── Normal (punto de entrada) ─────────────────────────────────────────────
-  normal:
-    display_name: Normal
-    description: "Punto de entrada recomendado. Coding extenso. Límite 262K tokens — usa /compact si lo superas."
-    input_token_threshold: 262144
-    context_window: 262144
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: auto_describe
-    physical_models:
-      - provider: opencode-go
-        model: openai/kimi-k2.5
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 262144
-        note: "Go primary: Kimi K2.5 (256K contexto). Rápido, tools estrictas (~9.250 req/mes)."
-      - provider: deepseek
-        model: deepseek/deepseek-v4-flash
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        context_window: 1000000
-        note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
-    fallback_strategy: sequential
-
   # ── Gratuito (sin Go) ─────────────────────────────────────────────────────
   normal-gratis:
     display_name: Normal Gratis
@@ -241,41 +159,10 @@ pseudo_models:
         context_window: 131072
     fallback_strategy: sequential
 
-  # ── Masivo rápido ─────────────────────────────────────────────────────────
-  massive-fast:
-    display_name: Massive Fast
-    description: "Texto masivo ultrarrápido. Límite 131K tokens. MiniMax Go + GPT-OSS Groq."
-    input_token_threshold: 131072
-    context_window: 131072
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: auto_describe
-    physical_models:
-      - provider: opencode-go
-        model: anthropic/minimax-m2.7
-        api_base: https://opencode.ai/zen/go
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        context_window: 196608
-        note: "Go primary: MiniMax M2.7 (192K contexto). Velocidad extrema (~17.000 req/mes)."
-      - provider: groq
-        model: groq/openai/gpt-oss-20b
-        context_window: 131072
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        note: "Fallback: GPT-OSS 20B vía Groq (1000+ t/s)."
-    fallback_strategy: sequential
-
   # ── Flash Lowcost ──────────────────────────────────────────────────
   flash-lowcost:
     display_name: Flash Lowcost
-    description: "Sub-agentes baratos. Clasificación, extracción, parsing. Límite 1M tokens."
+    description: "Sub-agentes baratos. Clasificación, extracción, parsing. MiMo-V2.5 vía Go."
     input_token_threshold: 1000000
     context_window: 1000000
     router_llm:
@@ -284,15 +171,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/qwen3.5-plus
-        api_base: https://opencode.ai/zen/go
+        model: openai/mimo-v2.5
+        api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go primary: Qwen3.5 Plus. El más barato de Go (~50.500 req/mes)."
+        note: "Go: MiMo-V2.5 vía OpenAI /chat/completions (~150.400 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -362,9 +249,9 @@ model_aliases:
   gpt-4o-mini: normal
   gpt-4.1: tareas-avanzadas
   o3: pensamiento-profundo-caro
-  o4-mini: pensamiento-rapido
+  o4-mini: normal
   gemini-2.5-flash: vision
-  gemini-2.5-pro: codigo-preciso
-  claude-sonnet-4-20250514: codigo-preciso
+  gemini-2.5-pro: tareas-avanzadas
+  claude-sonnet-4-20250514: tareas-avanzadas
   claude-haiku-3-5-20241022: flash-lowcost
   default: normal
