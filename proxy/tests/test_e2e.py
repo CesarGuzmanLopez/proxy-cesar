@@ -173,7 +173,7 @@ class TestE2EOpenCodeFlow:
 
 
 @pytest.mark.integration
-class TestSprint7Comprehensive:
+class TestComprehensive:
     """Comprehensive HTTP integration tests for Featurefeatures."""
 
     async def test_canonical_order_applied(self, async_client, mock_litellm):
