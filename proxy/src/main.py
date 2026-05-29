@@ -51,7 +51,6 @@ from src.config.pseudo_models import load_config  # noqa: E402
 from src.config.settings import settings  # noqa: E402
 from src.logging_config import setup_logging  # noqa: E402
 from src.middleware.rate_limiter import RateLimitMiddleware  # noqa: E402
-from src.middleware.keyvault import KeyVaultMiddleware  # noqa: E402
 from src.utils.sanitize import sanitize, sanitize_dict  # noqa: E402
 
 # Configure structured JSON logging (feature)
@@ -173,18 +172,12 @@ app = FastAPI(
 # ── feature Middleware registration (order matters!) ──────────────────────
 
 # FastAPI wraps middleware in LIFO order: last registered = outermost (runs first).
-# Current order: 1st=KeyVault(inner) → 2nd=RateLimit → 3rd=Auth(middle) → 4th=CORS(outer)
-# Execution: CORS → Auth → RateLimit → KeyVault → handler → KeyVault → RateLimit → Auth → CORS
 # Auth rejects unauthenticated requests BEFORE RateLimit counts them.
-# KeyVault sanitizes secrets closest to the handler.
 
-# 1. KeyVault — innermost (closest to handler, sanitizes request/response bodies)
-app.add_middleware(KeyVaultMiddleware)
-
-# 2. Rate limiting — after keyvault, before auth
+# 1. Rate limiting
 app.add_middleware(RateLimitMiddleware)
 
-# 2. Auth — middle (runs before rate limiting)
+# 2. Auth
 app.add_middleware(AuthMiddleware)
 
 # 3. CORS — outermost (runs first)

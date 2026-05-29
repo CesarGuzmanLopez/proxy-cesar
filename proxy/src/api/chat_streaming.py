@@ -496,12 +496,6 @@ async def _handle_streaming_with_db(
             for h, v in provider_headers.items():
                 _sse_headers[h] = str(v)
 
-    # Extract keyvault secrets from request state for re-injection in generator
-    keyvault_secrets = getattr(request.state, "keyvault_secrets", {}) if request else {}
-    if keyvault_secrets:
-        logger.info("stream_keyvault_active conv=%s secrets=%s",
-                     conversation_id[:12], list(keyvault_secrets.keys()))
-
     _streaming_response = StreamingResponse(
         _stream_response_generator(
             StreamContext(
@@ -545,7 +539,6 @@ async def _handle_streaming_with_db(
                 trace=trace,
                 timeout=60.0,  # Use same default as DEFAULT_LLM_TIMEOUT_SECONDS
             ),
-            keyvault_secrets=keyvault_secrets,
         ),
         media_type="text/event-stream",
         headers=_sse_headers,
@@ -564,7 +557,7 @@ def _chunk_to_dict(chunk) -> dict:
             return {}
 
 
-async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[str, str] | None = None):
+async def _stream_response_generator(ctx: StreamContext):
     """SSE streaming: forward chunks, persist turn on success, append metadata.
 
     feature supports token-limit continuation — when a model finishes with
@@ -572,8 +565,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
     generator suppresses the ``"length"`` finish_reason (sets to ``null``),
     appends the accumulated content as an assistant message, and seamlessly
     continues streaming from the next model.
-
-    keyvault_secrets: dict mapping [KEYVAULT:hash] to real values for re-injection.
     """
     import uuid
 
@@ -713,22 +704,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                     # The normalise_stream_chunk is intentionally a no-op for this reason.
                     normalise_stream_chunk(chunk_dict)
 
-                    # Re-inject secrets: simple chunk-level replacement
-                    # Full placeholders only — fragmented across chunks are not replaced
-                    # in streaming (non-streaming always replaces correctly).
-                    if keyvault_secrets:
-                        chunk_json = json.dumps(chunk_dict)
-                        for secret_hash, real_value in keyvault_secrets.items():
-                            placeholder = f"[KEYVAULT:{secret_hash}]"
-                            if placeholder in chunk_json:
-                                chunk_json = chunk_json.replace(placeholder, real_value)
-                                logger.info(
-                                    "stream_reinject_ok conv=%s hash=%s",
-                                    ctx.conversation_id[:12], secret_hash,
-                                )
-                        chunk_dict = json.loads(chunk_json)
-
-                    # Use chunk_dict (may have keyvault secrets re-injected)
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
 
                     if fr:
@@ -762,14 +737,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
 
             # ── Decide whether to continue with next model ──────────────
             if finish_reason != "length":
-                # Flush any remaining keyvault pending chunks before finishing
-                if keyvault_secrets:
-                    pending = getattr(ctx, "_keyvault_pending", [])
-                    if pending:
-                        for pc in pending:
-                            yield f"data: {json.dumps(pc)}\n\n"
-                        ctx._keyvault_pending = []
-                        ctx._keyvault_buf = ""
                 break  # Natural stop — we're done
 
             # All models exhausted — stop
@@ -779,10 +746,6 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
             # ── Prepare and call next model ─────────────────────────────
             current_idx += 1
             next_phys = phys_models[current_idx]
-
-            # Reset keyvault buffer for new model (don't carry over from previous stream)
-            ctx._keyvault_buf = ""
-            ctx._keyvault_pending = []
 
             # Build continuation messages: full history + partial assistant
             cont_messages = list(ctx.active_messages or ctx.messages or [])

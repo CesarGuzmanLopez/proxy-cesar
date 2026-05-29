@@ -24,16 +24,24 @@ from src.config.constants import BLOB_STORAGE_TTL_SECONDS
 # ── Lenient JSON parser (handles trailing commas from Llama 4 Scout, etc.) ──
 
 _JSON_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
+_JSON_CTRL_CHAR_RE = re.compile(r"[\000-\037]")
 
 
 def _parse_json_lenient(text: str):
-    """Parse JSON with lenient trailing comma handling.
+    """Parse JSON with lenient handling for common LLM output issues.
 
-    Llama 4 Scout (and some other vision models) produce valid-JSON-plus-trailing-commas,
-    which strict ``json.loads`` rejects. This strips trailing commas before parsing.
+    - Strips trailing commas before ``]`` and ``}`` (common in Llama 4 Scout output)
+    - Strips unescaped control characters (newlines, tabs) inside strings
+    - Falls back to strict ``json.loads`` if cleaned version also fails
     """
+    # 1. Strip trailing commas
     cleaned = _JSON_TRAILING_COMMA_RE.sub(r"\1", text)
-    return json.loads(cleaned)
+    # 2. Strip unescaped control characters inside strings
+    cleaned = _JSON_CTRL_CHAR_RE.sub("", cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return json.loads(text)  # Fallback: maybe original was fine
 
 logger = logging.getLogger(__name__)
 

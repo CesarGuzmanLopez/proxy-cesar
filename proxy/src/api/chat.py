@@ -118,43 +118,6 @@ async def chat_completions(
     # Prepare messages as dicts
     messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
 
-    # If KeyVault middleware sanitized the body, use the sanitized messages
-    if hasattr(fastapi_request.state, "_keyvault_body"):
-        try:
-            import json as _json
-            sanitized = _json.loads(fastapi_request.state._keyvault_body)
-            sanitized_msgs = sanitized.get("messages", [])
-            if sanitized_msgs:
-                messages = sanitized_msgs
-        except Exception:
-            pass
-
-    # For streaming: detect secrets natively (middleware skips streaming)
-    if request.stream and not hasattr(fastapi_request.state, "_keyvault_body"):
-        try:
-            from src.middleware.keyvault import _mask_messages, _KEYVAULT_SYSTEM_PROMPT
-            secrets: dict[str, str] = {}
-            body_copy = {"messages": [dict(m) for m in messages]}
-            _mask_messages(body_copy, secrets)
-            if secrets:
-                # Inject KeyVault instructions into LAST system message
-                # (multiple system prompts confuse some models like GPT-OSS)
-                msgs = body_copy["messages"]
-                last_sys_idx = -1
-                for i, m in enumerate(msgs):
-                    if m.get("role") == "system":
-                        last_sys_idx = i
-                if last_sys_idx >= 0:
-                    existing = msgs[last_sys_idx].get("content", "")
-                    msgs[last_sys_idx]["content"] = existing + "\n\n" + _KEYVAULT_SYSTEM_PROMPT
-                else:
-                    msgs.insert(0, {"role": "system", "content": _KEYVAULT_SYSTEM_PROMPT})
-                messages = msgs
-                fastapi_request.state.keyvault_secrets = secrets
-                logger.info("keyvault_handler_stream secrets=%d", len(secrets))
-        except Exception:
-            pass
-
     # Log full request details including message content
     _msg_summaries = []
     for m in messages:
