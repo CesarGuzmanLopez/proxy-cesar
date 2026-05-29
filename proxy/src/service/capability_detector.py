@@ -88,7 +88,7 @@ def _detect_file_type(part: dict) -> str | None:
                         mime = match.group(1)
                         break
     if not mime:
-        logger.debug("file_no_mime_detected part_keys=%s", list(part.keys()))
+        logger.info("file_no_mime part_keys=%s", list(part.keys()))
         return None
     mime = mime.lower()
     if "pdf" in mime:
