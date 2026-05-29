@@ -197,8 +197,8 @@ async def _try_physical_model(
     if should_apply_cache_control(cache_provider):
         call_messages = apply_anthropic_cache_control(call_messages)
         cache_applied = True
-        logger.debug(
-            "cache_control applied provider=%s model=%s messages=%d",
+        logger.info(
+            "⚡ cache_control provider=%s model=%s messages=%d",
             cache_provider,
             phys.model,
             len(call_messages),
