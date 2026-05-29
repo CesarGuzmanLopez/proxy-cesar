@@ -10,6 +10,7 @@ python.md §4: pure functions, immutable data, declarative style.
 import asyncio
 import functools
 import logging
+import re
 import uuid
 
 import tiktoken
@@ -54,8 +55,24 @@ def _detect_image(part: dict) -> bool:
 
 
 def _detect_file_type(part: dict) -> str | None:
-    """Detect file type from a content part. Returns category or None."""
-    mime = part.get("mime_type", part.get("mimetype", "")).lower()
+    """Detect file type from a content part. Returns category or None.
+
+    Supports multiple formats:
+    - Direct mime_type field:  {"type": "file", "mime_type": "application/pdf", ...}
+    - Nested file object:      {"type": "file", "file": {"mime_type": "application/pdf", ...}}
+    - Data URI fallback:       {"type": "file", "file": {"data": "data:application/pdf;base64,..."}}
+    """
+    mime = part.get("mime_type", part.get("mimetype", ""))
+    if not mime:
+        file_obj = part.get("file", {}) or {}
+        mime = file_obj.get("mime_type", file_obj.get("mimetype", ""))
+    if not mime:
+        data = (part.get("file", {}) or {}).get("data", "")
+        if isinstance(data, str) and data.startswith("data:"):
+            match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", data)
+            if match:
+                mime = match.group(1)
+    mime = mime.lower()
     if "pdf" in mime:
         return "pdf"
     if any(v in mime for v in ("video/", "mp4", "webm", "avi")):

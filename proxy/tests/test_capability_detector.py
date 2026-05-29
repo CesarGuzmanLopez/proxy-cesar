@@ -277,6 +277,86 @@ def test_alternate_mime_key():
     assert caps.has_pdf is True
 
 
+def test_file_pdf_nested_mime():
+    """file with mime_type nested in file object → has_pdf: true (real API format)."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "file",
+                    "file": {
+                        "data": "data:application/pdf;base64,JVBERi0=",
+                        "mime_type": "application/pdf",
+                    },
+                }
+            ],
+        }
+    ]
+    caps = detect_turn_capabilities(messages)
+    assert caps.has_pdf is True
+
+
+def test_file_pdf_data_uri_fallback():
+    """file without mime_type, only data URI → has_pdf: true (data URI fallback)."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "file",
+                    "file": {
+                        "data": "data:application/pdf;base64,JVBERi0=",
+                    },
+                }
+            ],
+        }
+    ]
+    caps = detect_turn_capabilities(messages)
+    assert caps.has_pdf is True
+
+
+def test_file_video_nested_mime():
+    """file with nested mime_type for video → has_video: true."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "file",
+                    "file": {
+                        "data": "data:video/mp4;base64,AAAA",
+                        "mime_type": "video/mp4",
+                    },
+                }
+            ],
+        }
+    ]
+    caps = detect_turn_capabilities(messages)
+    assert caps.has_video is True
+    assert caps.has_pdf is False
+
+
+def test_file_no_mime_info():
+    """file without mime_type or data URI → no capability detected."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "file",
+                    "file": {
+                        "url": "https://example.com/doc.pdf",
+                    },
+                }
+            ],
+        }
+    ]
+    caps = detect_turn_capabilities(messages)
+    assert caps.has_pdf is False
+    assert caps.has_video is False
+
+
 @pytest.mark.asyncio
 async def test_estimate_tokens_empty():
     """Empty messages → at least 1 token."""
