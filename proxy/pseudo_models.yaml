@@ -51,15 +51,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: qwen3.6-plus
-        api_base: https://opencode.ai/zen/go/v1
+        model: anthropic/qwen3.6-plus
+        api_base: https://opencode.ai/zen/go
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go primary: Qwen3.6 Plus. Razonamiento ligero (~16.300 req/mes)."
+        note: "Go primary: Qwen3.6 Plus (Anthropic endpoint). Razonamiento ligero (~16.300 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -82,7 +82,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: kimi-k2.6
+        model: openai/kimi-k2.6
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -121,7 +121,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: mimo-v2.5-pro
+        model: openai/mimo-v2.5-pro
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -131,7 +131,7 @@ pseudo_models:
         context_window: 1048576
         note: "Go primary: MiMo V2.5 Pro (1M contexto). Especializado en código (~6.450 req/mes)."
       - provider: opencode-go
-        model: mimo-v2-pro
+        model: openai/mimo-v2-pro
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -170,7 +170,7 @@ pseudo_models:
         context_window: 131072
         note: "Primary: Visión vía Groq. 131K contexto. Rápido y barato."
       - provider: opencode-go
-        model: mimo-v2-omni
+        model: openai/mimo-v2-omni
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -193,7 +193,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: kimi-k2.5
+        model: openai/kimi-k2.5
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -253,15 +253,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: minimax-m2.7
-        api_base: https://opencode.ai/zen/go/v1
+        model: anthropic/minimax-m2.7
+        api_base: https://opencode.ai/zen/go
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 196608
-        note: "Go primary: MiniMax M2.7 (192K contexto). Velocidad extrema (~17.000 req/mes)."
+        note: "Go primary: MiniMax M2.7 (192K, Anthropic endpoint). Velocidad extrema (~17.000 req/mes)."
       - provider: groq
         model: groq/openai/gpt-oss-20b
         context_window: 131072
@@ -284,15 +284,15 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: qwen3.5-plus
-        api_base: https://opencode.ai/zen/go/v1
+        model: anthropic/qwen3.5-plus
+        api_base: https://opencode.ai/zen/go
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Go primary: Qwen3.5 Plus. El más barato de Go (~50.500 req/mes)."
+        note: "Go primary: Qwen3.5 Plus (Anthropic endpoint). El más barato de Go (~50.500 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -315,7 +315,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: glm-5.1
+        model: openai/glm-5.1
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
