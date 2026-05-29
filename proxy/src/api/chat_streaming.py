@@ -713,18 +713,39 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                     # The normalise_stream_chunk is intentionally a no-op for this reason.
                     normalise_stream_chunk(chunk_dict)
 
-                    # Re-inject secrets: replace [KEYVAULT:hash] with real values
+                    # Re-inject secrets: cross-chunk placeholder buffering
+                    # LLM tokenizers split [KEYVAULT:hash] across multiple SSE chunks
+                    # (typically 3-6). We use a small sliding buffer to detect and
+                    # replace complete placeholders before yielding.
                     if keyvault_secrets:
-                        logger.info("stream_reinject_attempt conv=%s keys=%s chunk=%db",
-                                     ctx.conversation_id[:12], list(keyvault_secrets.keys()),
-                                     len(json.dumps(chunk_dict)))
-                        chunk_json = json.dumps(chunk_dict)
-                        for secret_hash, real_value in keyvault_secrets.items():
-                            placeholder = f"[KEYVAULT:{secret_hash}]"
-                            if placeholder in chunk_json:
-                                chunk_json = chunk_json.replace(placeholder, real_value)
-                                logger.info("stream_reinject_ok hash=%s", secret_hash)
-                        chunk_dict = json.loads(chunk_json)
+                        # Accumulate delta content to detect cross-chunk placeholders
+                        delta_content = ""
+                        for choice in chunk_dict.get("choices", []):
+                            delta = choice.get("delta", {})
+                            dc = delta.get("content", "") or ""
+                            delta_content += dc
+
+                        if delta_content:
+                            ctx._keyvault_buffer = getattr(ctx, "_keyvault_buffer", "") + delta_content
+                            # Keep only max placeholder size + margin (128 chars is safe)
+                            ctx._keyvault_buffer = ctx._keyvault_buffer[-256:]
+
+                            # Check if buffer now contains a complete placeholder
+                            for secret_hash, real_value in keyvault_secrets.items():
+                                placeholder = f"[KEYVAULT:{secret_hash}]"
+                                if placeholder in ctx._keyvault_buffer:
+                                    # Found complete placeholder — replace in this chunk
+                                    chunk_json = json.dumps(chunk_dict)
+                                    if placeholder in chunk_json:
+                                        chunk_json = chunk_json.replace(placeholder, real_value)
+                                        chunk_dict = json.loads(chunk_json)
+                                        logger.info(
+                                            "stream_reinject_ok conv=%s hash=%s",
+                                            ctx.conversation_id[:12], secret_hash,
+                                        )
+                                    # Clear buffer to avoid double-replacement
+                                    ctx._keyvault_buffer = ""
+                                    break
 
                     # Use chunk_dict (may have keyvault secrets re-injected)
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
