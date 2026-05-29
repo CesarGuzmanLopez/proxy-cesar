@@ -125,6 +125,16 @@ pseudo_models:
         parallel_tools: false
         vision: true
         context_window: 131072
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
         note: "Primary: Visión vía Groq. 131K contexto. Rápido y barato."
       - provider: opencode-go
         model: openai/mimo-v2-omni
@@ -165,6 +175,16 @@ pseudo_models:
         tools_strict: false
         parallel_tools: true
         vision: false
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
         note: "Fallback rápido vía Groq. 32B, 131K contexto. Bajo costo."
         context_window: 131072
     fallback_strategy: sequential
@@ -189,6 +209,16 @@ pseudo_models:
         context_window: 128000
         temperature: 0.1
         top_p: 0.9
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
         note: "Primary: GPT-OSS 20B vía Groq (1000 t/s). Sin tools paralelas."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
@@ -231,6 +261,16 @@ pseudo_models:
         openai_tools_compatible: true
         parallel_tools: true
         vision: false
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
         note: "Fallback 1: 20B vía Groq (1000+ t/s). Texto puro para <131K."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
