@@ -987,6 +987,8 @@ def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
         model_prefix = ctx.physical_model.split("/")[0].lower()
         if model_prefix in ("anthropic",):
             cache_provider = model_prefix
+    if cache_provider.lower() == "opencode-go":
+        cache_provider = "opencode-go"
     return should_apply_cache_control(cache_provider)
 
 

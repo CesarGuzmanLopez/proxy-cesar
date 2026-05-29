@@ -17,12 +17,15 @@ logger = logging.getLogger(__name__)
 # Z.ai/Zhipu: automatic prefix caching (OpenAI-compatible format, cached input ~18% of regular price)
 # Groq: automatic prefix caching, 50% discount on cached tokens, 2-hour TTL
 #   Supported models: openai/gpt-oss-20b, openai/gpt-oss-120b
-_PROVIDERS_WITH_CACHE = frozenset({"openai", "deepseek", "groq", "anthropic"})
-_PROVIDERS_WITH_CACHE_CONTROL = frozenset({"anthropic"})
+_PROVIDERS_WITH_CACHE = frozenset({"openai", "deepseek", "groq", "anthropic", "opencode-go"})
+_PROVIDERS_WITH_CACHE_CONTROL = frozenset({"anthropic", "opencode-go"})
 # DeepSeek/Groq/OpenAI have AUTOMATIC prefix caching — no cache_control headers needed.
 # DeepSeek: Context Caching on Disk (enabled by default, automatic prefix matching).
 # Groq: automatic prefix caching, 50% discount, 2-hour TTL.
 # OpenAI: automatic prompt caching.
+# OpenCode Go: OpenAI-compatible API but backend expects Anthropic-style cache_control
+#   markers on content blocks. Community fix confirmed for Qwen models;
+#   we apply to all Go models (harmless if silently ignored by non-Qwen backends).
 # This is NOT a bug — the proxy correctly identifies which providers need explicit
 # cache_control (Anthropic only) vs those with transparent automatic caching.
 _PROVIDERS_WITH_AUTO_CACHE = frozenset({"openai", "deepseek", "groq"})

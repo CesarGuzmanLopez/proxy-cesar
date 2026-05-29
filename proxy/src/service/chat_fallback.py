@@ -195,7 +195,7 @@ async def _try_physical_model(
     cache_provider = model_prefix if model_prefix in ("anthropic",) else provider
     cache_applied = False
     if should_apply_cache_control(cache_provider):
-        call_messages = apply_anthropic_cache_control(ordered_messages)
+        call_messages = apply_anthropic_cache_control(call_messages)
         cache_applied = True
         logger.debug(
             "cache_control applied provider=%s model=%s messages=%d",
@@ -281,7 +281,7 @@ def _log_model_call_result(
     _trace_id: str,
     elapsed: float,
 ) -> None:
-    """Log LLM call result.
+    """Log LLM call result with cache info.
 
     Handles both LiteLLM ``ModelResponse`` objects and plain ``dict``
     responses (e.g. composite responses from token-limit fallback).
@@ -295,21 +295,66 @@ def _log_model_call_result(
         )
         return
     try:
+        # Extract usage info for cache diagnostics
+        usage = None
         if isinstance(response, dict):
             c = (response.get("choices") or [{}])[0].get("message", {}).get(
                 "content", ""
             ) or ""
             fr = (response.get("choices") or [{}])[0].get("finish_reason", "?")
+            usage = response.get("usage", {})
         else:
             c = response.choices[0].message.content or ""
             fr = response.choices[0].finish_reason
+            usage = response.usage
+
+        # Extract cache tokens from response
+        cache_hit = 0
+        cache_write = 0
+        prompt_tokens = 0
+        if usage:
+            prompt_tokens = (
+                getattr(usage, "prompt_tokens", 0)
+                if not isinstance(usage, dict) else usage.get("prompt_tokens", 0)
+            )
+            details = (
+                getattr(usage, "prompt_tokens_details", None)
+                if not isinstance(usage, dict)
+                else usage.get("prompt_tokens_details", {})
+            )
+            if details:
+                cache_hit = (
+                    getattr(details, "cached_tokens", 0)
+                    if not isinstance(details, dict)
+                    else details.get("cached_tokens", 0)
+                ) or 0
+            cache_read = (
+                getattr(usage, "cache_read_input_tokens", 0)
+                if not isinstance(usage, dict)
+                else usage.get("cache_read_input_tokens", 0)
+            )
+            cache_write = (
+                getattr(usage, "cache_creation_input_tokens", 0)
+                if not isinstance(usage, dict)
+                else usage.get("cache_creation_input_tokens", 0)
+            )
+            cache_hit = cache_hit or cache_read
+
+        cache_str = ""
+        if cache_hit:
+            cache_str = f" cache_hit={cache_hit}"
+        if cache_write:
+            cache_str += f" cache_write={cache_write}"
+
         logger.info(
-            "llm_ok    | trace=%s model=%s elapsed=%.1fs content_len=%d finish=%s",
+            "llm_ok    | trace=%s model=%s elapsed=%.1fs content_len=%d finish=%s prompt_tokens=%d%s",
             _trace_id,
             phys.model,
             elapsed,
             len(c),
             fr,
+            prompt_tokens,
+            cache_str,
         )
     except (AttributeError, IndexError, KeyError, TypeError):
         logger.warning(

@@ -106,12 +106,54 @@ def _deduplicate_system_prompts(history: list[dict], to_remove: set) -> list[dic
 def build_conversation_messages(
     conv: Conversation, current_messages: list[dict]
 ) -> list[dict]:
-    """Build full conversation history by interleaving turn messages and assistant responses."""
+    """Build conversation messages with DB history as stable cache prefix.
+
+    DB history is ALWAYS included when available, providing a stable
+    prefix for provider-side caching (Anthropic cache_control, DeepSeek
+    disk cache, Groq prefix cache, Go backend cache).
+
+    The client typically sends only the new user message (not full history).
+    We reconstruct the full context by prepending DB history and deduplicating
+    system prompts to avoid duplication.
+    """
     history = _build_history_from_turns(conv)
-    current_system = _extract_system_contents(current_messages)
-    history = _deduplicate_system_prompts(history, current_system)
-    history.extend(current_messages)
-    return history
+    if not history:
+        return current_messages  # New conversation — client messages are the baseline
+
+    # Count DB turns (excluding degradation/tool-detector events)
+    db_turns = sum(
+        1 for t in conv.turns
+        if getattr(t, "turn_type", None) != "degradation_event"
+    )
+
+    # Count user messages in the client's current batch
+    client_user_msgs = [m for m in current_messages if m.get("role") == "user"]
+
+    if len(client_user_msgs) > db_turns:
+        # Client sent more user messages than DB has turns → extract surplus.
+        surplus = len(client_user_msgs) - db_turns
+        user_count = 0
+        cutoff = 0
+        for i, m in enumerate(current_messages):
+            if m.get("role") == "user":
+                user_count += 1
+                if user_count > db_turns:
+                    cutoff = i
+                    break
+        new_only = current_messages[cutoff:]
+    else:
+        # Client sent only the new message(s) — use all of them.
+        new_only = current_messages
+
+    logger.debug(
+        "build_msgs db_turns=%d client_users=%d history=%d new=%d",
+        db_turns, len(client_user_msgs), len(history), len(new_only),
+    )
+
+    # Deduplicate system prompts from new messages against DB history
+    new_system = _extract_system_contents(new_only)
+    history = _deduplicate_system_prompts(history, new_system)
+    return history + new_only
 
 
 def _resolve_auto_describe_params(

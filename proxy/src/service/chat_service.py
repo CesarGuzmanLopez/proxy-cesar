@@ -201,13 +201,18 @@ async def process_chat_request(
         if desc_in_flight is not None:
             messages_for_llm = desc_in_flight
 
-    # ── Load conversation history from previous turns ────────────
-    # NOTE: Skipped intentionally — the client already sends the full
-    # conversation context in every request. Loading history from DB
-    # duplicates messages and blows up token count.
+    # ── Build messages with DB history as stable cache prefix ──────────
+    # The DB has the canonical conversation history. Using it as a stable
+    # prefix enables provider-side prefix caching (Anthropic cache_control,
+    # DeepSeek disk cache, Go backend cache) across multi-turn conversations.
     if not is_new and conv is not None and conv.turns:
-        logger.debug("chat_skip_build_msgs conv=%s client_msgs=%d db_turns=%d",
-                     conv_id[:12], len(messages), len(conv.turns))
+        active_messages = build_conversation_messages(conv, messages_for_llm)
+        logger.debug(
+            "chat_built_msgs conv=%s db_turns=%d client_msgs=%d result_msgs=%d",
+            conv_id[:12], len(conv.turns), len(messages_for_llm), len(active_messages),
+        )
+    else:
+        active_messages = messages_for_llm
 
     # Step 12: Check input threshold
     est_input = estimate_tokens(messages_for_llm)
@@ -227,8 +232,6 @@ async def process_chat_request(
             raise ValueError(f"InputExceedsThreshold: {err}")
         case Ok():
             pass  # Threshold OK
-
-    active_messages = messages_for_llm
 
     # feature Context alerts (total = history + current request)
     context_alert = get_context_alert(
