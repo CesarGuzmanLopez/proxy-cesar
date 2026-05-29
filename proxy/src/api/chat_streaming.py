@@ -736,8 +736,9 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                                     chunk_json = chunk_json.replace(placeholder, real_value)
                                     replaced = True
                                     logger.info(
-                                        "stream_reinject_ok conv=%s hash=%s",
+                                        "stream_reinject_ok conv=%s hash=%s chunk_delta=%s",
                                         ctx.conversation_id[:12], secret_hash,
+                                        repr(delta_content)[:80],
                                     )
 
                             # 2. Check for cross-chunk placeholder (fragmented across chunks)
