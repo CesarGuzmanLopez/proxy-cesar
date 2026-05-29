@@ -508,10 +508,10 @@ async def call_with_fallback(
     AuthenticationError (401 — expired / invalid key for a given provider).
     Any other exception propagates immediately (the request fails fast).
 
-    Sprint 7: applies provider-specific cache optimizations (Anthropic cache_control)
+    feature applies provider-specific cache optimizations (Anthropic cache_control)
     and tracks cache destruction on fallback.
 
-    Sprint 11: token-limit fallback — if a non-streaming model finishes with
+    feature token-limit fallback — if a non-streaming model finishes with
     ``finish_reason="length"`` and there are more physical models available,
     the partial response is appended as an assistant message and the next
     model is called to continue (composite response built at the end).
@@ -604,11 +604,13 @@ async def call_with_fallback(
                 success=False, error=str(e)[:100]
             )
             logger.warning(
-                "llm_fallback | trace=%s model=%s error=%s elapsed=%.1fs",
+                "llm_fallback | trace=%s model=%s error=%s detail=%s elapsed=%.1fs api_base=%s",
                 _trace_id,
                 phys.model,
                 type(e).__name__,
+                str(e)[:200],
                 elapsed,
+                getattr(phys, "api_base", "default"),
             )
             continue
 
