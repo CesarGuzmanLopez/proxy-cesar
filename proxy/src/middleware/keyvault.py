@@ -22,7 +22,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
-KEYVAULT_TTL = 3600
+KEYVAULT_TTL = 86400  # 24h — matches blob & affinity TTL. Must outlive provider cache.
 PLACEHOLDER_PREFIX = "KEYVAULT"
 
 # ── File extensions to exclude (avoid matching file paths / filenames) ─────────
