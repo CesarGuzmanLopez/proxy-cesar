@@ -79,17 +79,27 @@ Intercepts `POST /v1/chat/completions`:
 
 The LLM **never sees** real keys. The client **always sees** real keys.
 
-### Blob Vault (Content Transformation)
+### Content Extraction (Blob Vault)
 
-When a model doesn't support the received content type:
+When the user sends a file to a model that can't process it natively, the proxy extracts the content and injects it as text:
 
-| Type | Transformation | Helper |
-|---|---|---|
-| Image | Describe with vision model → `[BLOB:hash]` | Vision-capable model |
-| Audio | Transcribe with whisper → `[BLOB:hash]` | Whisper models |
-| PDF | Extract text with PyMuPDF → `[BLOB:hash]` | N/A |
+| Type | Extraction | Tool | Label |
+|---|---|---|---|
+| Image | Describe via vision model | Llama 4 Scout / MiMo Omni | `[v2][File extracted: image ...]` |
+| PDF | Extract text | PyMuPDF (Python) | `[v2][File extracted: document ...]` |
+| Word (DOCX) | Extract text | python-docx | `[v2][File extracted: document ...]` |
+| Excel (XLSX) | Extract text | openpyxl | `[v2][File extracted: spreadsheet ...]` |
+| PowerPoint (PPTX) | Extract text | python-pptx | `[v2][File extracted: presentation ...]` |
+| Audio | Transcribe | Whisper speech-to-text | `[v2][File extracted: audio ...]` |
+| Plain text | Decode as UTF-8 | text decode | `[v2][File extracted: document ...]` |
 
-Blobs stored in Redis (24h TTL).
+Format: extracted content is versioned (`[v2]`) and includes the filename,
+size, and extraction tool. The original file is NOT accessible on the proxy
+server — agents should read the extracted content directly or use tools if
+the file exists in their local workspace.
+
+Extraction is cached in Redis (24h TTL) with a composite key that includes
+the content hash + prompt hash (images) or just content hash (documents).
 
 ### Content Validation
 
@@ -311,8 +321,12 @@ See `python.md` for the full coding guide.
 |---|---|
 | **Pseudo-models** | Reduced from 10 to 7. Removed: `pensamiento-rapido`, `codigo-preciso`, `massive-fast`, `flash-lowcost`. Added: `flash` (GPT-OSS 20B) |
 | **Model re-assignments** | `normal` → MiMo-V2.5, `tareas-avanzadas` → MiniMax M2.7, `flash` → GPT-OSS 20B + DS V4 Flash |
-| **Multi-turn caching** | New `build_conversation_messages()` includes DB history as stable prefix. `opencode-go` added to `_PROVIDERS_WITH_CACHE_CONTROL`. Cache hit/miss logged per request |
+| **Multi-turn caching** | New `build_conversation_messages()` includes DB history as stable prefix. `opencode-go` added to `_PROVIDERS_WITH_CACHE_CONTROL`. Cache hit/miss logged per request. DeepSeek `prompt_cache_miss_tokens` captured |
 | **System prompts** | Groq models inject tool-calling instructions. GPT-OSS forces `temperature: 0.1`, `top_p: 0.9`, `parallel_tool_calls: false` |
 | **Vision** | All models advertise `vision: true`. Images auto-described via vision model for non-vision models |
-| **Logs** | `⚡ cache_control` at INFO. `cache_hit=N`, `cache_miss=N` in `llm_ok`. DeepSeek `prompt_cache_miss_tokens` captured |
+| **Delegation** | Documents (Word, text, CSV, etc.) now detected and delegated via `has_documents` capability |
+| **Content extraction** | Centralized `_classify_content_type()`. Supports PDF (PyMuPDF), DOCX (python-docx), XLSX (openpyxl), PPTX (python-pptx), plain text. Versioned output format `[v2][File extracted: ...]` |
+| **Blob references** | Removed fake `BLOB:hash` references. Agents told to read extracted content directly or use tools if file exists locally |
+| **Logs** | `⚡ cache_control` at INFO. `cache_hit=N`, `cache_miss=N` in `llm_ok`. Extraction methods logged per-request |
 | **Default model** | Changed from `normal` to `flash` (GPT-OSS 20B, cheaper and faster) |
+| **Database** | Migrated from SQLite to PostgreSQL (production). Added `busy_timeout=15s` for SQLite dev mode |

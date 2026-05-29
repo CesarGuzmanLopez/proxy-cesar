@@ -304,7 +304,7 @@ flowchart TB
     end
 ```
 
-**Providers y mecanismos:**
+ **Providers y mecanismos:**
 
 | Provider | Mecanismo | Proxy envía |
 |---|---|---|
@@ -312,3 +312,40 @@ flowchart TB
 | Go (OpenAI-route) | cache_control markers + nativo | ✅ |
 | DeepSeek | Disk caching automático | Prefijo estable |
 | Groq | Prefix caching >1024 tokens | Prefijo estable |
+
+---
+
+## 12. Content Extraction Pipeline (v1.1)
+
+```mermaid
+flowchart LR
+    FILE[Archivo enviado] --> CLASS{_classify_content_type}
+    CLASS -->|image| VISION[Describe via Llama 4 Scout]
+    CLASS -->|pdf| PDF[PyMuPDF extract]
+    CLASS -->|docx| DOCX[python-docx extract]
+    CLASS -->|xlsx| XLSX[openpyxl extract]
+    CLASS -->|pptx| PPTX[python-pptx extract]
+    CLASS -->|audio| AUDIO[Whisper transcribe]
+    CLASS -->|text| TEXT[UTF-8 decode]
+    VISION --> CACHE[Redis cache 24h<br/>key: hash:desc:prompt_hash]
+    PDF --> CACHE2[Redis cache 24h<br/>key: hash:desc]
+    DOCX --> CACHE2
+    XLSX --> CACHE2
+    PPTX --> CACHE2
+    AUDIO --> CACHE
+    TEXT --> CACHE2
+    CACHE --> FORMAT[[v2][File extracted: label | name | KB | tool]]
+    CACHE2 --> FORMAT
+    FORMAT --> INJECT[Inyectar en mensaje]
+```
+
+**Formato de salida:**
+```
+[v2][File extracted: document | name: report.pdf | 2273 KB | tool: PyMuPDF (Python)]
+Sent as file — read with tools if in workspace, or use extracted content below:
+
+[PDF: 3 pages, 1705 KB.
+2026
+La Universidad Autónoma Metropolitana
+...]
+```
