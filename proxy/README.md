@@ -65,7 +65,7 @@ src/
 
 ### Pseudo-Models + Fallback
 
-10 pseudo-models defined in `pseudo_models.yaml`, each mapping to 1+ physical models. Fallback is `sequential` (try primary, then fallbacks in order) except `compactador` which uses `by_context_window`.
+7 pseudo-models defined in `pseudo_models.yaml`, each mapping to 1+ physical models. Fallback is `sequential` (try primary, then fallbacks in order) except `compactador` which uses `by_context_window`.
 
 **Model aliases** bridge common names: `gpt-4o` → `normal`, `o3` → `pensamiento-profundo-caro`, etc.
 
@@ -111,11 +111,31 @@ Three strategies:
 
 Conversations pinned to their first physical model via Redis (`conv:{id}:physical_model`, 24h TTL). Consistent behavior across turns unless capability filter forces a change.
 
-### Provider Cache Optimization
+### Provider Cache Optimization (Multi-Turn Prompt Caching)
 
-- Layer 1 — Redis affinity: Same physical model per conversation
-- Layer 2 — Canonical ordering: `system → tools → history → query`
-- Layer 3 — Provider-specific: Anthropic `cache_control`, DeepSeek auto-caching
+Three-layer caching strategy that reduces provider costs by 60-80% in multi-turn conversations:
+
+**Layer 1 — DB History as Stable Prefix**
+When a client sends a new message in an existing conversation, the proxy reconstructs the full message array as `[DB_history] + [new_messages]`. This creates a stable prefix that providers cache across requests. *Previously broken: proxy sent only the client's single new message.*
+
+**Layer 2 — Anthropic-Style cache_control Markers**
+Applied to ALL models in the cache control set (`anthropic`, `opencode-go`):
+- Breakpoint 1: on system prompt → caches across all turns
+- Breakpoint 2: on penultimate message → caches conversation prefix
+- Models routed through Anthropic API (`anthropic/qwen3.7-max`, `anthropic/minimax-m2.7`) and Go OpenAI-route models (`openai/mimo-v2.5`, `openai/glm-5.1`) both receive markers. *Previously missing for `opencode-go` models.*
+
+**Layer 3 — Provider-Specific Monitoring**
+- **Anthropic/Go**: `cache_read_input_tokens`, `cache_creation_input_tokens` in response
+- **DeepSeek**: `prompt_cache_hit_tokens`, `prompt_cache_miss_tokens` — cache misses exposed in metadata
+- **Groq**: Automatic prefix caching (>1024 tokens), tracked via `cached_tokens`
+- **OpenRouter**: Transparent pass-through
+
+**Log visibility (INFO level):**
+```
+⚡ cache_control provider=anthropic model=anthropic/qwen3.7-max messages=3
+llm_ok  | model=openai/mimo-v2.5 prompt_tokens=249 cache_hit=192
+llm_ok  | model=deepseek/deepseek-v4-flash prompt_tokens=65 cache_miss=65
+```
 
 ### Provider Reasoning Support
 
@@ -168,7 +188,7 @@ Per-pseudo-model fixed-window rate limiter in Redis. Headers: `X-RateLimit-Limit
 
 ### `GET /health`
 ```json
-{"status":"ok","database":"connected","valkey":"connected","pseudo_models_loaded":10}
+{"status":"ok","database":"connected","valkey":"connected","pseudo_models_loaded":7}
 ```
 
 ### `GET /v1/models`
