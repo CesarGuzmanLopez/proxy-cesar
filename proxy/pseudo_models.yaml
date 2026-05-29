@@ -296,4 +296,4 @@ model_aliases:
   gemini-2.5-pro: tareas-avanzadas
   claude-sonnet-4-20250514: tareas-avanzadas
   claude-haiku-3-5-20241022: flash
-  default: normal
+  default: flash
