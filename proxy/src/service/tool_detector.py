@@ -362,8 +362,21 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
             raw = (part.get("input_audio", {}) or {}).get("data", "")
             content_type = "audio"
         elif ptype == "file":
-            raw = (part.get("file", {}) or {}).get("data", "")
+            # Support multiple file formats:
+            # OpenAI: {"type": "file", "file": {"data": "data:...", "mime_type": "..."}}
+            # Anthropic: {"type": "file", "source": {"type": "base64", "media_type": "...", "data": "..."}}
+            # Direct: {"type": "file", "data": "data:...", "mimeType": "..."}
+            raw = (
+                (part.get("file", {}) or {}).get("data", "")
+                or (part.get("source", {}) or {}).get("data", "")
+                or part.get("data", "")
+            )
             content_type = "file"
+            # If no data found but source has base64 format, reconstruct
+            if not raw and "source" in part:
+                src = part["source"]
+                if isinstance(src, dict):
+                    raw = f"data:{src.get('media_type', 'application/octet-stream')};base64,{src.get('data', '')}"
         else:
             others.append(part)
             continue

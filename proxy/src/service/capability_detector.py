@@ -58,21 +58,26 @@ def _detect_file_type(part: dict) -> str | None:
     """Detect file type from a content part. Returns category or None.
 
     Supports multiple formats:
-    - Direct mime_type field:  {"type": "file", "mime_type": "application/pdf", ...}
-    - Nested file object:      {"type": "file", "file": {"mime_type": "application/pdf", ...}}
-    - Data URI fallback:       {"type": "file", "file": {"data": "data:application/pdf;base64,..."}}
+    - Direct mime_type/mimeType/mimetype field at part level
+    - Nested file object:      {"type": "file", "file": {"mime_type": "...", ...}}
+    - Anthropic file format:   {"type": "file", "source": {"type": "base64", "media_type": "..."}}
+    - Data URI fallback:       {"type": "file", "file": {"data": "data:...;base64,..."}}
     """
-    mime = part.get("mime_type", part.get("mimetype", ""))
+    mime = part.get("mime_type") or part.get("mimeType") or part.get("mimetype") or part.get("media_type") or part.get("type", "")
     if not mime:
         file_obj = part.get("file", {}) or {}
-        mime = file_obj.get("mime_type", file_obj.get("mimetype", ""))
+        mime = (file_obj.get("mime_type") or file_obj.get("mimeType") or file_obj.get("mimetype") or file_obj.get("media_type", ""))
+    if not mime:
+        # Anthropic format: source.media_type or source.type
+        source = part.get("source", {}) or {}
+        mime = source.get("media_type") or source.get("type", "")
     if not mime:
         data = (part.get("file", {}) or {}).get("data", "")
         if isinstance(data, str) and data.startswith("data:"):
             match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", data)
             if match:
                 mime = match.group(1)
-    mime = mime.lower()
+    mime = mime.lower() if mime else ""
     if "pdf" in mime:
         return "pdf"
     if any(v in mime for v in ("video", "mp4", "webm", "mkv", "avi")):
