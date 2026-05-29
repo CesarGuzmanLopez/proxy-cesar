@@ -717,6 +717,9 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                     # LLM tokenizers split [KEYVAULT:hash] across 3-6 SSE chunks.
                     # We check for complete placeholders first, then buffer open brackets.
                     if keyvault_secrets:
+                        logger.info("stream_keyvault_gen secrets=%d delta=%s",
+                                     len(keyvault_secrets),
+                                     bool(delta_content))
                         delta_content = ""
                         for choice in chunk_dict.get("choices", []):
                             delta = choice.get("delta", {})
