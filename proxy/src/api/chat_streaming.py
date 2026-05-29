@@ -735,23 +735,31 @@ async def _stream_response_generator(ctx: StreamContext, keyvault_secrets: dict[
                         for secret_hash, real_value in keyvault_secrets.items():
                             placeholder = f"[KEYVAULT:{secret_hash}]"
                             if placeholder in buf:
-                                # Found complete placeholder — replace in ALL pending chunks
+                                # Found complete placeholder in text buffer.
+                                # The placeholder is fragmented across multiple pending chunks.
+                                # Strategy: replace the ENTIRE content of the chunk containing '['
+                                # with the real value, and clear content in subsequent chunks.
+                                found_start = False
                                 for i, pc in enumerate(pending):
-                                    pc_json = json.dumps(pc)
-                                    if placeholder in pc_json:
-                                        pending[i] = json.loads(pc_json.replace(placeholder, real_value))
+                                    pc_delta = pc.get("choices", [{}])[0].get("delta", {})
+                                    pc_content = pc_delta.get("content", "") or ""
+                                    if "[" in pc_content and not found_start:
+                                        # This chunk starts the placeholder — replace with real value
+                                        for tf in ("content", "reasoning_content"):
+                                            if tf in pc_delta:
+                                                pc_delta[tf] = real_value
+                                        found_start = True
                                         replaced = True
+                                    elif found_start and pc_content:
+                                        # Subsequent chunks have placeholder fragments — clear them
+                                        for tf in ("content", "reasoning_content"):
+                                            if tf in pc_delta:
+                                                pc_delta[tf] = ""
                                         logger.info(
                                             "stream_reinject_ok conv=%s hash=%s",
                                             ctx.conversation_id[:12], secret_hash,
                                         )
-                                        break
-                                # Replace in ALL remaining pending chunks too (clean up fragments)
-                                for i in range(len(pending)):
-                                    pc_json = json.dumps(pending[i])
-                                    if placeholder in pc_json:
-                                        pending[i] = json.loads(pc_json.replace(placeholder, real_value))
-                                # Yield all pending chunks
+                                # Yield all modified pending chunks
                                 for pc in pending:
                                     yield f"data: {json.dumps(pc)}\n\n"
                                 pending = []
