@@ -131,7 +131,6 @@ def build_conversation_messages(
 
     if len(client_user_msgs) > db_turns:
         # Client sent more user messages than DB has turns → extract surplus.
-        surplus = len(client_user_msgs) - db_turns
         user_count = 0
         cutoff = 0
         for i, m in enumerate(current_messages):
@@ -156,7 +155,7 @@ def build_conversation_messages(
     return history + new_only
 
 
-def _resolve_auto_describe_params(
+async def _resolve_auto_describe_params(
     config: ProxyConfigSchema,
     current_pseudo_name: str,
     pinned_physical_model: str,
@@ -205,7 +204,7 @@ def _resolve_auto_describe_params(
 
     vision_model = vision_phys.model
     api_base = vision_phys.api_base or None
-    api_key = _resolve_api_key(vision_phys)
+    api_key = await _resolve_api_key(vision_phys)
     return (vision_model, current_pseudo_name, None, api_base, api_key)
 
 
@@ -218,7 +217,7 @@ async def handle_auto_describe(
     in_flight_messages: list[dict] | None = None,
 ) -> tuple[list[dict] | None, dict | None]:
     """Execute auto-describe when switching from vision to non-vision model."""
-    result = _resolve_auto_describe_params(
+    result = await _resolve_auto_describe_params(
         config,
         current_pseudo_name,
         pinned_physical_model,
@@ -295,8 +294,8 @@ async def handle_auto_describe(
 # ── Late import to avoid circular dependency ─────────────────────────────────
 
 
-def _resolve_api_key(phys) -> str | None:
+async def _resolve_api_key(phys) -> str | None:
     """Resolve API key from environment if the physical model has api_key_env set."""
     from src.service.chat_fallback import _resolve_api_key as _raf
 
-    return _raf(phys)
+    return await _raf(phys)

@@ -1,4 +1,4 @@
-# Diagramas de Arquitectura — proxy-cesar
+# Diagramas de Arquitectura — proxy-cesar v1.1
 
 > **Advertencia:** Reflejan el estado actual (Mayo 2026). Si el código cambia, actualiza este documento.
 
@@ -12,21 +12,21 @@ sequenceDiagram
     participant P as Proxy (FastAPI)
     participant PM as PseudoModel Registry
     participant PH as Physical Model
-    participant KV as KeyVault
     participant BV as Blob Vault
-    participant LLM as LLM Provider (OpenCode Go)
+    participant LLM as LLM Provider (Go/DS/Groq/OR)
 
     C->>P: POST /v1/chat/completions {model, messages}
     P->>PM: resolve(pseudo_model)
     PM-->>P: physical_model + fallbacks
-    P->>KV: sanitize(messages)
-    KV-->>P: messages sanitized
     P->>BV: process_content(messages, capabilities)
+    Note over BV: Auto-describe images/audio/PDF → [BLOB:hash]
     BV-->>P: messages processed (blobs replaced)
+    P->>PH: build_conversation_messages(DB history + new)
+    Note over PH: Stable prefix for provider caching
     P->>PH: route(physical_model, processed_messages)
-    Note over PH: sequential fallback si timeout/error
-    PH->>LLM: forward request
-    LLM-->>PH: response
+    Note over PH: Sequential fallback si error
+    PH->>LLM: forward request (with cache_control markers)
+    LLM-->>PH: response (cache_hit/miss tokens)
     PH-->>P: response
     P->>P: store in conversation history
     P-->>C: response (streaming o no)
@@ -76,66 +76,59 @@ graph TB
 
 ---
 
-## 3. Pseudo-Modelos → Physical Models
+## 3. Pseudo-Modelos → Physical Models (v1.1)
 
 ```mermaid
 graph LR
-    subgraph Pseudo Modelos
-        NORMAL[normal<br/>kimi-k2.5]
-        TAREA[tareas-avanzadas<br/>kimi-k2.6]
-        PROF[pensamiento-profundo-caro<br/>qwen3.7-max]
-        RAP[pensamiento-rapido<br/>qwen3.6-plus]
-        VIS[vision<br/>mimo-v2-omni]
-        COD[codigo-preciso<br/>mimo-v2-pro]
-        GRAT[normal-gratis<br/>Nemotron]
-        MASS[massive-fast<br/>minimax-m2.7]
-        COMP[compactador<br/>GLM-5.1]
-        FLASH[flash-lowcost<br/>qwen3.5-plus]
+    subgraph "Pseudo Modelos (7)"
+        PROF[pensamiento-profundo-caro]
+        TAREA[tareas-avanzadas]
+        NORMAL[normal]
+        VIS[vision]
+        GRAT[normal-gratis]
+        FLASH[flash]
+        COMP[compactador]
     end
 
-    subgraph Proveedores
+    subgraph "Proveedores"
         OG[OpenCode Go]
-        OR[OpenRouter]
-        GQ[Groq]
         DS[DeepSeek]
+        GQ[Groq]
+        OR[OpenRouter]
     end
 
-    NORMAL -->|primary| OG
-    TAREA -->|primary| OG
-    PROF -->|primary| OG
-    RAP -->|primary| OG
-    VIS -->|primary| OG
-    COD -->|primary| OG
-    MASS -->|primary| OG
-    COMP -->|primary| OG
-    FLASH -->|primary| OG
-    GRAT -->|primary| OR
+    PROF -->|Qwen3.7 Max| OG
+    TAREA -->|MiniMax M2.7| OG
+    NORMAL -->|MiMo-V2.5| OG
+    VIS -->|Llama 4 Scout| GQ
+    GRAT -->|Nemotron free| OR
+    FLASH -->|GPT-OSS 20B - temp=0.1| GQ
+    COMP -->|GLM-5.1| OG
 
-    NORMAL -.->|fallback| DS
     PROF -.->|fallback| DS
     TAREA -.->|fallback| DS
-    RAP -.->|fallback| DS
-    COD -.->|fallback| DS
-    FLASH -.->|fallback| DS
-    COMP -.->|fallback| GQ
+    NORMAL -.->|fallback| DS
+    VIS -.->|fallback MiMo V2 Omni| OG
+    GRAT -.->|fallback Qwen3-32b| GQ
+    FLASH -.->|fallback DS V4 Flash| DS
+    COMP -.->|fallback GPT-OSS + DS Flash| GQ
     COMP -.->|fallback| DS
-    VIS -.->|fallback| GQ
-    MASS -.->|fallback| GQ
-    GRAT -.->|fallback| GQ
 ```
 
-**Physical models clave:**
-- `openai/kimi-k2.5` → normal
-- `openai/kimi-k2.6` → tareas-avanzadas
-- `anthropic/qwen3.7-max` → pensamiento-profundo-caro (usa endpoint Anthropic de Go)
-- `openai/mimo-v2-omni` → vision
-- `openai/mimo-v2-pro` → codigo-preciso
-- `openai/minimax-m2.7` → massive-fast
-- `openai/qwen3.5-plus` → flash-lowcost
-- `openai/qwen3.6-plus` → pensamiento-rapido
-- `openai/glm-5.1` → compactador
-- `openrouter/nvidia/nemotron-3-super-120b-a12b:free` → normal-gratis
-- `deepseek/deepseek-v4-pro`, `deepseek/deepseek-v4-flash` → fallbacks
+### Physical models clave (v1.1):
+| Provider | Modelo | Pseudo-modelos |
+|---|---|---|
+| **opencode-go** | `anthropic/qwen3.7-max` | pensamiento-profundo-caro |
+| | `anthropic/minimax-m2.7` | tareas-avanzadas |
+| | `openai/mimo-v2.5` | **normal** |
+| | `openai/mimo-v2-omni` | vision (fallback) |
+| | `openai/glm-5.1` | compactador |
+| **deepseek** | `deepseek/deepseek-v4-pro` | pensamiento-profundo-caro (fallback) |
+| | `deepseek/deepseek-v4-flash` | tareas, normal, flash, compactador |
+| **groq** | `groq/openai/gpt-oss-20b` | **flash** (primary), compactador (fallback) |
+| | `groq/meta-llama/llama-4-scout-17b-16e-instruct` | vision (primary) |
+| | `groq/qwen/qwen3-32b` | normal-gratis (fallback) |
+| **openrouter** | `nvidia/nemotron-3-super-120b-a12b:free` | normal-gratis (primary) |
 
 ---
 
@@ -143,20 +136,22 @@ graph LR
 
 ```mermaid
 graph TD
-    REQ[Solicitud entrante] --> DC[Decisión de Compactación]
-    DC -->|Input > umbral| COMPACT[Compactar conversación]
-    DC -->|Input normal| NORMAL_PATH[Pasar directo]
-    COMPACT --> KEYV[KeyVault sanitization]
-    NORMAL_PATH --> KEYV
+    REQ[Solicitud entrante] --> KEYV[KeyVault sanitization]
     KEYV --> BLOB[Blob Vault]
-    BLOB -->|Contenido no soportado| BLOB_DESC[Generar descripción + guardar blob]
-    BLOB -->|Contenido soportado| PASSTHROUGH[Pasar tal cual]
-    BLOB_DESC --> ROUTE[Router: seleccionar physical model]
-    PASSTHROUGH --> ROUTE
-    ROUTE --> EXEC[Ejecutar contra LLM]
+    BLOB -->|Imagen sin vision| VISION[Describir via modelo visión]
+    BLOB -->|PDF| PDFEX[Extraer texto]
+    BLOB -->|Audio| WHIS[Transcribir via Whisper]
+    VISION --> HIST[build_conversation_messages<br/>DB history + new messages]
+    PDFEX --> HIST
+    WHIS --> HIST
+    BLOB -->|Contenido OK| HIST
+    HIST --> CACHE[apply cache_control markers<br/>si Anthropic/Go]
+    CACHE --> ROUTE[Seleccionar physical model]
+    ROUTE --> SystemPrompt[Inyectar system_prompt<br/>si Groq / GPT-OSS]
+    SystemPrompt --> EXEC[Ejecutar contra LLM<br/>temperature/top_p forzados]
     EXEC -->|Éxito| RES[Responder]
     EXEC -->|Fallo| FALLBACK[Probar siguiente fallback]
-    FALLBACK --> EXEC
+    FALLBACK --> ROUTE
     EXEC -->|Todos fallaron| ERR[Error 502 ALL_MODELS_FAILED]
 ```
 
@@ -240,14 +235,12 @@ sequenceDiagram
 
 ## 8. Flujo de Razonamiento (Thinking / Reasoning Effort)
 
-> **Refactorización v1.1:** `_normalise_reasoning_param` ahora usa tabla lookup (`_REASONING_MAP`) + 2 helpers (`_map_bool_thinking`, `_map_str_thinking`) en lugar de cascada de `if/elif`. Complejidad cognitiva: 55 → 17.
-
 ```mermaid
 flowchart LR
     C[Cliente<br/>thinking: 'high'] --> P[Proxy]
     P --> D{Capacidad del<br/>physical model}
-    D -->|Anthropic| A[thinking dict<br/>budget_tokens: 16000]
-    D -->|OpenAI| O[reasoning_effort: 'high']
+    D -->|Anthropic<br/>o Go Anthropic-route| A[thinking dict<br/>budget_tokens: 16000]
+    D -->|OpenAI<br/>o Go OpenAI-route| O[reasoning_effort: 'high']
     D -->|Otros| X[auto<br/>no se envía nada]
     A --> LLM[LiteLLM acompletion]
     O --> LLM
@@ -256,25 +249,25 @@ flowchart LR
 
 La normalización ocurre en `_normalise_reasoning_param()` dentro de `chat_fallback.py`:
 - Cada modelo físico en la cadena de fallback se evalúa individualmente
-- Si el modelo primario es Anthropic y el fallback es OpenAI, cada uno recibe el formato correcto
-- `"auto"` y `None` siempre dejan que el proveedor decida
+- Go OpenAI-route models (MiMo, Kimi, GLM, DeepSeek) reciben `reasoning_effort`
+- Go Anthropic-route models (Qwen, MiniMax) reciben `thinking` dict
+
+---
 
 ## 9. Context Objects (v1.1)
 
-Para eliminar violaciones de S107 (demasiados parámetros) y reducir complejidad cognitiva, el proxy usa dataclasses como context objects:
-
 | Clase | Ubicación | Parámetros | Caso de uso |
 |---|---|---|---|
-| `StreamingRequestContext` | `chat_models.py` | 15→1 | Setup de streaming (elimina S107) |
+| `StreamingRequestContext` | `chat_models.py` | 15→1 | Setup de streaming |
 | `SaveContext` | `chat_models.py` | 23→1 | Persistir turno + resultado |
 | `MetadataContext` | `chat_models.py` | 22→1 | Construir `proxy_metadata` |
 
-**Patrón:** `service/` recibe Result[T,E], los routers construyen context objects y los pasan a las funciones de setup. Ver `_handle_streaming` en `chat_streaming.py`.
+---
 
 ## 10. Blob Description Cache
 
 Las descripciones de imágenes/audio/PDF generadas por el Blob Vault se
-almacenan en Redis (Valkey) con una clave compuesta:
+almacenan en Redis (Valkey) con clave compuesta:
 
 ```
 {prefix}:{content_hash}:desc:{prompt_hash}
@@ -284,6 +277,40 @@ almacenan en Redis (Valkey) con una clave compuesta:
 - `prompt_hash` — hash SHA-256 de 8 caracteres del texto del mensaje del usuario
 
 Esto permite que una misma imagen reciba descripciones distintas según el
-contexto del prompt en que se envía, mejorando la calidad de las respuestas
-sin recalcular descripciones idénticas para prompts repetidos. Ver
-`src/service/tool_detector.py:396` para la implementación.
+contexto del prompt. Ver `src/service/tool_detector.py:396`.
+
+---
+
+## 11. Multi-Turn Prompt Caching (v1.1)
+
+```mermaid
+flowchart TB
+    subgraph "Turno 1"
+        T1[Cliente envía mensaje] --> HIST1[build_conversation_messages<br/>No hay historial DB]
+        HIST1 --> LLM1[LLM: mensaje solo]
+        LLM1 --> DB1[Guardar en DB]
+    end
+
+    subgraph "Turno 2"
+        T2[Cliente envía nuevo mensaje] --> HIST2[build_conversation_messages<br/>DB history + nuevo mensaje]
+        HIST2 --> CACHE2[⚡ cache_control markers<br/>en contenido]
+        CACHE2 --> LLM2[LLM: prefix = DB history<br/>solo computa nuevo mensaje]
+        LLM2 --> DB2[Guardar en DB]
+    end
+
+    subgraph "Turno 3"
+        T3[...siguiente mensaje] --> HIST3[build_conversation_messages<br/>más historial DB]
+        HIST3 --> CACHE3[⚡ cache_control<br/>prefijo aún más grande]
+        CACHE3 --> LLM3[LLM: cache_hit=604<br/>solo computa último mensaje]
+        LLM3 --> DB3[Guardar en DB]
+    end
+```
+
+**Providers y mecanismos:**
+
+| Provider | Mecanismo | Proxy envía |
+|---|---|---|
+| Go (Anthropic-route) | cache_control markers | ✅ |
+| Go (OpenAI-route) | cache_control markers + nativo | ✅ |
+| DeepSeek | Disk caching automático | Prefijo estable |
+| Groq | Prefix caching >1024 tokens | Prefijo estable |

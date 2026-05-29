@@ -1,6 +1,6 @@
-# Proxy César — Technical Documentation
+# Proxy César v1.1 — Technical Documentation
 
-**Deterministic multi-model proxy for LLMs.** A transparent HTTP proxy between your LLM client and multiple providers. Translates pseudo-model names to physical models, manages conversation state, enforces content compatibility, handles tool normalization, and applies context compaction.
+**Deterministic multi-model proxy for LLMs.** A transparent HTTP proxy between your LLM client and 4 providers. Translates 7 pseudo-model names to 25+ physical models, manages conversation state with multi-turn caching, auto-describes images for non-vision models, enforces content compatibility, handles tool normalization, and applies context compaction.
 
 ---
 
@@ -156,6 +156,7 @@ The proxy accepts a `thinking` parameter (OpenAI-compatible) and maps it to the 
 The capability is detected per physical model:
 - If `provider == "anthropic"` or `model` starts with `anthropic/` → `thinking` capability
 - If `provider == "openai"` or `model` starts with `openai/` → `reasoning_effort` capability
+- If model is `opencode-go` with `openai/` prefix (MiMo-V2.5, Kimi, etc.) → **both** `thinking` + `reasoning_effort` (verified: MiMo-V2.5 returns `reasoning_content` with both params)
 - Otherwise → auto (no param sent, provider decides)
 
 The `/v1/models` endpoint advertises both capabilities separately per pseudo-model.
@@ -215,12 +216,13 @@ OpenAI-compatible. Supports `stream: true` (SSE) and `stream: false`.
 ```json
 {
   "proxy_metadata": {
-    "physical_model": "openai/kimi-k2.5",
+    "physical_model": "openai/mimo-v2.5",
     "pseudo_model": "normal",
     "fallback_applied": false,
-    "capabilities_detected": {"has_tools": true},
+    "capabilities_detected": {"has_tools": true, "has_images": false},
     "context_alert": "normal",
-    "cache": {"strategy": "...", "savings": 0.5}
+    "cache": {"provider_cache_hit": true, "cached_tokens": 192},
+    "images_described": 0
   }
 }
 ```
@@ -234,7 +236,7 @@ OpenAI-compatible. Supports `stream: true` (SSE) and `stream: false`.
 | `UNKNOWN_PSEUDO_MODEL` | 400 | Model name not found |
 | `PSEUDO_MODEL_INCOMPATIBLE` | 409 | Switch blocked by capabilities |
 | `INPUT_EXCEEDS_THRESHOLD` | 400 | Input > token threshold |
-| `IMAGES_NOT_SUPPORTED` | 400 | Image in non-vision model |
+| `IMAGES_NOT_SUPPORTED` | — | Removed in v1.1 — images are auto-described via vision model for non-vision models |
 | `AUDIO_NOT_SUPPORTED` | 400 | Audio in chat (v1) |
 | `VIDEO_NOT_SUPPORTED` | 400 | Video (v1) |
 | `PARALLEL_TOOLS_NOT_SUPPORTED` | 400 | Parallel tools unsupported |
@@ -300,3 +302,17 @@ This project uses:
 - **Strict typing** — no `Any`, no `# type: ignore`
 
 See `python.md` for the full coding guide.
+
+---
+
+## v1.1 Changelog
+
+| Area | Change |
+|---|---|
+| **Pseudo-models** | Reduced from 10 to 7. Removed: `pensamiento-rapido`, `codigo-preciso`, `massive-fast`, `flash-lowcost`. Added: `flash` (GPT-OSS 20B) |
+| **Model re-assignments** | `normal` → MiMo-V2.5, `tareas-avanzadas` → MiniMax M2.7, `flash` → GPT-OSS 20B + DS V4 Flash |
+| **Multi-turn caching** | New `build_conversation_messages()` includes DB history as stable prefix. `opencode-go` added to `_PROVIDERS_WITH_CACHE_CONTROL`. Cache hit/miss logged per request |
+| **System prompts** | Groq models inject tool-calling instructions. GPT-OSS forces `temperature: 0.1`, `top_p: 0.9`, `parallel_tool_calls: false` |
+| **Vision** | All models advertise `vision: true`. Images auto-described via vision model for non-vision models |
+| **Logs** | `⚡ cache_control` at INFO. `cache_hit=N`, `cache_miss=N` in `llm_ok`. DeepSeek `prompt_cache_miss_tokens` captured |
+| **Default model** | Changed from `normal` to `flash` (GPT-OSS 20B, cheaper and faster) |

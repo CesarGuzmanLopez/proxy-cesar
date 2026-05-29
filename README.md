@@ -93,8 +93,6 @@ curl -X POST https://chat.guzman-lopez.com/v1/chat/completions \
 
 | Variable | Default | Descripción |
 |---|---|---|
-| Variable | Default | Descripción |
-|---|---|---|---|
 | `PROXY_PORT` | `9110` | Puerto |
 | `PROXY_API_KEY` | — | Bearer token (vacío = dev mode; **requerido en producción**) |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./proxy.db` | SQLite |
