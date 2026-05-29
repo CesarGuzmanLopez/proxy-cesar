@@ -126,12 +126,7 @@ pseudo_models:
         vision: true
         context_window: 131072
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - Use tools when needed, but respond normally for plain text.
+          [KEYVAULT:...] = masked placeholder. Use it as if it were the real value.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
@@ -176,12 +171,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - Use tools when needed, but respond normally for plain text.
+          [KEYVAULT:...] = masked placeholder. Use it as if it were the real value.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
@@ -210,12 +200,7 @@ pseudo_models:
         temperature: 0.1
         top_p: 0.9
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - Use tools when needed, but respond normally for plain text.
+          [KEYVAULT:...] = masked placeholder. Use it as if it were the real value.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
@@ -262,12 +247,7 @@ pseudo_models:
         parallel_tools: true
         vision: false
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - Use tools when needed, but respond normally for plain text.
+          [KEYVAULT:...] = masked placeholder. Use it as if it were the real value.
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.

@@ -86,8 +86,7 @@ _PLACEHOLDER_RE = re.compile(rf"\[{PLACEHOLDER_PREFIX}:([a-f0-9]{{8}})\]")
 _CHAT_PATH = "/v1/chat/completions"
 
 _KEYVAULT_SYSTEM_PROMPT = (
-    "[KEYVAULT:...] = masked content. "
-    "Respond as if the real value is there."
+    "[KEYVAULT:...] = masked placeholder. Use it as if it were the real value."
 )
 # NOTE: This system prompt is a CONSTANT string — it uses "[KEYVAULT:abc12345]"
 # as a literal example, NOT actual placeholders. The prompt is IDENTICAL across
