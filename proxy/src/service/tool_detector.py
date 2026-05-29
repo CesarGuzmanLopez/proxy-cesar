@@ -367,7 +367,8 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
             # Anthropic: {"type": "file", "source": {"type": "base64", "media_type": "...", "data": "..."}}
             # Direct: {"type": "file", "data": "data:...", "mimeType": "..."}
             raw = (
-                (part.get("file", {}) or {}).get("data", "")
+                (part.get("file", {}) or {}).get("data")
+                or (part.get("file", {}) or {}).get("file_data")
                 or (part.get("source", {}) or {}).get("data", "")
                 or part.get("data", "")
             )

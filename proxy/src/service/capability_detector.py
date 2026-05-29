@@ -81,7 +81,7 @@ def _detect_file_type(part: dict) -> str | None:
                     mime = match.group(1)
                     break
             elif isinstance(candidate, dict):
-                inner = candidate.get("data", "")
+                inner = candidate.get("data") or candidate.get("file_data", "")
                 if isinstance(inner, str) and inner.startswith("data:"):
                     match = re.match(r"data:([a-z]+/[a-z0-9+.-]+)", inner)
                     if match:
