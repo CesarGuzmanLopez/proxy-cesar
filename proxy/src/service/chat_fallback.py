@@ -224,13 +224,12 @@ async def _try_physical_model(
 
     raw_thinking = kwargs.get("thinking", None)
 
-    # Override client's thinking with physical model's default (for fallbacks)
-    if phys.default_thinking is not None:
+    # Use physical model's default thinking only when client didn't specify one
+    if phys.default_thinking is not None and raw_thinking is None:
         raw_thinking = phys.default_thinking
         logger.debug(
-            "fallback_thinking_override model=%s client=%s override=%s",
+            "fallback_thinking_default model=%s default=%s",
             phys.model,
-            kwargs.get("thinking", None),
             raw_thinking,
         )
 

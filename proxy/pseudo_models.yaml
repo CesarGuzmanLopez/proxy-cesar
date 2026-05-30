@@ -218,6 +218,8 @@ pseudo_models:
         context_window: 128000
         temperature: 0.1
         top_p: 0.9
+        reasoning_effort: true
+        default_thinking: high
         system_prompt: |
           IMPORTANT:
           - NEVER describe tool usage in text
