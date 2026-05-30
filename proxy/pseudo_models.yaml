@@ -201,7 +201,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: groq
-        model: groq/openai/gpt-oss-120b
+        model: groq/openai/gpt-oss-20b
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: false
@@ -219,7 +219,7 @@ pseudo_models:
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
-        note: "Primary: GPT-OSS 120B vía Groq (500 t/s). Más inteligente que 20B."
+        note: "Primary: GPT-OSS 20B vía Groq (1000 t/s). Rápido y barato."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
