@@ -27,6 +27,7 @@ pseudo_models:
         vision: false
         context_window: 1000000
         thinking: true
+        default_thinking: max
         note: "Go: Qwen3.7 Max vía Anthropic /messages. Premium reasoning (~4.770 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
@@ -62,6 +63,7 @@ pseudo_models:
         vision: false
         context_window: 196608
         thinking: true
+        default_thinking: high
         note: "Go: MiniMax M2.7 (192K contexto) vía Anthropic /messages (~17.000 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
@@ -98,6 +100,7 @@ pseudo_models:
         context_window: 1000000
         thinking: true
         reasoning_effort: true
+        default_thinking: medium
         note: "Go: MiMo-V2.5 vía OpenAI /chat/completions (~150.400 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
@@ -152,6 +155,7 @@ pseudo_models:
         context_window: 262144
         thinking: true
         reasoning_effort: true
+        default_thinking: low
         note: "Fallback: MiMo V2 Omni (256K contexto). Visión nativa + texto."
     fallback_strategy: sequential
 
