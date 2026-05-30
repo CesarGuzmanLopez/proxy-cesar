@@ -889,8 +889,8 @@ def _build_blob_text(label: str, sz: int | str, desc: str = "", extraction_metho
 
 
 _EXTRACTION_LABELS = {
-    "image": "Vision model (Llama 4 Scout / MiMo Omni)",
-    "audio": "Speech-to-text (Whisper)",
+    "image": "Vision model",
+    "audio": "Speech-to-text",
 }
 
 
