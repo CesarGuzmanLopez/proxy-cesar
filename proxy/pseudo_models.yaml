@@ -37,7 +37,8 @@ pseudo_models:
         context_window: 1000000
         reasoning_effort: true
         strip_reasoning: true
-        note: "Fallback: DeepSeek V4 Pro directo. Razonamiento profundo."
+        default_thinking: max
+        note: "Fallback: DeepSeek V4 Pro directo. Razonamiento max."
     fallback_strategy: sequential
 
   # ── Desarrollo sostenido ──────────────────────────────────────────────────
@@ -71,7 +72,8 @@ pseudo_models:
         context_window: 1000000
         reasoning_effort: true
         strip_reasoning: true
-        note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
+        default_thinking: max
+        note: "Fallback: DeepSeek V4 Flash. Razonamiento max."
     fallback_strategy: sequential
 
   # ── Normal (punto de entrada) ─────────────────────────────────────────────
@@ -104,7 +106,10 @@ pseudo_models:
         parallel_tools: true
         vision: false
         context_window: 1000000
-        note: "Fallback: DeepSeek V4 Flash. Rápido, 1M contexto."
+        reasoning_effort: true
+        strip_reasoning: true
+        default_thinking: high
+        note: "Fallback: DeepSeek V4 Flash. Razonamiento high."
     fallback_strategy: sequential
 
   # ── Visión ────────────────────────────────────────────────────────────────

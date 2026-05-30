@@ -43,6 +43,10 @@ class PhysicalModelSchema(BaseModel, extra="forbid"):
     """If True, this model supports Anthropic-style thinking dict parameter."""
     reasoning_effort: bool = False
     """If True, this model supports OpenAI-style reasoning_effort parameter."""
+    default_thinking: str | None = None
+    """Default thinking level for fallback. Overrides client's value when set.
+    Accepts: low, medium, high, max, auto, disabled, enabled.
+    Use when the client cannot control the fallback's reasoning level."""
 
 
 # ── Sub-configs ─────────────────────────────────────────────────────────────

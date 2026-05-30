@@ -224,6 +224,16 @@ async def _try_physical_model(
 
     raw_thinking = kwargs.get("thinking", None)
 
+    # Override client's thinking with physical model's default (for fallbacks)
+    if phys.default_thinking is not None:
+        raw_thinking = phys.default_thinking
+        logger.debug(
+            "fallback_thinking_override model=%s client=%s override=%s",
+            phys.model,
+            kwargs.get("thinking", None),
+            raw_thinking,
+        )
+
     supports_anthropic = phys.thinking or False
     is_openai_reasoning_model = phys.reasoning_effort or False
     supports_reasoning_effort = is_openai_reasoning_model
