@@ -372,8 +372,8 @@ async def _try_extract_pdf_text(base64_data: str) -> str:
     which pages contain relevant information, and detect blank or image-only pages.
     """
 
-    _PER_PAGE_TEXT_MAX = 2000
-    _MAX_DETAILED_PAGES = 200
+    _PER_PAGE_TEXT_MAX = 4000
+    _MAX_DETAILED_PAGES = 100
 
     def _sync_extract() -> str:
         try:
@@ -558,8 +558,8 @@ async def _try_extract_pptx_text(base64_data: str) -> str:
     whether to use its own tools.
     """
 
-    _SLIDE_TEXT_MAX = 2000
-    _MAX_DETAILED_SLIDES = 200
+    _SLIDE_TEXT_MAX = 4000
+    _MAX_DETAILED_SLIDES = 100
 
     def _sync_extract() -> str:
         try:
