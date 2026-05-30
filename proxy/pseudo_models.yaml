@@ -192,7 +192,7 @@ pseudo_models:
   # ── Flash ────────────────────────────────────────────────────────────────
   flash:
     display_name: Flash
-    description: "Sub-agentes rápidos. Clasificación, extracción, parsing. GPT-OSS 20B (Groq) + fallback Go Flash."
+    description: "Sub-agentes rápidos. Clasificación, extracción, parsing. GPT-OSS 120B (Groq) + fallback Go Flash."
     input_token_threshold: 128000
     context_window: 128000
     router_llm:
@@ -201,7 +201,7 @@ pseudo_models:
       on_downgrade: auto_describe
     physical_models:
       - provider: groq
-        model: groq/openai/gpt-oss-20b
+        model: groq/openai/gpt-oss-120b
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: false
@@ -219,7 +219,7 @@ pseudo_models:
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
-        note: "Primary: GPT-OSS 20B vía Groq (1000 t/s). Sin tools paralelas."
+        note: "Primary: GPT-OSS 120B vía Groq (500 t/s). Más inteligente que 20B."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -243,20 +243,8 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
-      - provider: opencode-go
-        model: openai/glm-5.1
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        context_window: 198000
-        thinking: true
-        reasoning_effort: true
-        note: "Go primary: GLM-5.1 (198K contexto). Compactación vía Go (~4.300 req/mes)."
       - provider: groq
-        model: groq/openai/gpt-oss-20b
+        model: groq/qwen/qwen3-32b
         context_window: 131072
         openai_tools_compatible: true
         parallel_tools: true
@@ -271,7 +259,24 @@ pseudo_models:
 
           If you need filesystem information, ALWAYS call tools.
           Never answer from assumptions.
-        note: "Fallback 1: 20B vía Groq (1000+ t/s). Texto puro para <131K."
+        note: "Primary: Qwen3 32B vía Groq ($0.29/$0.59 por 1M). Barato y rápido."
+      - provider: groq
+        model: groq/openai/gpt-oss-120b
+        context_window: 131072
+        openai_tools_compatible: true
+        parallel_tools: true
+        vision: false
+        system_prompt: |
+          IMPORTANT:
+          - NEVER describe tool usage in text
+          - ONLY use structured tool calls
+          - DO NOT simulate tool outputs
+          - DO NOT explain intended tool usage
+          - IF a tool is available, call it directly
+
+          If you need filesystem information, ALWAYS call tools.
+          Never answer from assumptions.
+        note: "Fallback 1: GPT-OSS 120B vía Groq ($0.15/$0.60). Más capaz."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         context_window: 1000000
@@ -279,7 +284,7 @@ pseudo_models:
         reasoning_effort: true
         strip_reasoning: true
         vision: false
-        note: "Fallback 2: 1M contexto. Para historias grandes (>131K tokens)."
+        note: "Fallback 2: DeepSeek V4 Flash. 1M contexto para historias grandes."
       # Modelos helper (no participan en fallback de chat)
       - provider: groq
         model: groq/whisper-large-v3
