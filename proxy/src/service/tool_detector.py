@@ -48,7 +48,6 @@ logger = logging.getLogger(__name__)
 BLOB_PREFIX = "BLOB"
 BLOB_TTL = BLOB_STORAGE_TTL_SECONDS  # Configurable in src/config/constants.py
 _MAX_BLOB_SIZE = 10 * 1024 * 1024  # 10 MB
-_CONTENT_PREVIEW_MAX = 500
 _BLOB_FORMAT_VERSION = "v2"  # Increment when format changes
 
 
@@ -360,34 +359,120 @@ async def _transcribe_audio(raw_data: str, config) -> str:
 
 
 async def _try_extract_pdf_text(base64_data: str) -> str:
-    """Extract text from a base64-encoded PDF using PyMuPDF (offloaded to thread pool)."""
+    """Extract text from a base64-encoded PDF using PyMuPDF (offloaded to thread pool).
+
+    Returns a JSON structure with per-page details:
+      - Page number and content type (text / blank / image_only / mixed)
+      - Text preview (up to 2000 chars per page)
+      - Embedded image count
+      - Per-page notes (blank, image-only, truncation)
+    Plus document-level statistics (total pages, blank pages, image-only pages, etc.).
+
+    The JSON format allows the LLM to understand document structure, identify
+    which pages contain relevant information, and detect blank or image-only pages.
+    """
+
+    _PER_PAGE_TEXT_MAX = 2000
+    _MAX_DETAILED_PAGES = 200
 
     def _sync_extract() -> str:
         try:
             pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             page_count = len(doc)
-            text = "\n".join(page.get_text() for page in doc)
-            doc.close()
-            text = text.strip()
             size_kb = len(pdf_bytes) // 1024
-            meta = f"[PDF: {page_count} pages, {size_kb} KB."
-            if text:
-                if len(text) > _CONTENT_PREVIEW_MAX:
-                    remainder = len(text) - _CONTENT_PREVIEW_MAX
-                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
-                return f"{meta}\n\n{text}]"
-            return (
-                f"{meta} PyMuPDF could not extract text — scanned or image-based PDF.]"
-            )
+
+            pages: list[dict] = []
+            pages_with_text = 0
+            pages_blank = 0
+            pages_image_only = 0
+            total_chars = 0
+
+            for i, page in enumerate(doc):
+                if i >= _MAX_DETAILED_PAGES:
+                    break
+                page_num = i  # 0-indexed (PyMuPDF convention)
+                text = page.get_text().strip()
+                images = page.get_images()
+                has_images = len(images) > 0
+                char_count = len(text)
+                total_chars += char_count
+
+                if not text and not has_images:
+                    page_type = "blank"
+                    pages_blank += 1
+                elif not text and has_images:
+                    page_type = "image_only"
+                    pages_image_only += 1
+                elif text and not has_images:
+                    page_type = "text"
+                    pages_with_text += 1
+                else:
+                    page_type = "mixed"
+                    pages_with_text += 1
+
+                entry: dict = {"page": page_num, "type": page_type}
+
+                if text:
+                    if char_count <= _PER_PAGE_TEXT_MAX:
+                        entry["text_preview"] = text
+                    else:
+                        entry["text_preview"] = text[:_PER_PAGE_TEXT_MAX]
+                        entry["note"] = (
+                            f"Text truncated to first {_PER_PAGE_TEXT_MAX} chars "
+                            f"(page has {char_count} total)"
+                        )
+                if has_images:
+                    entry["image_count"] = len(images)
+
+                if page_type == "blank":
+                    entry["note"] = "No visible text or images on this page"
+                elif page_type == "image_only":
+                    entry["note"] = (
+                        f"Contains {len(images)} embedded image(s) but no "
+                        "extractable text; may require OCR"
+                    )
+
+                pages.append(entry)
+
+            doc.close()
+
+            remaining_pages = page_count - min(page_count, _MAX_DETAILED_PAGES)
+
+            result = {
+                "document_type": "PDF",
+                "total_pages": page_count,
+                "size_kb": size_kb,
+                "extraction_method": "PyMuPDF",
+                "statistics": {
+                    "pages_with_text": pages_with_text,
+                    "blank_pages": pages_blank,
+                    "image_only_pages": pages_image_only,
+                    "total_extracted_chars": total_chars,
+                    "detailed_pages_shown": len(pages),
+                    "pages_not_shown": remaining_pages,
+                },
+                "pages": pages,
+            }
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as exc:
-            return f"[PDF could not parse: {str(exc)[:100]}]"
+            return json.dumps({
+                "error": f"PDF could not parse: {str(exc)[:200]}",
+            })
 
     return await asyncio.to_thread(_sync_extract)
 
 
 async def _try_extract_docx_text(base64_data: str) -> str:
-    """Extract text from a base64-encoded DOCX file (offloaded to thread pool)."""
+    """Extract text from a base64-encoded DOCX file (offloaded to thread pool).
+
+    Returns a JSON structure with document-level metadata, paragraph/table
+    counts, and text preview grouped into logical segments so the model can
+    understand the document structure and decide whether to use its own tools.
+    """
+
+    _DOCX_PREVIEW_CHARS = 4000
+    _MAX_TABLE_ROWS_PREVIEW = 30
 
     def _sync_extract() -> str:
         try:
@@ -397,33 +482,84 @@ async def _try_extract_docx_text(base64_data: str) -> str:
             docx_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
             doc = Document(BytesIO(docx_bytes))
 
-            # Extract text from paragraphs
             text_parts = [para.text for para in doc.paragraphs if para.text.strip()]
-            text = "\n".join(text_parts)
-            text = text.strip()
-
-            size_kb = len(docx_bytes) // 1024
-            para_count = len(doc.paragraphs)
+            total_chars = sum(len(p) for p in text_parts)
+            para_with_text = len(text_parts)
             table_count = len(doc.tables)
+            size_kb = len(docx_bytes) // 1024
 
-            meta = f"[DOCX: {para_count} paragraphs, {table_count} tables, {size_kb} KB."
+            # Group paragraphs into segments of ~2000 chars
+            segments: list[dict] = []
+            seg_buf: list[str] = []
+            seg_chars = 0
+            seg_idx = 0
+            for p in text_parts:
+                seg_buf.append(p)
+                seg_chars += len(p)
+                if seg_chars >= 2000:
+                    seg_idx += 1
+                    seg_text = "\n".join(seg_buf)
+                    segments.append({"segment": seg_idx, "paragraphs": len(seg_buf), "chars": len(seg_text), "text_preview": seg_text[:1500]})
+                    seg_buf = []
+                    seg_chars = 0
+            if seg_buf:
+                seg_idx += 1
+                seg_text = "\n".join(seg_buf)
+                segments.append({"segment": seg_idx, "paragraphs": len(seg_buf), "chars": len(seg_text), "text_preview": seg_text[:1500]})
 
-            if text:
-                if len(text) > _CONTENT_PREVIEW_MAX:
-                    remainder = len(text) - _CONTENT_PREVIEW_MAX
-                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
-                return f"{meta}\n\n{text}]"
-            return f"{meta} Could not extract text from document.]"
+            total_paragraphs = len(doc.paragraphs)
+            segments_shown = len(segments)
+
+            # Extract table previews
+            tables_preview: list[dict] = []
+            for ti, table in enumerate(doc.tables[:5]):  # max 5 tables in preview
+                rows: list[str] = []
+                for ri, row in enumerate(table.rows):
+                    if ri >= _MAX_TABLE_ROWS_PREVIEW:
+                        break
+                    cells = [cell.text.strip() for cell in row.cells]
+                    rows.append(" | ".join(cells))
+                tables_preview.append({
+                    "table": ti + 1,
+                    "rows": len(table.rows),
+                    "cols": len(table.columns),
+                    "preview_rows": rows[:10],
+                })
+
+            result = {
+                "document_type": "DOCX",
+                "total_paragraphs": total_paragraphs,
+                "paragraphs_with_text": para_with_text,
+                "tables": table_count,
+                "size_kb": size_kb,
+                "extraction_method": "python-docx",
+                "statistics": {
+                    "total_extracted_chars": total_chars,
+                    "segments_shown": segments_shown,
+                    "tables_previewed": len(tables_preview),
+                },
+                "segments": segments,
+                "tables_preview": tables_preview,
+            }
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except ImportError:
-            return "[DOCX: Could not process — python-docx library not available.]"
+            return json.dumps({"error": "DOCX: python-docx library not available"})
         except Exception as exc:
-            return f"[DOCX could not parse: {str(exc)[:100]}]"
+            return json.dumps({"error": f"DOCX could not parse: {str(exc)[:200]}"})
 
     return await asyncio.to_thread(_sync_extract)
 
 
 async def _try_extract_pptx_text(base64_data: str) -> str:
-    """Extract text from a base64-encoded PPTX file (offloaded to thread pool)."""
+    """Extract text from a base64-encoded PPTX file (offloaded to thread pool).
+
+    Returns a JSON structure with per-slide detail so the model can understand
+    the presentation structure, identify which slides have content, and decide
+    whether to use its own tools.
+    """
+
+    _SLIDE_TEXT_MAX = 2000
+    _MAX_DETAILED_SLIDES = 200
 
     def _sync_extract() -> str:
         try:
@@ -432,9 +568,20 @@ async def _try_extract_pptx_text(base64_data: str) -> str:
 
             pptx_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
             prs = Presentation(BytesIO(pptx_bytes))
-            slides_text = []
-            for i, slide in enumerate(prs.slides, 1):
-                slide_parts = []
+            size_kb = len(pptx_bytes) // 1024
+            total_slides = len(prs.slides)
+
+            slides: list[dict] = []
+            slides_with_text = 0
+            slides_empty = 0
+            total_chars = 0
+
+            for i, slide in enumerate(prs.slides):
+                if i >= _MAX_DETAILED_SLIDES:
+                    break
+                slide_num = i + 1
+                slide_parts: list[str] = []
+                has_table = False
                 for shape in slide.shapes:
                     if shape.has_text_frame:
                         for para in shape.text_frame.paragraphs:
@@ -442,30 +589,70 @@ async def _try_extract_pptx_text(base64_data: str) -> str:
                             if text:
                                 slide_parts.append(text)
                     if shape.has_table:
+                        has_table = True
                         for row in shape.table.rows:
                             row_text = [cell.text.strip() for cell in row.cells]
                             slide_parts.append(" | ".join(row_text))
-                if slide_parts:
-                    slides_text.append(f"--- Slide {i} ---\n" + "\n".join(slide_parts))
-            size_kb = len(pptx_bytes) // 1024
-            text = "\n\n".join(slides_text) if slides_text else ""
-            meta = f"[PPTX: {len(prs.slides)} slides, {size_kb} KB."
-            if text:
-                if len(text) > _CONTENT_PREVIEW_MAX:
-                    remainder = len(text) - _CONTENT_PREVIEW_MAX
-                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
-                return f"{meta}\n\n{text}]"
-            return f"{meta} No text found in slides.]"
+                slide_text = "\n".join(slide_parts).strip()
+                char_count = len(slide_text)
+                total_chars += char_count
+
+                if not slide_text:
+                    slides_empty += 1
+                    slides.append({
+                        "slide": slide_num,
+                        "has_text": False,
+                        "note": "Empty slide (no extractable text)",
+                    })
+                else:
+                    slides_with_text += 1
+                    entry: dict = {"slide": slide_num, "has_text": True}
+                    if char_count <= _SLIDE_TEXT_MAX:
+                        entry["text_preview"] = slide_text
+                    else:
+                        entry["text_preview"] = slide_text[:_SLIDE_TEXT_MAX]
+                        entry["note"] = (
+                            f"Text truncated to first {_SLIDE_TEXT_MAX} chars "
+                            f"(slide has {char_count} total)"
+                        )
+                    if has_table:
+                        entry["has_table"] = True
+                    slides.append(entry)
+
+            remaining = total_slides - min(total_slides, _MAX_DETAILED_SLIDES)
+            result = {
+                "document_type": "PPTX",
+                "total_slides": total_slides,
+                "size_kb": size_kb,
+                "extraction_method": "python-pptx",
+                "statistics": {
+                    "slides_with_text": slides_with_text,
+                    "empty_slides": slides_empty,
+                    "total_extracted_chars": total_chars,
+                    "detailed_slides_shown": len(slides),
+                    "slides_not_shown": remaining,
+                },
+                "slides": slides,
+            }
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except ImportError:
-            return "[PPTX: Could not process — python-pptx library not available.]"
+            return json.dumps({"error": "PPTX: python-pptx library not available"})
         except Exception as exc:
-            return f"[PPTX could not parse: {str(exc)[:100]}]"
+            return json.dumps({"error": f"PPTX could not parse: {str(exc)[:200]}"})
 
     return await asyncio.to_thread(_sync_extract)
 
 
 async def _try_extract_xlsx_text(base64_data: str) -> str:
-    """Extract text from a base64-encoded XLSX file (offloaded to thread pool)."""
+    """Extract text from a base64-encoded XLSX file (offloaded to thread pool).
+
+    Returns a JSON structure with per-sheet detail so the model can understand
+    the spreadsheet structure, identify which sheets have data, and decide
+    whether to use its own tools.
+    """
+
+    _ROWS_PER_SHEET_PREVIEW = 100
+    _MAX_DETAILED_SHEETS = 50
 
     def _sync_extract() -> str:
         try:
@@ -474,33 +661,62 @@ async def _try_extract_xlsx_text(base64_data: str) -> str:
 
             xlsx_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
             wb = openpyxl.load_workbook(BytesIO(xlsx_bytes), read_only=True, data_only=True)
-            sheets_text = []
-            total_rows = 0
-            for sheet_name in wb.sheetnames:
+            size_kb = len(xlsx_bytes) // 1024
+            total_sheets = len(wb.sheetnames)
+            total_data_rows = 0
+
+            sheets: list[dict] = []
+            for si, sheet_name in enumerate(wb.sheetnames):
+                if si >= _MAX_DETAILED_SHEETS:
+                    break
                 ws = wb[sheet_name]
-                rows_text = []
+                row_values_list: list[str] = []
+                sheet_row_count = 0
                 for row in ws.iter_rows(values_only=True):
                     row_values = [str(v) if v is not None else "" for v in row]
                     row_text = " | ".join(row_values).strip()
                     if row_text:
-                        rows_text.append(row_text)
-                        total_rows += 1
-                if rows_text:
-                    sheets_text.append(f"--- Sheet: {sheet_name} ({len(rows_text)} rows) ---\n" + "\n".join(rows_text))
+                        row_values_list.append(row_text)
+                        sheet_row_count += 1
+                        total_data_rows += 1
+
+                if sheet_row_count > _ROWS_PER_SHEET_PREVIEW:
+                    preview = row_values_list[:_ROWS_PER_SHEET_PREVIEW]
+                    sheets.append({
+                        "sheet": sheet_name,
+                        "data_rows": sheet_row_count,
+                        "preview_rows_shown": _ROWS_PER_SHEET_PREVIEW,
+                        "text_preview": "\n".join(preview),
+                        "note": f"Rows truncated to first {_ROWS_PER_SHEET_PREVIEW} (sheet has {sheet_row_count} total)",
+                    })
+                else:
+                    sheets.append({
+                        "sheet": sheet_name,
+                        "data_rows": sheet_row_count,
+                        "preview_rows_shown": sheet_row_count,
+                        "text_preview": "\n".join(row_values_list) if row_values_list else "",
+                    })
+
             wb.close()
-            size_kb = len(xlsx_bytes) // 1024
-            text = "\n\n".join(sheets_text) if sheets_text else ""
-            meta = f"[XLSX: {len(wb.sheetnames)} sheets, {total_rows} data rows, {size_kb} KB."
-            if text:
-                if len(text) > _CONTENT_PREVIEW_MAX:
-                    remainder = len(text) - _CONTENT_PREVIEW_MAX
-                    return f"{meta}\n\n{text[:_CONTENT_PREVIEW_MAX]}\n...{{{remainder} more chars}}]"
-                return f"{meta}\n\n{text}]"
-            return f"{meta} No data found.]"
+            remaining = total_sheets - min(total_sheets, _MAX_DETAILED_SHEETS)
+
+            result = {
+                "document_type": "XLSX",
+                "total_sheets": total_sheets,
+                "size_kb": size_kb,
+                "extraction_method": "openpyxl",
+                "statistics": {
+                    "total_data_rows": total_data_rows,
+                    "detailed_sheets_shown": len(sheets),
+                    "sheets_not_shown": remaining,
+                },
+                "sheets": sheets,
+            }
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except ImportError:
-            return "[XLSX: Could not process — openpyxl library not available.]"
+            return json.dumps({"error": "XLSX: openpyxl library not available"})
         except Exception as exc:
-            return f"[XLSX could not parse: {str(exc)[:100]}]"
+            return json.dumps({"error": f"XLSX could not parse: {str(exc)[:200]}"})
 
     return await asyncio.to_thread(_sync_extract)
 
@@ -612,6 +828,28 @@ def _truncate_desc(desc: str, sz_kb: int | str) -> str:
     return desc
 
 
+def _log_extraction_event(
+    label: str,
+    filename: str,
+    sz: int | str,
+    extraction_method: str,
+    desc: str,
+) -> None:
+    """Log extraction event at INFO level with the extracted content."""
+    sz_str = f"{sz} KB" if isinstance(sz, (int, float)) else str(sz)
+    preview = desc[:300] if desc else "(empty)"
+    logger.info(
+        "extraction_event label=%s filename=%s size=%s method=%s "
+        "desc_len=%d preview=%s",
+        label,
+        filename or "(unnamed)",
+        sz_str,
+        extraction_method or "unknown",
+        len(desc) if desc else 0,
+        preview,
+    )
+
+
 def _build_blob_text(label: str, sz: int | str, desc: str = "", extraction_method: str = "", filename: str = "") -> str:
     """Build extracted content text block.
 
@@ -637,6 +875,16 @@ def _build_blob_text(label: str, sz: int | str, desc: str = "", extraction_metho
         t += f"\n{desc}\n"
     else:
         t += "\n(Warning: Content extraction failed.)\n"
+
+    # Log the final blob text that the LLM will receive
+    logger.info(
+        "extraction_blob label=%s filename=%s size=%s method=%s blob_len=%d",
+        label,
+        filename or "(unnamed)",
+        f"{sz} KB" if isinstance(sz, (int, float)) else str(sz),
+        extraction_method or "unknown",
+        len(t),
+    )
     return t
 
 
@@ -746,23 +994,57 @@ async def _describe_images(valkey, prefix, blobs, user_text, config):
     Cache key includes a hash of the user prompt so that the same image
     asked with a different question gets a different (correct) description.
     Key format: {prefix}:{hash}:desc:{prompt_hash}
+
+    NOTE: Image descriptions are NOT deterministic because they depend on
+    the user's prompt context — same image + different prompt → new description.
     """
     if not blobs:
         return []
     prompt_hash = hashlib.sha256((user_text or "").encode()).hexdigest()[:8]
+    cache_keys = [f"{prefix}:{h}:desc:{prompt_hash}" for h, _, _, _, _ in blobs]
     cached = await asyncio.gather(
-        *[
-            _get_cached(valkey, f"{prefix}:{h}:desc:{prompt_hash}")
-            for h, _, _, _, _ in blobs
-        ]
+        *[_get_cached(valkey, k) for k in cache_keys]
     )
-    if all(cached):
+
+    # Log cache results per image
+    all_cached = True
+    for (h, _, _, _, fn), k, v in zip(blobs, cache_keys, cached):
+        if v:
+            logger.info(
+                "extraction_image cache_hit=true key=%s filename=%s "
+                "desc_len=%d preview=%s",
+                k, fn or "(unnamed)",
+                len(v), v[:200] if v else "(empty)",
+            )
+        else:
+            all_cached = False
+            logger.info(
+                "extraction_image cache_hit=false key=%s filename=%s "
+                "prompt_hash=%s",
+                k, fn or "(unnamed)", prompt_hash,
+            )
+
+    if all_cached:
         return cached
+
     descs = await _describe_image_batch(
         [(h, r) for h, r, _, _, _ in blobs], user_text, config
     )
     while len(descs) < len(blobs):
         descs.append("")
+
+    # Log newly described images
+    for (h, _, _, _, fn), d in zip(blobs, descs):
+        if d:
+            logger.info(
+                "extraction_image cache_hit=false key=%s filename=%s "
+                "desc_len=%d prompt_hash=%s preview=%s",
+                f"{prefix}:{h}:desc:{prompt_hash}",
+                fn or "(unnamed)",
+                len(d), prompt_hash,
+                d[:300] if d else "(empty)",
+            )
+
     store = [
         _store_desc(valkey, f"{prefix}:{h}:desc:{prompt_hash}", d)
         for (h, _, _, _, _), d in zip(blobs, descs)
@@ -812,38 +1094,73 @@ async def _store_blob_if_missing(valkey, key: str, raw: str) -> None:
         exists = await valkey.exists(key)
         if not exists:
             await valkey.set(key, raw, ex=BLOB_TTL)
+            logger.info(
+                "cache_write type=blob key=%s size=%d ttl=%d",
+                key, len(raw), BLOB_TTL,
+            )
+        else:
+            logger.debug("cache_skip type=blob key=%s reason=already_exists", key)
     except Exception as exc:
-        logger.warning("blob_store_error key=%s err=%s", key, exc)
+        logger.warning("cache_write_error type=blob key=%s err=%s", key, exc)
 
 
 async def _store_desc(valkey, key: str, desc: str) -> None:
     """Store description with SETNX + EXPIRE."""
     try:
-        await valkey.setnx(key, desc)
+        stored = await valkey.setnx(key, desc)
         await valkey.expire(key, BLOB_TTL)
+        if stored:
+            logger.info(
+                "cache_write type=desc key=%s desc_len=%d ttl=%d",
+                key, len(desc), BLOB_TTL,
+            )
+        else:
+            logger.debug("cache_skip type=desc key=%s reason=already_exists", key)
     except Exception as exc:
-        logger.warning("blob_desc_store_error key=%s err=%s", key, exc)
+        logger.warning("cache_write_error type=desc key=%s err=%s", key, exc)
 
 
 async def _describe_audio(valkey, desc_key: str, raw: str, config) -> str:
-    """Transcribe audio if not already cached."""
+    """Transcribe audio if not already cached (SHA256 hash → deterministic)."""
     try:
         cached = await valkey.get(desc_key)
         if cached:
+            logger.info(
+                "extraction_audio cache_hit=true desc_key=%s desc_len=%d preview=%s",
+                desc_key,
+                len(cached),
+                cached[:300] if cached else "(empty)",
+            )
             return cached
     except Exception as exc:
         logger.warning("blob_audio_cache_error key=%s err=%s", desc_key, exc)
     desc = await _transcribe_audio(raw, config)
+    logger.info(
+        "extraction_audio cache_hit=false desc_key=%s desc_len=%d preview=%s",
+        desc_key,
+        len(desc) if desc else 0,
+        desc[:300] if desc else "(empty)",
+    )
     if desc:
         await _store_desc(valkey, desc_key, desc)
     return desc
 
 
 async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> str:
-    """Extract text from a file — PDF, DOCX, PPTX, XLSX, or plain text fallback."""
+    """Extract text from a file — PDF, DOCX, PPTX, XLSX, or plain text fallback.
+
+    Cached by SHA256 hash of raw content (deterministic extraction).
+    """
     try:
         cached = await valkey.get(desc_key)
         if cached:
+            logger.info(
+                "extraction_file cache_hit=true desc_key=%s mime=%s desc_len=%d preview=%s",
+                desc_key,
+                mime,
+                len(cached),
+                cached[:400] if cached else "(empty)",
+            )
             return cached
     except Exception as exc:
         logger.warning("blob_file_cache_error key=%s err=%s", desc_key, exc)
@@ -870,6 +1187,14 @@ async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> 
             logger.debug("blob_text_decode_error mime=%s err=%s", mime, exc)
             desc = ""
 
+    logger.info(
+        "extraction_file cache_hit=false desc_key=%s mime=%s ctype=%s desc_len=%d preview=%s",
+        desc_key,
+        mime,
+        ctype,
+        len(desc) if desc else 0,
+        desc[:500] if desc else "(empty)",
+    )
     if desc:
         await _store_desc(valkey, desc_key, desc)
     return desc
