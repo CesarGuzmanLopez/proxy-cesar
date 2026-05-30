@@ -1,6 +1,6 @@
 [project]
 name = "proxy-cesar"
-version = "0.1.0"
+version = "1.2.0"
 description = "Deterministic multi-model proxy for LLMs"
 requires-python = ">=3.12,<3.15"
 dependencies = [
