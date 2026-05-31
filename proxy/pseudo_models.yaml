@@ -176,19 +176,6 @@ pseudo_models:
         pdf: false
         context_window: 1000000
         note: "Primary: Nemotron 3 Super 120B gratis vía OpenRouter. 1M ctx."
-      - provider: groq
-        model: groq/qwen/qwen3-32b
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        strip_reasoning: true
-        context_window: 131072
-        system_prompt: |
-          Reasoning: medium
-
-          Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
-        note: "Fallback 1: Qwen3 32B vía Groq. 32B, 131K contexto. Bajo costo."
       - provider: nvidia
         model: openai/nvidia/nemotron-3-super-120b-a12b
         api_base: https://integrate.api.nvidia.com/v1
