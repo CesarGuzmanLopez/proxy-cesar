@@ -347,6 +347,8 @@ async def process_chat_request(
         conversation_id=conv_id,
         valkey_client=valkey,
         affinity=affinity,
+        turn_caps=turn_caps,
+        config=config,
     )
     _t_llm_elapsed = time.monotonic() - _t_llm_start
 

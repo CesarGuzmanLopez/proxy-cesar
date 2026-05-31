@@ -29,11 +29,13 @@ from src.adapters.cache.provider_cache import (
     should_apply_cache_control,
 )
 from src.adapters.litellm import call_litellm
-from src.config.pseudo_models import PhysicalModelSchema
+from src.config.pseudo_models import PhysicalModelSchema, ProxyConfigSchema
 from src.config.settings import settings as _global_settings
+from src.domain.capabilities import TurnCapabilities
 from src.domain.errors import ContextTooLargeForAllModels, AllModelsFailed
 from src.service.capability_detector import estimate_tokens
 from src.service.chat_models import FallbackInfo
+from src.service.compatibility import validate_physical_model_content
 from src.service.smart_fallback import SmartFallback
 
 logger = logging.getLogger(__name__)
@@ -677,6 +679,8 @@ async def call_with_fallback(
     conversation_id: str | None = None,
     valkey_client=None,
     affinity=None,
+    turn_caps: TurnCapabilities | None = None,
+    config: ProxyConfigSchema | None = None,
     **kwargs,
 ) -> tuple:
     """Try each physical model in order. On retryable errors, move to next.
@@ -747,6 +751,20 @@ async def call_with_fallback(
             fallback_info.reason = f"model_banned: {phys.model}"
             fallback_info.attempted_models.append(f"{phys.model} (banned)")
             continue
+
+        # Re-validate content compatibility for fallback models
+        # (the first/primary model was already validated upstream)
+        if idx > start_index and turn_caps and valkey_client:
+            delegation = validate_physical_model_content(turn_caps, phys)
+            if delegation:
+                logger.info(
+                    "content_fallback_delegation idx=%d model=%s action=%s",
+                    idx, phys.model, delegation.get("action"),
+                )
+                from src.service.tool_detector import replace_base64_with_blob_refs
+                ordered_messages, _ = await replace_base64_with_blob_refs(
+                    ordered_messages, conversation_id, valkey_client, config,
+                )
 
         try:
             response, skip_reason = await _try_physical_model(
