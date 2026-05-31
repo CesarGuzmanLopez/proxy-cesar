@@ -50,12 +50,12 @@ def validate_incoming_content(
     if result is not None:
         return result
 
-    # PDF → model without vision
+    # PDF → model without pdf capability
     result = _check_content_support(
         turn_caps,
         "has_pdf",
         phys,
-        "vision",
+        "pdf",
     )
     if result is not None:
         return result
@@ -142,8 +142,8 @@ def validate_physical_model_content(
     checks = [
         ("has_images", "vision"),
         ("has_audio", "audio"),
-        ("has_pdf", "vision"),
-        ("has_documents", "vision"),
+        ("has_pdf", "pdf"),
+        ("has_documents", "documents"),
         ("has_video", "video"),
     ]
 

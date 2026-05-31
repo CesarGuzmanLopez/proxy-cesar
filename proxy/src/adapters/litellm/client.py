@@ -4,6 +4,7 @@ python.md §5.2: Adapter pattern — wraps external library with our own interfa
 analisis.md: LiteLLM handles all provider translation. Proxy never translates.
 """
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -147,7 +148,12 @@ def setup_litellm(settings: Settings) -> None:
     """Pass all provider API keys to LiteLLM via os.environ.
 
     Called once during FastAPI lifespan startup.
+
+    ``drop_params = True`` is CRITICAL: without it, LiteLLM rejects unsupported
+    parameters like ``thinking`` or ``reasoning_effort`` for providers where its
+    internal detection is inaccurate (e.g. OpenCode Go custom endpoints).
     """
+    litellm.drop_params = True
     _ensure_ssl_cert_file()
     os.environ.setdefault("OPENROUTER_API_KEY", settings.openrouter_api_key)
     os.environ.setdefault("DEEPSEEK_API_KEY", settings.deepseek_api_key)
@@ -155,6 +161,7 @@ def setup_litellm(settings: Settings) -> None:
     os.environ.setdefault("PRUNA_API_KEY", settings.pruna_api_key)
     os.environ.setdefault("PRUNA_API_BASE", "https://api.pruna.ai/v1")
     os.environ.setdefault("OPENCODE_API_KEY", settings.opencode_api_key)
+    os.environ.setdefault("NVIDIA_API_KEY", settings.nvidia_api_key)
     # Anthropic provider (anthropic/ prefix) needs ANTHROPIC_API_KEY for Go models
     if settings.opencode_api_key:
         os.environ.setdefault("ANTHROPIC_API_KEY", settings.opencode_api_key)
@@ -190,7 +197,6 @@ async def call_litellm(
     model: str,
     messages: list[dict],
     stream: bool = False,
-    timeout: float | None = None,
     **kwargs,
 ):
     """Call LiteLLM with the exact model ID from config.
@@ -207,6 +213,10 @@ async def call_litellm(
     budget (the model "thinks" long and leaves no tokens for the final answer).
     This normalisation copies ``reasoning_content`` into ``content`` so the
     caller never sees an empty assistant reply.
+
+    Timeout is managed via ``asyncio.wait_for()`` with
+    ``DEFAULT_LLM_TIMEOUT_SECONDS``. Callers needing a custom timeout should
+    wrap this coroutine with ``asyncio.wait_for()`` directly.
     """
     # Extract api_base/api_key if present (they are passed in **kwargs)
     api_base = kwargs.pop("api_base", None)
@@ -222,16 +232,16 @@ async def call_litellm(
 
     from src.config.constants import DEFAULT_LLM_TIMEOUT_SECONDS
 
-    effective_timeout = timeout if timeout is not None else DEFAULT_LLM_TIMEOUT_SECONDS
-
-    response = await litellm.acompletion(
-        model=model,
-        messages=messages,
-        stream=stream,
-        api_base=api_base,
-        api_key=api_key,
-        timeout=effective_timeout,
-        **kwargs,
+    response = await asyncio.wait_for(
+        litellm.acompletion(
+            model=model,
+            messages=messages,
+            stream=stream,
+            api_base=api_base,
+            api_key=api_key,
+            **kwargs,
+        ),
+        timeout=DEFAULT_LLM_TIMEOUT_SECONDS,
     )
 
     # ── Extract provider response headers ─────────────────────────────────

@@ -25,6 +25,12 @@ class PhysicalModelSchema(BaseModel, extra="forbid"):
     parallel_tools: bool = False
     vision: bool = False
     audio: bool = False
+    pdf: bool = False
+    """If True, this model supports direct PDF processing."""
+    documents: bool = False
+    """If True, this model supports direct document processing (docx, pptx, xlsx)."""
+    max_direct_image_size_kb: int | None = None
+    """Maximum image size in KB for direct vision processing. Larger images are delegated."""
     context_window: int | None = None
     note: str | None = None
     api_base: str | None = None

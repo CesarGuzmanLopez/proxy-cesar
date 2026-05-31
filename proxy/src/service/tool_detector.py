@@ -17,6 +17,7 @@ import logging
 import re
 
 import fitz  # PyMuPDF — mandatory for PDF text extraction
+import httpx
 
 from src.config.constants import BLOB_STORAGE_TTL_SECONDS
 
@@ -757,6 +758,20 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
             # OpenAI standard format
             raw = part.get("image_url", {}).get("url", "")
             content_type = "image"
+            # Download HTTP(S) image URLs and convert to base64
+            if raw and raw.startswith(("http://", "https://")):
+                try:
+                    resp = httpx.get(raw, timeout=15.0, follow_redirects=True)
+                    resp.raise_for_status()
+                    b64_data = base64.b64encode(resp.content).decode("ascii")
+                    mime = resp.headers.get("content-type", "image/png")
+                    raw = f"data:{mime};base64,{b64_data}"
+                except Exception as exc:
+                    logger.warning(
+                        "image_url_download_failed url=%.100s err=%s", raw, exc,
+                    )
+                    others.append({"type": "text", "text": "[La imagen no pudo ser descargada desde la URL proporcionada]"})
+                    continue
         elif ptype == "image":
             # Base64 inline format (used by Anthropic, others)
             raw = part.get("image", "")

@@ -47,6 +47,10 @@ from src.service.threshold_guard import check_input_threshold
 from src.service.tool_filter import get_eligible_models, is_pinned_model_eligible
 from src.service.tool_detector import replace_base64_with_blob_refs
 from src.service.pipeline_trace import PipelineTrace
+from src.service.multimedia.image_processor import (
+    _is_svg_data_url,
+    degrade_image,
+)
 
 # ── Split-module imports ──────────────────────────────────────────────────────
 from src.service.chat_fallback import call_with_fallback, _resolve_api_key
@@ -88,6 +92,54 @@ __all__ = [
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 
+# ── SVG image pre-processing ──────────────────────────────────────────────────
+
+
+def _preprocess_svg_images(messages: list[dict]) -> list[dict]:
+    """Convert SVG images to JPEG before any model sees them.
+
+    Most vision models and providers do not support SVG format. This step
+    rasterizes SVGs to JPEG (via cairosvg + PIL) so the model can process
+    them regardless of whether delegation is triggered (models with vision=true
+    send images directly without going through the delegation pipeline).
+
+    Returns a new list of messages with SVG images converted to JPEG.
+    """
+    result: list[dict] = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            result.append(msg)
+            continue
+        new_parts: list[dict] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                url = part.get("image_url", {})
+                if isinstance(url, dict) and _is_svg_data_url(url.get("url", "")):
+                    svg_url = url["url"]
+                    jpeg_url = degrade_image(svg_url)
+                    if jpeg_url.startswith("data:image/jpeg"):
+                        logger.info(
+                            "svg_to_jpeg url_len=%d result_len=%d",
+                            len(svg_url),
+                            len(jpeg_url),
+                        )
+                        new_parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": jpeg_url},
+                            }
+                        )
+                        continue
+            # Fallthrough: keep original part
+            new_parts.append(part)
+        if new_parts != content:
+            result.append({**msg, "content": new_parts})
+        else:
+            result.append(msg)
+    return result
+
+
 async def process_chat_request(
     model: str,
     messages: list[dict],
@@ -110,6 +162,9 @@ async def process_chat_request(
     """
     _req_id = str(uuid.uuid4())[:8]
     _t0 = time.monotonic()
+
+    # Step 0: Preprocess SVG images → JPEG (most vision models don't support SVG)
+    messages = _preprocess_svg_images(messages)
     logger.info(
         "req_start | trace=%s model=%s conv=%s messages=%d tools=%s stream=%s",
         _req_id,

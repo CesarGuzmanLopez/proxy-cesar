@@ -69,7 +69,7 @@ async def test_2_affinity_maintained(async_client: AsyncClient, mock_litellm):
 
 @pytest.mark.asyncio
 async def test_3_unknown_pseudo_model(async_client: AsyncClient, mock_litellm):
-    """Unknown pseudo-model → resolved via default alias to 'normal' (200)."""
+    """Unknown pseudo-model → resolved via default alias to 'flash' (200)."""
     response = await async_client.post(
         "/v1/chat/completions",
         json={
@@ -77,10 +77,10 @@ async def test_3_unknown_pseudo_model(async_client: AsyncClient, mock_litellm):
             "messages": [{"role": "user", "content": "Hello"}],
         },
     )
-    # feature default alias maps unknown models to "normal"
+    # feature default alias maps unknown models to "flash"
     assert response.status_code == 200
     data = response.json()
-    assert data["proxy_metadata"]["pseudo_model"] == "normal"
+    assert data["proxy_metadata"]["pseudo_model"] == "flash"
 
 
 @pytest.mark.asyncio

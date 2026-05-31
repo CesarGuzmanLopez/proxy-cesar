@@ -192,16 +192,14 @@ class TestComputeTier:
         """Tiers reflect real config: context_window + tools_strict + vision."""
         deep_tier = _compute_tier("pensamiento-profundo-caro", _CONFIG)
         normal_tier = _compute_tier("normal", _CONFIG)
-        flash_tier = _compute_tier("flash-lowcost", _CONFIG)
-        massive_tier = _compute_tier("massive-fast", _CONFIG)
+        flash_tier = _compute_tier("flash", _CONFIG)
         vision_tier = _compute_tier("vision", _CONFIG)
 
         # All have real context_windows now, so tier ordering is config-driven
-        assert deep_tier == 205, f"deepseek-v4-pro + qwen3.7-max (1M ctx, tools_strict) = {deep_tier}"
-        assert flash_tier == 200, f"qwen3.5-plus + deepseek-v4-flash (1M ctx, no strict) = {flash_tier}"
-        assert normal_tier == 57, f"kimi-k2.5 (262K ctx, tools_strict) = {normal_tier}"
-        assert massive_tier == 26, f"minimax-m2.7 (131K ctx, no strict) = {massive_tier}"
-        assert vision_tier == 29, f"llama-4-scout (131K ctx, no strict, vision) = {vision_tier}"
+        assert deep_tier == 57, f"kimi-k2.5 + deepseek-v4-pro = {deep_tier}"
+        assert flash_tier == 24, f"gpt-oss-120b + deepseek-v4-flash = {flash_tier}"
+        assert normal_tier == 206, f"mimo-v2.5 + deepseek-v4-flash = {normal_tier}"
+        assert vision_tier == 29, f"llama-4-scout + mimo-v2-omni = {vision_tier}"
 
     def test_unknown_model_returns_zero(self):
         """Non-existent model name → returns 0."""

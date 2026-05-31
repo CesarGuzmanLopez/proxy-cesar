@@ -3,6 +3,8 @@
 OpenAI-compatible format. Supports streaming SSE and non-streaming.
 """
 
+import hashlib
+import json
 import logging
 import uuid
 
@@ -25,6 +27,53 @@ from src.service.pipeline_trace import PipelineTrace
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _build_message_log_summaries(messages: list[dict]) -> list[str]:
+    """Build text previews of messages for logging."""
+    summaries: list[str] = []
+    for m in messages:
+        _role = m.get("role", "?")
+        _c = m.get("content", "")
+        if isinstance(_c, str):
+            _preview = _c[:2000].replace("\n", " ")
+        elif isinstance(_c, list):
+            _preview = f"[{len(_c)} parts]"
+        else:
+            _preview = str(_c)[:2000]
+        summaries.append(f"{_role}={_preview}")
+    return summaries
+
+
+def _generate_deterministic_conversation_id(messages: list[dict]) -> str:
+    """Generate a deterministic conversation ID from the initial messages.
+
+    When the client doesn't send a conversation_id, this creates a stable
+    ID based on the fingerprint of the first messages (system prompt + first
+    user message). Since the client always includes the full message history,
+    these first messages NEVER change across turns of the SAME conversation.
+
+    This gives us:
+    - SAME conversation across turns → SAME fingerprint → SAME ID
+    - DIFFERENT conversations → DIFFERENT fingerprint → DIFFERENT ID
+    - Cache/affinity preserved across turns
+    - No growth in number of messages (avoids context bloat)
+
+    Falls back to uuid4 if there are fewer than 1 message.
+    """
+    if len(messages) >= 2:
+        fingerprint = json.dumps(
+            messages[:2], sort_keys=True, ensure_ascii=False, default=str
+        )
+        h = hashlib.sha256(fingerprint.encode()).hexdigest()
+        return f"det-{h[:24]}"
+    if len(messages) == 1:
+        fingerprint = json.dumps(
+            messages[:1], sort_keys=True, ensure_ascii=False, default=str
+        )
+        h = hashlib.sha256(fingerprint.encode()).hexdigest()
+        return f"det-{h[:24]}"
+    return str(uuid.uuid4())
 
 
 # ── Request/Response schemas ────────────────────────────────────────────────
@@ -57,6 +106,33 @@ class ChatRequest(BaseModel, extra="ignore"):
 
 
 # ── Endpoint ────────────────────────────────────────────────────────────────
+
+
+def _handle_inline_command_response(cmd_result, request: ChatRequest, conversation_id: str) -> dict:
+    """Build the response dict for inline commands that skip the LLM."""
+    proxy_meta = {
+        "command": cmd_result.response_metadata,
+        "handled": True,
+        "physical_model": "(command)",
+        "pseudo_model": request.model,
+        "conversation_id": conversation_id,
+    }
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "model": request.model,
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": cmd_result.response_text,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        "proxy_metadata": proxy_meta,
+    }
 
 
 @router.post(
@@ -93,8 +169,14 @@ async def chat_completions(
     db = app_state.db_session_factory()
     affinity = app_state.affinity
 
-    # Determine conversation ID
-    conversation_id = request.conversation_id or str(uuid.uuid4())
+    # Prepare messages as dicts (needed early for deterministic conversation_id)
+    messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
+
+    # Determine conversation ID — deterministic when client doesn't send one
+    if request.conversation_id:
+        conversation_id = request.conversation_id
+    else:
+        conversation_id = _generate_deterministic_conversation_id(messages)
     request_id = str(uuid.uuid4())[:8]  # Unique ID for this request
 
     # Create request trace for observability
@@ -115,21 +197,8 @@ async def chat_completions(
         stream=request.stream,
     )
 
-    # Prepare messages as dicts
-    messages = [msg.model_dump(exclude_none=True) for msg in request.messages]
-
     # Log full request details including message content
-    _msg_summaries = []
-    for m in messages:
-        _role = m.get("role", "?")
-        _c = m.get("content", "")
-        if isinstance(_c, str):
-            _preview = _c[:2000].replace("\n", " ")
-        elif isinstance(_c, list):
-            _preview = f"[{len(_c)} parts]"
-        else:
-            _preview = str(_c)[:2000]
-        _msg_summaries.append(f"{_role}={_preview}")
+    _msg_summaries = _build_message_log_summaries(messages)
     logger.info(
         "chat_request_full request_id=%s conv=%s model=%s stream=%s "
         "messages=%d tools=%d thinking=%s msgs=%s",
@@ -151,29 +220,7 @@ async def chat_completions(
         db=db,
     )
     if cmd_result.handled and cmd_result.skip_llm:
-        proxy_meta = {
-            "command": cmd_result.response_metadata,
-            "handled": True,
-            "physical_model": "(command)",
-            "pseudo_model": request.model,
-            "conversation_id": conversation_id,
-        }
-        return {
-            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-            "object": "chat.completion",
-            "model": request.model,
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": cmd_result.response_text,
-                    },
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-            "proxy_metadata": proxy_meta,
-        }
+        return _handle_inline_command_response(cmd_result, request, conversation_id)
 
     if request.stream:
         # Streaming path: session lifecycle is managed inside _handle_streaming
@@ -350,8 +397,11 @@ async def _handle_non_streaming(
     response_dict["conversation_id"] = result.conversation_id
 
     # Forward provider response headers to HTTP response
-    # Exclude Content-Encoding and Transfer-Encoding to avoid httpx double-decompression
-    _excluded = {"content-encoding", "transfer-encoding"}
+    # Exclude provider headers that conflict with the proxy's own response headers.
+    # content-length: the proxy's JSONResponse calculates the correct length
+    # content-encoding/transfer-encoding: avoid httpx double-decompression
+    # server/date: the ASGI server (uvicorn) already sets these
+    _excluded = {"content-length", "content-encoding", "transfer-encoding", "server", "date"}
     headers: dict[str, str] = {"X-Conversation-Id": conversation_id}
     provider_headers = response_dict.get("provider_headers")
     if provider_headers and isinstance(provider_headers, dict):
@@ -379,4 +429,6 @@ async def _handle_non_streaming(
         resp_content[:2000],
     )
 
+    # Remove provider_headers from body (already in HTTP headers)
+    response_dict.pop("provider_headers", None)
     return JSONResponse(content=response_dict, headers=headers)

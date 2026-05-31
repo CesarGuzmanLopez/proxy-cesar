@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     pruna_api_key: str = ""
     opencode_api_key: str = ""
     """API key for OpenCode Go (opencode.ai)."""
+    nvidia_api_key: str = ""
+    """API key for NVIDIA NIM (build.nvidia.com). Free tier: ~40 RPM."""
+    cerebras_api_key: str = ""
+    """API key for Cerebras (cerebras.ai) — free tier: 30 RPM, 1M tokens/day."""
     disabled_providers: str = ""
     """Comma-separated list of providers to disable (e.g. 'opencode-go,deepseek').
     Disabled providers are skipped during fallback — the next provider is tried.
@@ -62,6 +66,8 @@ class Settings(BaseSettings):
             ("groq_api_key", self.groq_api_key),
             ("openrouter_api_key", self.openrouter_api_key),
             ("pruna_api_key", self.pruna_api_key),
+            ("nvidia_api_key", self.nvidia_api_key),
+            ("cerebras_api_key", self.cerebras_api_key),
         ]
         available_keys = [name for name, value in provider_keys if value]
         if not available_keys:

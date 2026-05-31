@@ -172,8 +172,19 @@ jobs:
             SERVICE_STATUS=$(sudo systemctl is-active proxy-cesar)
             echo "[deploy] Service status: ${SERVICE_STATUS}"
 
-            # ── 8. Quick health check ─────────────────────────────
+            # ── 8. Health check with retries ──────────────────────
             echo "[deploy] Running health check..."
-            HEALTH=$(curl -s http://127.0.0.1:9110/health 2>/dev/null || echo '{"status":"unreachable"}')
-            echo "[deploy] Health: ${HEALTH}"
+            HEALTH=""
+            for i in 1 2 3 4 5; do
+              sleep 3
+              HEALTH=$(curl -s http://127.0.0.1:9110/health 2>/dev/null || echo "")
+              if [ -n "$HEALTH" ]; then
+                echo "[deploy] Health: ${HEALTH}"
+                break
+              fi
+              echo "[deploy] Health check attempt $i/5 — not ready yet"
+            done
+            if [ -z "$HEALTH" ]; then
+              echo "[deploy] WARNING: Health check failed after 5 retries"
+            fi
             echo "[deploy] Done"

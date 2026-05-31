@@ -20,8 +20,8 @@ _CONFIG = load_config()
         ("normal", "normal"),
         ("tareas-avanzadas", "tareas-avanzadas"),
         ("pensamiento-profundo-caro", "pensamiento-profundo-caro"),
-        ("flash-lowcost", "flash-lowcost"),
-        ("flash-lowcost", "flash-lowcost"),
+        ("flash", "flash"),
+        ("flash", "flash"),
         ("vision", "vision"),
         ("vision", "vision"),
         ("compactador", "compactador"),
@@ -33,10 +33,10 @@ _CONFIG = load_config()
         ("cesar-proxy/tareas-avanzadas", "tareas-avanzadas"),
         # Cline fork: "cline/<pseudo>"
         ("cline/normal", "normal"),
-        ("cline/flash-lowcost", "flash-lowcost"),
+        ("cline/flash", "flash"),
         # RooCode fork: "roo/<pseudo>"
         ("roo/normal", "normal"),
-        ("roo/flash-lowcost", "flash-lowcost"),
+        ("roo/flash", "flash"),
         # OpenAI aliases (with and without prefix)
         ("gpt-4o", "normal"),
         ("local/gpt-4o", "normal"),
@@ -44,12 +44,12 @@ _CONFIG = load_config()
         ("local/gpt-4o-mini", "normal"),
         ("o3", "pensamiento-profundo-caro"),
         ("local/o3", "pensamiento-profundo-caro"),
-        ("o4-mini", "pensamiento-rapido"),
+        ("o4-mini", "normal"),
         # Google alias
         ("gemini-2.5-flash", "vision"),
         ("local/gemini-2.5-flash", "vision"),
-        # Default fallback for unknown models
-        ("unknown-model", "normal"),
+        # Default fallback for unknown models → 'flash'
+        ("unknown-model", "flash"),
         ("local/unknown-thing", "local/unknown-thing"),
     ],
 )

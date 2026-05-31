@@ -118,7 +118,7 @@ async def test_get_compatible_models_returns_all(client_with_conversation):
     data = response.json()
     assert "compatible_models" in data
     # Should include all pseudo-models
-    assert len(data["compatible_models"]) >= 8
+    assert len(data["compatible_models"]) >= 7
     assert data["current_pseudo_model"] == "vision"
 
 

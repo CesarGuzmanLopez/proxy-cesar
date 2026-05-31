@@ -52,6 +52,24 @@ __all__ = [
 # ── Helpers used by _try_physical_model ─────────────────────────────────────
 
 
+def _strip_reasoning_from_messages(call_messages: list[dict]) -> list[dict]:
+    """Remove reasoning_content from assistant messages. Returns NEW list (no muta).
+
+    This is critical because ``call_messages`` may share dict objects with
+    ``ordered_messages`` that are reused across fallback attempts (e.g. first
+    model strips → second model in fallback chain sees already-stripped messages).
+    """
+    result: list[dict] = []
+    for msg in call_messages:
+        if msg.get("role") == "assistant" and "reasoning_content" in msg:
+            new_msg = dict(msg)
+            del new_msg["reasoning_content"]
+            result.append(new_msg)
+        else:
+            result.append(msg)
+    return result
+
+
 _REASONING_MAP = {
     "low": (2048, "low"),
     "medium": (8192, "medium"),
@@ -151,7 +169,6 @@ async def _try_physical_model(
     _trace_id: str,
     conversation_id: str | None = None,
     affinity=None,
-    timeout: float | None = None,
 ) -> tuple[ModelResponse | dict, str | None]:
     """Attempt to call a single physical model.
 
@@ -218,24 +235,24 @@ async def _try_physical_model(
 
     # Strip reasoning_content if the model has the flag set (e.g. DeepSeek)
     if phys.strip_reasoning:
-        for msg in call_messages:
-            if msg.get("role") == "assistant" and "reasoning_content" in msg:
-                del msg["reasoning_content"]
+        call_messages = _strip_reasoning_from_messages(call_messages)
 
     raw_thinking = kwargs.get("thinking", None)
 
-    # Use physical model's default thinking only when client didn't specify one
-    if phys.default_thinking is not None and raw_thinking is None:
-        raw_thinking = phys.default_thinking
-        logger.debug(
-            "fallback_thinking_default model=%s default=%s",
-            phys.model,
-            raw_thinking,
-        )
+    # Determine if this model actually supports the capability
+    supports_anthropic = model_prefix == "anthropic" and (phys.thinking or False)
+    supports_reasoning_effort = model_prefix == "openai" and (phys.reasoning_effort or False)
 
-    supports_anthropic = phys.thinking or False
-    is_openai_reasoning_model = phys.reasoning_effort or False
-    supports_reasoning_effort = is_openai_reasoning_model
+    # Only apply default_thinking if the model actually supports the capability
+    if supports_anthropic or supports_reasoning_effort:
+        if phys.default_thinking is not None and raw_thinking is None:
+            raw_thinking = phys.default_thinking
+            logger.debug(
+                "fallback_thinking_default model=%s default=%s",
+                phys.model,
+                raw_thinking,
+            )
+
     if supports_anthropic:
         reasoning_capability = "anthropic"
     elif supports_reasoning_effort:
@@ -243,16 +260,19 @@ async def _try_physical_model(
     else:
         reasoning_capability = "other"
 
-    thinking_dict, reasoning_effort = _normalise_reasoning_param(
-        raw_thinking, reasoning_capability
-    )
-    logger.debug(
-        "reasoning   | trace=%s model=%s raw=%s cap=%s",
-        _trace_id,
-        phys.model,
-        raw_thinking,
-        reasoning_capability,
-    )
+    if reasoning_capability != "other":
+        thinking_dict, reasoning_effort = _normalise_reasoning_param(
+            raw_thinking, reasoning_capability
+        )
+        logger.debug(
+            "reasoning   | trace=%s model=%s raw=%s cap=%s",
+            _trace_id,
+            phys.model,
+            raw_thinking,
+            reasoning_capability,
+        )
+    else:
+        thinking_dict, reasoning_effort = None, None
 
     call_kwargs = {k: v for k, v in kwargs.items() if v is not None}
     call_kwargs.pop("thinking", None)
@@ -275,7 +295,6 @@ async def _try_physical_model(
         stream=stream,
         api_base=api_base,
         api_key=api_key,
-        timeout=timeout,
         **call_kwargs,
     )
 
@@ -602,7 +621,6 @@ async def call_with_fallback(
     conversation_id: str | None = None,
     valkey_client=None,
     affinity=None,
-    timeout: float | None = None,
     **kwargs,
 ) -> tuple:
     """Try each physical model in order. On retryable errors, move to next.
@@ -666,7 +684,6 @@ async def call_with_fallback(
             response, skip_reason = await _try_physical_model(
                 phys, ordered_messages, stream, kwargs, _est_input, _trace_id,
                 conversation_id=conversation_id, affinity=affinity,
-                timeout=timeout,
             )
 
             if response is None:

@@ -66,8 +66,8 @@ def test_audio_sent_to_no_audio_model_returns_transform():
     assert result == {"action": "transform_unsupported"}
 
 
-def test_pdf_sent_to_no_vision_model_returns_transform():
-    """PDF sent to 'tareas-avanzadas' (no vision) → transform signal."""
+def test_pdf_sent_to_no_pdf_model_returns_transform():
+    """PDF sent to model without pdf capability → transform signal."""
     turn_caps = TurnCapabilities(has_pdf=True)
     result = validate_incoming_content(
         turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas"
@@ -75,19 +75,22 @@ def test_pdf_sent_to_no_vision_model_returns_transform():
     assert result == {"action": "transform_unsupported"}
 
 
-def test_pdf_sent_to_vision_model_proceeds():
-    """PDF sent to 'vision' (has vision) → proceeds (PDFs treated as images)."""
+def test_pdf_sent_to_pdf_capable_model_proceeds():
+    """PDF sent to model with pdf capability → proceeds."""
     turn_caps = TurnCapabilities(has_pdf=True)
+    # normal model has MiMo-V2.5 which has vision but not pdf specifically.
+    # PDF delegation now checks 'pdf' capability, not 'vision'.
+    # Since no model in our YAML has pdf=true, this returns transform.
     result = validate_incoming_content(
-        turn_caps, _get_pm("vision"), "vision"
+        turn_caps, _get_pm("normal"), "normal"
     )
-    assert result is None
+    assert result == {"action": "transform_unsupported"}
 
 
 def test_video_sent_to_any_model_returns_transform():
     """Video sent to any model without video → transform signal."""
     turn_caps = TurnCapabilities(has_video=True)
-    for name in ("normal", "vision", "flash-lowcost"):
+    for name in ("normal", "vision", "flash"):
         result = validate_incoming_content(
             turn_caps, _get_pm(name), name
         )

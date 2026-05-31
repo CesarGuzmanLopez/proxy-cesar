@@ -52,8 +52,8 @@ def test_tareas_avanzadas_no_parallel_returns_all():
         pm.physical_models, _make_caps(has_parallel_tools=False)
     )
     models = [m.model for m in result]
-    assert len(models) == 3
-    assert "deepseek/deepseek-v4-pro" in models
+    assert len(models) == 2
+    assert "openai/minimax-m2.7" in models
     assert "deepseek/deepseek-v4-flash" in models
 
     assert is_pinned_model_eligible("deepseek/deepseek-v4-flash", result) is True

@@ -49,9 +49,29 @@ def _encode_data_url(raw: bytes, mime: str = "image/jpeg") -> str:
     return f"data:{mime};base64,{b64}"
 
 
+def _is_svg_data_url(data_url: str) -> bool:
+    """Check if a data URL contains an SVG image."""
+    return bool(re.match(r"^data:image/svg\+xml", data_url))
+
+
+def _convert_svg_to_png(svg_bytes: bytes) -> bytes | None:
+    """Convert SVG bytes to PNG using cairosvg if available.
+
+    Returns PNG bytes on success, None on failure.
+    """
+    try:
+        import cairosvg  # noqa: F811
+
+        return cairosvg.svg2png(bytestring=svg_bytes)
+    except Exception:
+        logger.warning("svg_conversion_error: cairosvg not available or failed")
+        return None
+
+
 def degrade_image(data_url: str) -> str:
     """Downscale and compress an image to reduce token consumption.
 
+    - SVG images are converted to PNG via cairosvg first
     - Resizes to max MAX_IMAGE_DIMENSION px on the longest side (maintains ratio)
     - Converts to JPEG at IMAGE_JPEG_QUALITY quality
     - Returns a new data URL
@@ -66,6 +86,14 @@ def degrade_image(data_url: str) -> str:
         return data_url
 
     try:
+        if _is_svg_data_url(data_url):
+            raw, _mime = _decode_data_url(data_url)
+            png_raw = _convert_svg_to_png(raw)
+            if png_raw:
+                # Re-encode as PNG data URL for PIL processing
+                data_url = _encode_data_url(png_raw, "image/png")
+            # If conversion failed, continue with SVG (will fail at PIL)
+
         raw, _mime = _decode_data_url(data_url)
         img = Image.open(io.BytesIO(raw))
 

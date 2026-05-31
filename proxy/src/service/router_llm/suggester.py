@@ -14,6 +14,7 @@ python.md §3: ``Result`` monad pattern — errors are returned, not raised.
 python.md §4: Pure functions, deterministic, no side effects.
 """
 
+import asyncio
 import json
 import logging
 
@@ -35,7 +36,7 @@ Task:
 Respond ONLY with valid JSON (no markdown, no extra text):
 {{
     "complexity": "simple" | "medium" | "complex",
-    "suggested_pseudo_model": "flash-lowcost" | "normal" | "tareas-avanzadas" | "pensamiento-profundo-caro",
+    "suggested_pseudo_model": "flash" | "normal" | "tareas-avanzadas" | "pensamiento-profundo-caro",
     "reason": "one sentence explaining why"
 }}
 """
@@ -47,18 +48,15 @@ MAX_TASK_CHARS: int = 2000
 """Truncate task content to this many characters before evaluation."""
 
 ALLOWED_SUGGESTIONS: set[str] = {
-    "normal",
     "pensamiento-profundo-caro",
     "tareas-avanzadas",
-    "codigo-preciso",
+    "normal",
     "vision",
-    "pensamiento-rapido",
     "normal-gratis",
-    "massive-fast",
-    "flash-lowcost",
+    "flash",
     "compactador",
 }
-"""All 10 pseudo-models can be suggested by the router."""
+"""All 7 pseudo-models can be suggested by the router."""
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -101,13 +99,15 @@ async def evaluate_complexity(
     prompt = EVALUATION_PROMPT.format(task_content=last_user_content)
 
     try:
-        response = await call_litellm(
-            model=suggester_model,
-            messages=[{"role": "user", "content": prompt}],
-            api_base=api_base,
-            api_key=api_key,
-            max_tokens=MAX_EVAL_TOKENS,
-            temperature=0.0,
+        response = await asyncio.wait_for(
+            call_litellm(
+                model=suggester_model,
+                messages=[{"role": "user", "content": prompt}],
+                api_base=api_base,
+                api_key=api_key,
+                max_tokens=MAX_EVAL_TOKENS,
+                temperature=0.0,
+            ),
             timeout=10.0,  # Fast timeout — router is advisory only
         )
         content: str = response.choices[0].message.content or ""

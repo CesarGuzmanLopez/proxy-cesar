@@ -5,7 +5,7 @@
 import pytest
 from httpx import AsyncClient
 
-KNOWN_PSEUDO_MODELS = 10  # pensamiento-profundo-caro, pensamiento-rapido, tareas-avanzadas, codigo-preciso, vision, normal, normal-gratis, massive-fast, flash-lowcost, compactador
+KNOWN_PSEUDO_MODELS = 7  # pensamiento-profundo-caro, tareas-avanzadas, normal, vision, normal-gratis, flash, compactador
 
 
 @pytest.mark.asyncio
@@ -20,8 +20,7 @@ async def test_1_models_list_all(async_client: AsyncClient):
     # Verify pseudo-model names are present
     pseudo_ids = {m["id"] for m in data["data"]}
     for expected in ("normal", "vision", "compactador", "pensamiento-profundo-caro",
-                     "pensamiento-rapido", "tareas-avanzadas", "codigo-preciso",
-                     "normal-gratis", "massive-fast", "flash-lowcost"):
+                     "tareas-avanzadas", "normal-gratis", "flash"):
         assert expected in pseudo_ids, f"Missing pseudo-model: {expected}"
 
 
@@ -37,9 +36,9 @@ async def test_2_models_optimistic_capabilities(async_client: AsyncClient):
         caps = model["capabilities"]
         # Local models report real capabilities; pseudo-models are always optimistic
         if model["id"] in ("normal", "vision", "normal-gratis",
-                           "massive-fast", "flash-lowcost", "compactador",
-                           "pensamiento-profundo-caro", "pensamiento-rapido",
-                           "tareas-avanzadas", "codigo-preciso"):
+                           "flash", "compactador",
+                           "pensamiento-profundo-caro",
+                           "tareas-avanzadas"):
             assert caps["vision"] is True
             assert caps["tools"] is True
             assert caps["parallel_tools"] is True

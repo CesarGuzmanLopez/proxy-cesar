@@ -201,6 +201,11 @@ async def _handle_streaming_with_db(
     request = None,
 ):
     """Pre-stream logic (runs synchronously before SSE starts)."""
+    # Preprocess SVG images → JPEG (most vision models don't support SVG)
+    from src.service.chat_service import _preprocess_svg_images
+
+    messages = _preprocess_svg_images(messages)
+
     # Resolve model
     resolved_model = normalize_model_name(pseudo_model_name, config)
     if resolved_model not in config.pseudo_models:

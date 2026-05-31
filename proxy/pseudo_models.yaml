@@ -1,44 +1,46 @@
-# pseudo_models.yaml — Proxy pseudo-model configuration
+# pseudo_models.yaml — Proxy pseudo-model configuration v1.3
 #
-# context_window e input_token_threshold de cada pseudo-modelo reflejan
-# el mínimo de los context_window de sus physical models, con excepcion
-# del modelo "compactador" que puede procesar hasta 3M tokens dividiendo
-# en pedazos segun el modelo disponible.
+# Correcciones aplicadas desde v1.2:
+# - thinking solo en Anthropic, reasoning_effort solo en OpenAI
+# - Ventanas de contexto corregidas (min(physical) - 1K)
+# - vision/pdf/documents separados como capacidades independientes
+# - strip_reasoning donde aplica
+# - System prompts optimizados para Groq
+# - NVIDIA NIM como fallback lento en normal-gratis
 
 pseudo_models:
   # ── Razonamiento premium ──────────────────────────────────────────────────
   pensamiento-profundo-caro:
     display_name: Pensamiento Profundo
-    description: "Razonamiento de máximo nivel. Límite 1M tokens — si lo superas usa /compact para continuar."
-    input_token_threshold: 1000000
-    context_window: 1000000
+    description: "Razonamiento de máximo nivel. Límite 261K tokens — si lo superas usa /compact para continuar."
+    input_token_threshold: 261144
+    context_window: 261144
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/qwen3.7-max
-        api_base: https://opencode.ai/zen/go
+        model: openai/kimi-k2.5
+        api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
         vision: false
-        context_window: 1000000
-        thinking: true
-        default_thinking: max
-        note: "Go: Qwen3.7 Max vía Anthropic /messages. Premium reasoning (~4.770 req/mes)."
+        pdf: false
+        context_window: 262144
+        note: "Go: Kimi K2.5 vía OpenAI /chat/completions. Cache prefix reportado. Razonamiento vía servidor (~9.250 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
         vision: false
+        pdf: false
         context_window: 1000000
-        reasoning_effort: true
+        reasoning_effort: false
         strip_reasoning: true
-        default_thinking: max
         note: "Fallback: DeepSeek V4 Pro directo. Razonamiento max."
     fallback_strategy: sequential
 
@@ -46,35 +48,34 @@ pseudo_models:
   tareas-avanzadas:
     display_name: Tareas Avanzadas
     description: "Desarrollo profundo y sostenido. MiniMax M2.7 vía Go."
-    input_token_threshold: 196608
-    context_window: 196608
+    input_token_threshold: 195608
+    context_window: 195608
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: anthropic/minimax-m2.7
-        api_base: https://opencode.ai/zen/go
+        model: openai/minimax-m2.7
+        api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
+        pdf: false
         context_window: 196608
-        thinking: true
-        default_thinking: high
-        note: "Go: MiniMax M2.7 (192K contexto) vía Anthropic /messages (~17.000 req/mes)."
+        note: "Go: MiniMax M2.7 (192K contexto) vía OpenAI /chat/completions. Cache prefix reportado (~17.000 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
         tools_strict: true
         parallel_tools: true
         vision: false
+        pdf: false
         context_window: 1000000
-        reasoning_effort: true
+        reasoning_effort: false
         strip_reasoning: true
-        default_thinking: max
         note: "Fallback: DeepSeek V4 Flash. Razonamiento max."
     fallback_strategy: sequential
 
@@ -82,8 +83,8 @@ pseudo_models:
   normal:
     display_name: Normal
     description: "Punto de entrada recomendado. MiMo-V2.5 vía Go. Coding extenso."
-    input_token_threshold: 1000000
-    context_window: 1000000
+    input_token_threshold: 999000
+    context_window: 999000
     router_llm:
       enabled: false
     image_handling:
@@ -96,11 +97,13 @@ pseudo_models:
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
-        vision: false
+        vision: true
+        pdf: false
+        documents: false
+        max_direct_image_size_kb: 512
         context_window: 1000000
-        thinking: true
-        reasoning_effort: true
-        default_thinking: medium
+        thinking: false
+        reasoning_effort: false
         note: "Go: MiMo-V2.5 vía OpenAI /chat/completions (~150.400 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
@@ -108,19 +111,18 @@ pseudo_models:
         tools_strict: true
         parallel_tools: true
         vision: false
+        pdf: false
         context_window: 1000000
-        reasoning_effort: true
-        strip_reasoning: true
-        default_thinking: high
+        reasoning_effort: false
         note: "Fallback: DeepSeek V4 Flash. Razonamiento high."
     fallback_strategy: sequential
 
   # ── Visión ────────────────────────────────────────────────────────────────
   vision:
     display_name: Visión
-    description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 131K tokens — usa /compact si superas."
-    input_token_threshold: 131072
-    context_window: 131072
+    description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 130K tokens — usa /compact si superas."
+    input_token_threshold: 130072
+    context_window: 130072
     router_llm:
       enabled: false
     image_handling:
@@ -133,16 +135,12 @@ pseudo_models:
         parallel_tools: false
         vision: true
         context_window: 131072
+        strip_reasoning: true
+        reasoning_effort: false
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          Reasoning: medium
 
-          If you need filesystem information, ALWAYS call tools.
-          Never answer from assumptions.
+          Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
         note: "Primary: Visión vía Groq. 131K contexto. Rápido y barato."
       - provider: opencode-go
         model: openai/mimo-v2-omni
@@ -153,18 +151,17 @@ pseudo_models:
         parallel_tools: true
         vision: true
         context_window: 262144
-        thinking: true
-        reasoning_effort: true
-        default_thinking: low
+        thinking: false
+        reasoning_effort: false
         note: "Fallback: MiMo V2 Omni (256K contexto). Visión nativa + texto."
     fallback_strategy: sequential
 
   # ── Gratuito (sin Go) ─────────────────────────────────────────────────────
   normal-gratis:
     display_name: Normal Gratis
-    description: "Modelos gratuitos y de bajo costo. Límite 131K tokens — usa /compact si lo superas."
-    input_token_threshold: 131072
-    context_window: 131072
+    description: "Modelos gratuitos y de bajo costo. Límite 999K tokens — usa /compact si lo superas."
+    input_token_threshold: 999000
+    context_window: 999000
     router_llm:
       enabled: false
     image_handling:
@@ -176,69 +173,72 @@ pseudo_models:
         tools_strict: false
         parallel_tools: false
         vision: false
-        note: "Gratuito vía OpenRouter. 1M contexto. Primary."
+        pdf: false
         context_window: 1000000
+        note: "Primary: Nemotron 3 Super 120B gratis vía OpenRouter. 1M ctx."
       - provider: groq
         model: groq/qwen/qwen3-32b
         openai_tools_compatible: true
         tools_strict: false
-        parallel_tools: true
+        parallel_tools: false
         vision: false
-        system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
-
-          If you need filesystem information, ALWAYS call tools.
-          Never answer from assumptions.
-        note: "Fallback rápido vía Groq. 32B, 131K contexto. Bajo costo."
+        strip_reasoning: true
         context_window: 131072
+        system_prompt: |
+          Reasoning: medium
+
+          Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
+        note: "Fallback 1: Qwen3 32B vía Groq. 32B, 131K contexto. Bajo costo."
+      - provider: nvidia
+        model: openai/nvidia/nemotron-3-super-120b-a12b
+        api_base: https://integrate.api.nvidia.com/v1
+        api_key_env: NVIDIA_API_KEY
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: false
+        vision: false
+        pdf: false
+        context_window: 1000000
+        note: "Fallback 2: NVIDIA NIM directo. Lento (~13.2s avg), ~40 RPM. Solo texto."
     fallback_strategy: sequential
 
   # ── Flash ────────────────────────────────────────────────────────────────
   flash:
     display_name: Flash
     description: "Sub-agentes rápidos. Clasificación, extracción, parsing. GPT-OSS 120B (Groq) + fallback Go Flash."
-    input_token_threshold: 128000
-    context_window: 128000
+    input_token_threshold: 127000
+    context_window: 127000
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: groq
-        model: groq/openai/gpt-oss-20b
+        model: groq/openai/gpt-oss-120b
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: false
         vision: false
+        pdf: false
         context_window: 128000
         temperature: 0.1
         top_p: 0.9
-        reasoning_effort: true
-        default_thinking: high
+        reasoning_effort: false
+        strip_reasoning: true
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          Reasoning: medium
 
-          If you need filesystem information, ALWAYS call tools.
-          Never answer from assumptions.
-        note: "Primary: GPT-OSS 20B vía Groq (1000 t/s). Rápido y barato."
+          Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
+        note: "Primary: GPT-OSS 120B vía Groq. Más capaz que 20B."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
         tools_strict: false
         parallel_tools: true
         vision: false
+        pdf: false
         context_window: 1000000
-        reasoning_effort: true
+        reasoning_effort: false
         strip_reasoning: true
         note: "Fallback: DeepSeek V4 Flash directo. Rápido, 1M contexto."
     fallback_strategy: sequential
@@ -257,42 +257,48 @@ pseudo_models:
       - provider: groq
         model: groq/qwen/qwen3-32b
         context_window: 131072
-        openai_tools_compatible: true
-        parallel_tools: true
         vision: false
+        strip_reasoning: true
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          Reasoning: auto
 
-          If you need filesystem information, ALWAYS call tools.
-          Never answer from assumptions.
+          You are a context compaction specialist.
+
+          Guidelines:
+          * Preserve all essential facts, data, and relationships
+          * Remove redundancy and filler content
+          * Keep the original meaning and intent intact
+          * Maintain chronological and logical order
+          * Output in the same language as the input
+          * Prioritize actionable information over meta-commentary
+          * Be thorough—do not omit critical details
+          * Complete the compaction in a single pass
         note: "Primary: Qwen3 32B vía Groq ($0.29/$0.59 por 1M). Barato y rápido."
       - provider: groq
         model: groq/openai/gpt-oss-120b
         context_window: 131072
-        openai_tools_compatible: true
-        parallel_tools: true
         vision: false
+        strip_reasoning: true
         system_prompt: |
-          IMPORTANT:
-          - NEVER describe tool usage in text
-          - ONLY use structured tool calls
-          - DO NOT simulate tool outputs
-          - DO NOT explain intended tool usage
-          - IF a tool is available, call it directly
+          Reasoning: auto
 
-          If you need filesystem information, ALWAYS call tools.
-          Never answer from assumptions.
+          You are a context compaction specialist.
+
+          Guidelines:
+          * Preserve all essential facts, data, and relationships
+          * Remove redundancy and filler content
+          * Keep the original meaning and intent intact
+          * Maintain chronological and logical order
+          * Output in the same language as the input
+          * Prioritize actionable information over meta-commentary
+          * Be thorough—do not omit critical details
+          * Complete the compaction in a single pass
         note: "Fallback 1: GPT-OSS 120B vía Groq ($0.15/$0.60). Más capaz."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         context_window: 1000000
         openai_tools_compatible: true
-        reasoning_effort: true
+        reasoning_effort: false
         strip_reasoning: true
         vision: false
         note: "Fallback 2: DeepSeek V4 Flash. 1M contexto para historias grandes."
