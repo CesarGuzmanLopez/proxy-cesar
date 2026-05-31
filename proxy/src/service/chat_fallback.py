@@ -609,6 +609,62 @@ async def _record_fallback_metric(
         )
 
 
+# ── Model ban system ──────────────────────────────────────────────────────────
+# When a model fails 3 times within 2 minutes, it is banned for 1 hour.
+# On success, the failure counter is reset.
+
+_BAN_PREFIX = "model_ban:"
+_FAIL_PREFIX = "model_fail:"
+_BAN_TTL = 3600  # 1 hour ban
+_FAIL_WINDOW = 120  # 2 minutes sliding window
+_FAIL_THRESHOLD = 3  # 3 failures → ban
+
+
+async def _is_model_banned(valkey, model_name: str) -> bool:
+    """Check if a model is currently banned."""
+    if valkey is None:
+        return False
+    try:
+        return bool(await valkey.exists(f"{_BAN_PREFIX}{model_name}"))
+    except Exception:
+        return False
+
+
+async def _record_model_failure(valkey, model_name: str) -> bool:
+    """Record a model failure. Returns True if ban threshold reached."""
+    if valkey is None:
+        return False
+    try:
+        key = f"{_FAIL_PREFIX}{model_name}"
+        count = await valkey.incr(key)
+        # Set TTL on first failure only (sliding window from first failure)
+        if count == 1:
+            await valkey.expire(key, _FAIL_WINDOW)
+        if count >= _FAIL_THRESHOLD:
+            await valkey.setex(f"{_BAN_PREFIX}{model_name}", _BAN_TTL, "1")
+            await valkey.delete(key)
+            logger.warning("model_banned model=%s failures=%d ban_ttl=%ds", model_name, count, _BAN_TTL)
+            return True
+        logger.info("model_failure model=%s count=%d/%d window=%ds", model_name, count, _FAIL_THRESHOLD, _FAIL_WINDOW)
+        return False
+    except Exception as e:
+        logger.warning("model_ban_error model=%s error=%s", model_name, e)
+        return False
+
+
+async def _clear_model_ban(valkey, model_name: str) -> None:
+    """Clear ban and failure counters on successful model call."""
+    if valkey is None:
+        return
+    try:
+        ban_key = f"{_BAN_PREFIX}{model_name}"
+        fail_key = f"{_FAIL_PREFIX}{model_name}"
+        await valkey.delete(ban_key)
+        await valkey.delete(fail_key)
+    except Exception:
+        pass
+
+
 # ── Main fallback orchestrator ───────────────────────────────────────────────
 
 
@@ -680,6 +736,18 @@ async def call_with_fallback(
         if idx < start_index:
             continue
 
+        # Check if this model is banned
+        if await _is_model_banned(valkey_client, phys.model):
+            logger.warning(
+                "llm_skip_banned | trace=%s model=%s reason=model_banned_1h",
+                _trace_id,
+                phys.model,
+            )
+            fallback_info.applied = True
+            fallback_info.reason = f"model_banned: {phys.model}"
+            fallback_info.attempted_models.append(f"{phys.model} (banned)")
+            continue
+
         try:
             response, skip_reason = await _try_physical_model(
                 phys, ordered_messages, stream, kwargs, _est_input, _trace_id,
@@ -693,8 +761,11 @@ async def call_with_fallback(
                 fallback_info.attempted_models.append(
                     f"{phys.model} (skipped/{skip_reason})"
                 )
+                await _record_model_failure(valkey_client, phys.model)
                 continue
 
+            # Success — clear any previous ban/failures
+            await _clear_model_ban(valkey_client, phys.model)
             fallback_info.attempted_models.append(phys.model)
 
             if _handle_length_continuation(
@@ -735,6 +806,7 @@ async def call_with_fallback(
                 elapsed,
                 getattr(phys, "api_base", "default"),
             )
+            await _record_model_failure(valkey_client, phys.model)
             continue
 
     elapsed = time.monotonic() - _start
