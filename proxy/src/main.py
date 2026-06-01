@@ -4,6 +4,7 @@ Lifespan manages startup/shutdown of all services.
 Registers: Auth, CORS, rate limiting, structured logging, metrics.
 """
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -153,14 +154,18 @@ async def lifespan(app: FastAPI):
 
     logger.info("Proxy ready on port %s", settings.proxy_port)
 
-    yield
-
-    # ── SHUTDOWN ─────────────────────────────────────────────────────────
-    if hasattr(app.state, "arq_pool") and app.state.arq_pool:
-        await app.state.arq_pool.close()
-    await valkey_client.close()
-    await engine.dispose()
-    logger.info("Proxy shut down")
+    try:
+        yield
+    except (GeneratorExit, asyncio.CancelledError):
+        logger.info("lifespan cancelled — running shutdown")
+        raise
+    finally:
+        # ── SHUTDOWN ─────────────────────────────────────────────────────
+        if hasattr(app.state, "arq_pool") and app.state.arq_pool:
+            await app.state.arq_pool.close()
+        await valkey_client.close()
+        await engine.dispose()
+        logger.info("Proxy shut down")
 
 
 app = FastAPI(

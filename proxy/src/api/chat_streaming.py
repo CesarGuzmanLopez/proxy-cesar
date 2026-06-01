@@ -3,6 +3,7 @@
 Extracted from chat.py to keep individual files under 600 lines.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -721,7 +722,7 @@ async def _stream_response_generator(ctx: StreamContext):
                         finish_reason = fr
                         break
 
-            except GeneratorExit:
+            except (GeneratorExit, asyncio.CancelledError):
                 logger.info(
                     "stream_gen_disconnect conv=%s physical=%s",
                     ctx.conversation_id[:12],

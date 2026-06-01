@@ -171,8 +171,21 @@ async def _try_physical_model(
     _trace_id: str,
     conversation_id: str | None = None,
     affinity=None,
+    timeout: float | None = None,
 ) -> tuple[ModelResponse | dict, str | None]:
     """Attempt to call a single physical model.
+
+    Args:
+        phys: Physical model schema.
+        ordered_messages: Canonicalized message list.
+        stream: Whether to stream the response.
+        kwargs: Call keyword arguments (temperature, max_tokens, etc.).
+        _est_input: Estimated input token count.
+        _trace_id: Trace ID for logging.
+        conversation_id: Conversation ID for key resolution.
+        affinity: Affinity manager for key slot resolution.
+        timeout: Override the default LLM call timeout (seconds).
+            If None, ``DEFAULT_LLM_TIMEOUT_SECONDS`` is used.
 
     Returns (response, None) on success or (None, skip_reason) if skipped.
     skip_reason is one of ``"provider_disabled"`` or ``"context_too_large"``.
@@ -297,6 +310,7 @@ async def _try_physical_model(
         stream=stream,
         api_base=api_base,
         api_key=api_key,
+        timeout=timeout,
         **call_kwargs,
     )
 

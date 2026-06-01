@@ -208,19 +208,21 @@ async def call_litellm(
     endpoints (e.g. OpenCode Go). When ``api_key_env`` is set on the
     physical model, the caller resolves the actual key and passes it here.
 
+    When ``timeout`` is passed (seconds), it overrides the default
+    ``DEFAULT_LLM_TIMEOUT_SECONDS``.
+
     Post-processing: some providers (e.g. GLM via OpenRouter) put the response
     in ``reasoning_content`` instead of ``content`` when they run out of token
     budget (the model "thinks" long and leaves no tokens for the final answer).
     This normalisation copies ``reasoning_content`` into ``content`` so the
     caller never sees an empty assistant reply.
 
-    Timeout is managed via ``asyncio.wait_for()`` with
-    ``DEFAULT_LLM_TIMEOUT_SECONDS``. Callers needing a custom timeout should
-    wrap this coroutine with ``asyncio.wait_for()`` directly.
+    Timeout is managed via ``asyncio.wait_for()``.
     """
-    # Extract api_base/api_key if present (they are passed in **kwargs)
+    # Extract api_base/api_key/timeout if present (passed in **kwargs)
     api_base = kwargs.pop("api_base", None)
     api_key = kwargs.pop("api_key", None)
+    timeout = kwargs.pop("timeout", None)
 
     logger.info(
         "litellm_call model=%s stream=%s messages=%d api_base=%s",
@@ -232,6 +234,8 @@ async def call_litellm(
 
     from src.config.constants import DEFAULT_LLM_TIMEOUT_SECONDS
 
+    effective_timeout = timeout if timeout is not None else DEFAULT_LLM_TIMEOUT_SECONDS
+
     response = await asyncio.wait_for(
         litellm.acompletion(
             model=model,
@@ -241,7 +245,7 @@ async def call_litellm(
             api_key=api_key,
             **kwargs,
         ),
-        timeout=DEFAULT_LLM_TIMEOUT_SECONDS,
+        timeout=effective_timeout,
     )
 
     # ── Extract provider response headers ─────────────────────────────────
