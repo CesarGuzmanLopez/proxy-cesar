@@ -192,7 +192,7 @@ pseudo_models:
   # ── Flash ────────────────────────────────────────────────────────────────
   flash:
     display_name: Flash
-    description: "Sub-agentes rápidos. Clasificación, extracción, parsing. Nemotron 120B (NVIDIA) + OpenRouter gratis + Groq."
+    description: "Sub-agentes rápidos. Clasificación, extracción, parsing. GPT-OSS 120B (Groq) + fallback Go Flash."
     input_token_threshold: 127000
     context_window: 127000
     router_llm:
@@ -200,42 +200,6 @@ pseudo_models:
     image_handling:
       on_downgrade: auto_describe
     physical_models:
-      - provider: nvidia
-        model: openai/nvidia/nemotron-3-super-120b-a12b
-        api_base: https://integrate.api.nvidia.com/v1
-        api_key_env: NVIDIA_API_KEY
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        pdf: false
-        context_window: 1000000
-        temperature: 0.1
-        top_p: 0.9
-        reasoning_effort: false
-        strip_reasoning: true
-        system_prompt: |
-          Reasoning: medium
-
-          Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
-        note: "Primary: Nemotron 3 Super 120B vía NVIDIA NIM."
-      - provider: openrouter
-        model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        pdf: false
-        context_window: 1000000
-        temperature: 0.1
-        top_p: 0.9
-        reasoning_effort: false
-        strip_reasoning: true
-        system_prompt: |
-          Reasoning: medium
-
-          Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
-        note: "Fallback: Nemotron 120B gratis vía OpenRouter."
       - provider: groq
         model: groq/openai/gpt-oss-120b
         openai_tools_compatible: true
@@ -252,7 +216,7 @@ pseudo_models:
           Reasoning: medium
 
           Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
-        note: "Fallback: GPT-OSS 120B vía Groq."
+        note: "Primary: GPT-OSS 120B vía Groq. Más capaz que 20B."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -263,7 +227,7 @@ pseudo_models:
         context_window: 1000000
         reasoning_effort: false
         strip_reasoning: true
-        note: "Fallback 2: DeepSeek V4 Flash directo. 1M contexto."
+        note: "Fallback: DeepSeek V4 Flash directo. Rápido, 1M contexto."
     fallback_strategy: sequential
 
   # ── Compactador (con helpers internos) ────────────────────────────────────
