@@ -192,7 +192,7 @@ pseudo_models:
   # ── Flash ────────────────────────────────────────────────────────────────
   flash:
     display_name: Flash
-    description: "Sub-agentes rápidos. Clasificación, extracción, parsing. Nemotron 120B (NVIDIA) + fallback Groq + Flash."
+    description: "Sub-agentes rápidos. Clasificación, extracción, parsing. Nemotron 120B (NVIDIA) + OpenRouter gratis + Groq."
     input_token_threshold: 127000
     context_window: 127000
     router_llm:
@@ -219,6 +219,23 @@ pseudo_models:
 
           Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
         note: "Primary: Nemotron 3 Super 120B vía NVIDIA NIM."
+      - provider: openrouter
+        model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+        openai_tools_compatible: true
+        tools_strict: false
+        parallel_tools: false
+        vision: false
+        pdf: false
+        context_window: 1000000
+        temperature: 0.1
+        top_p: 0.9
+        reasoning_effort: false
+        strip_reasoning: true
+        system_prompt: |
+          Reasoning: medium
+
+          Use available tools to complete tasks. Call tools directly instead of describing them. If a tool fails, retry once. Do not simulate tool outputs. Keep responses concise and action-oriented.
+        note: "Fallback: Nemotron 120B gratis vía OpenRouter."
       - provider: groq
         model: groq/openai/gpt-oss-120b
         openai_tools_compatible: true
