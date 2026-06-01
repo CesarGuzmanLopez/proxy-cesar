@@ -321,4 +321,6 @@ model_aliases:
   claude-sonnet-4-20250514: tareas-avanzadas
   claude-haiku-3-5-20241022: flash
   gpt-oss: flash
+  gpt-4o-free: normal-gratis
+  gpt-4o-vision: vision
   default: flash
