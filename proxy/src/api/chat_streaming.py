@@ -600,6 +600,7 @@ async def _stream_response_generator(ctx: StreamContext):
     )
     _first_chunk_logged = False
     _analysis_message_sent = False
+    _chunk_index = 0  # diagnostic: count every chunk from upstream
 
     try:
         # ── Multi-stream loop (continues when a model hits token limit) ──
@@ -629,7 +630,30 @@ async def _stream_response_generator(ctx: StreamContext):
                         )
 
                 async for chunk in current_stream:
+                    _chunk_index += 1
                     last_chunk = chunk  # Track last chunk; avoids storing all chunks in memory
+
+                    # ── diagnostic: log every raw chunk metadata ──────────
+                    try:
+                        _choices = chunk.choices
+                    except (AttributeError, IndexError):
+                        _choices = []
+                    _delta_raw = _choices[0].delta if _choices else None
+                    _reasoning_len = len(getattr(_delta_raw, "reasoning_content", "") or "")
+                    _content_len = len(getattr(_delta_raw, "content", "") or "")
+                    _fr_raw = getattr(_choices[0], "finish_reason", None) if _choices else None
+                    _tc_raw = getattr(_delta_raw, "tool_calls", None) if _delta_raw else None
+                    logger.info(
+                        "stream_chunk_raw stream_id=%s conv=%s ix=%d "
+                        "reasoning_len=%d content_len=%d finish=%s tool_calls=%d",
+                        stream_id,
+                        ctx.conversation_id[:12],
+                        _chunk_index,
+                        _reasoning_len,
+                        _content_len,
+                        str(_fr_raw) if _fr_raw else "null",
+                        len(_tc_raw) if _tc_raw else 0,
+                    )
 
                     # Accumulate text content and tool_calls for potential continuation
                     try:
@@ -733,17 +757,41 @@ async def _stream_response_generator(ctx: StreamContext):
                     db = None  # prevent double-close in outer finally
                 return
             except Exception as e:
+                err_msg = str(e)
+                logger.error(
+                    "stream_gen_exception conv=%s physical=%s error=%s",
+                    ctx.conversation_id[:12],
+                    ctx.physical_model,
+                    err_msg,
+                    exc_info=True,
+                )
                 try:
                     await ctx.db.rollback()
                 except Exception as rollback_err:
                     logger.debug("stream_db_rollback_error err=%s", rollback_err)
-                error_payload = {
-                    "error": "PROXY_STREAM_ERROR",
-                    "message": str(e),
-                    "physical_model": ctx.physical_model,
-                    "pseudo_model": ctx.pseudo_model,
-                }
-                yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'error'}], 'proxy_metadata': error_payload})}\n\n"
+
+                # feature: handle tool_use_failed as an error (visible to the user)
+                if "tool_use_failed" in err_msg:
+                    logger.info(
+                        "stream_tool_use_failed conv=%s physical=%s — converted to error",
+                        ctx.conversation_id[:12],
+                        ctx.physical_model,
+                    )
+                    error_payload = {
+                        "error": "TOOL_USE_FAILED",
+                        "message": "The model attempted to call a tool that was not provided in the request. This typically means Continue did not send the `tools` parameter.",
+                        "physical_model": ctx.physical_model,
+                        "pseudo_model": ctx.pseudo_model,
+                    }
+                    yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'error'}], 'proxy_metadata': error_payload})}\n\n"
+                else:
+                    error_payload = {
+                        "error": "PROXY_STREAM_ERROR",
+                        "message": err_msg,
+                        "physical_model": ctx.physical_model,
+                        "pseudo_model": ctx.pseudo_model,
+                    }
+                    yield f"data: {json.dumps({'id': f'chatcmpl-{ctx.conversation_id[:12]}', 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'finish_reason': 'error'}], 'proxy_metadata': error_payload})}\n\n"
                 # NOTE: [DONE] will be sent by finally block below, not here
                 return
 
