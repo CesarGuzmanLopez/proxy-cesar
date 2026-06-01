@@ -1023,15 +1023,13 @@ def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
         return False
     from src.adapters.cache.provider_cache import should_apply_cache_control
 
-    # Bug 1 fix: derive cache provider from physical model prefix
-    cache_provider = ctx.provider
+    # Cache provider derived from physical model prefix, not YAML provider field.
+    # Only Anthropic models (anthropic/ prefix) get cache_control breakpoints.
     if ctx.physical_model and "/" in ctx.physical_model:
         model_prefix = ctx.physical_model.split("/")[0].lower()
         if model_prefix in ("anthropic",):
-            cache_provider = model_prefix
-    if cache_provider.lower() == "opencode-go":
-        cache_provider = "opencode-go"
-    return should_apply_cache_control(cache_provider)
+            return should_apply_cache_control("anthropic")
+    return False
 
 
 def _map_stream_domain_error(error_msg: str) -> tuple[int, dict]:
