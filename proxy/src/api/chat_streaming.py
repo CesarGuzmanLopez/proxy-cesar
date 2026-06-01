@@ -574,8 +574,10 @@ async def _stream_response_generator(ctx: StreamContext):
     continues streaming from the next model.
     """
     import uuid
+    import time
 
     stream_id = str(uuid.uuid4())[:8]  # Unique ID for this streaming session
+    _gen_start = time.monotonic()
     last_chunk = None  # Track last chunk for token extraction (avoids memory accumulation)
     db = ctx.db
 
@@ -655,6 +657,8 @@ async def _stream_response_generator(ctx: StreamContext):
 
                     if not _first_chunk_logged:
                         _first_chunk_logged = True
+                        _elapsed_first = time.monotonic() - _gen_start
+                        logger.info("stream_first_chunk_timing stream_id=%s conv=%s elapsed=%.1fs", stream_id, ctx.conversation_id[:12], _elapsed_first)
                         _content_preview = (
                             (delta.content or "")[:80]
                             if hasattr(chunk.choices[0], "delta")
