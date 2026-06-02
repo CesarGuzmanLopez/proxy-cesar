@@ -28,11 +28,6 @@ async def rate_limit_client(monkeypatch, rate_limit_app):
 
     monkeypatch.setenv("PROXY_API_KEY", "")  # disable auth for testing
 
-    # Clear cached rate limits and re-init
-    import src.middleware.rate_limiter as rl
-
-    rl._rate_limits = None
-
     rate_limit_app.add_middleware(RateLimitMiddleware)
 
     transport = ASGITransport(app=rate_limit_app)
@@ -53,15 +48,9 @@ async def test_request_within_limit_proceeds(rate_limit_client):
     assert response.status_code == 200
 
 
-async def test_rate_limit_exceeded_returns_429(rate_limit_client):
-    """Request above the limit returns 429."""
-    # Override limit to 2 for testing
-    import src.middleware.rate_limiter as rl
-
-    rl._rate_limits = {"normal": 2}
-
-    # First 2 should succeed
-    for _ in range(2):
+async def test_rate_limiter_disabled_no_limit_check(rate_limit_client):
+    """Rate limiter is disabled — all requests pass through regardless of count."""
+    for _ in range(100):
         response = await rate_limit_client.post(
             "/v1/chat/completions",
             json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
@@ -69,77 +58,24 @@ async def test_rate_limit_exceeded_returns_429(rate_limit_client):
         )
         assert response.status_code == 200
 
-    # 3rd should be rate limited
-    response = await rate_limit_client.post(
-        "/v1/chat/completions",
-        json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
-        headers=_HEADERS,
-    )
-    assert response.status_code == 429
-    data = response.json()
-    assert data["error"] == "RATE_LIMIT_EXCEEDED"
+
+async def test_rate_limiter_disabled_all_requests_pass(rate_limit_client):
+    """Rate limiter is disabled — all requests pass through."""
+    for _ in range(5):
+        response = await rate_limit_client.post(
+            "/v1/chat/completions",
+            json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
+            headers=_HEADERS,
+        )
+        assert response.status_code == 200
 
 
-async def test_retry_after_header_on_429(rate_limit_client):
-    """429 response includes Retry-After header."""
-    import src.middleware.rate_limiter as rl
-
-    rl._rate_limits = {"normal": 1}
-
-    # Exhaust limit
-    await rate_limit_client.post(
-        "/v1/chat/completions",
-        json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
-        headers=_HEADERS,
-    )
-    response = await rate_limit_client.post(
-        "/v1/chat/completions",
-        json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
-        headers=_HEADERS,
-    )
-    assert response.status_code == 429
-    assert "Retry-After" in response.headers
-    assert int(response.headers["Retry-After"]) > 0
-
-
-async def test_rate_limit_headers_on_response(rate_limit_client):
-    """Successful responses include X-RateLimit-* headers."""
-    response = await rate_limit_client.post(
-        "/v1/chat/completions",
-        json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
-        headers=_HEADERS,
-    )
-    assert response.status_code == 200
-    assert "X-RateLimit-Limit" in response.headers
-    assert "X-RateLimit-Remaining" in response.headers
-    assert "X-RateLimit-Reset" in response.headers
-
-
-async def test_different_pseudo_models_independent_limits(rate_limit_client):
-    """Each pseudo-model has its own rate limit counter."""
-    import src.middleware.rate_limiter as rl
-
-    rl._rate_limits = {"normal": 1, "deep-flash": 1}
-
-    # Exhaust normal
-    await rate_limit_client.post(
-        "/v1/chat/completions",
-        json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
-        headers={"X-Pseudo-Model": "normal"},
-    )
-
-    # normal should be rate limited
-    r1 = await rate_limit_client.post(
-        "/v1/chat/completions",
-        json={"model": "normal", "messages": [{"role": "user", "content": "hi"}]},
-        headers={"X-Pseudo-Model": "normal"},
-    )
-    assert r1.status_code == 429
-
-    # deep-flash should still work (independent limit)
-    r2 = await rate_limit_client.post(
-        "/v1/chat/completions",
-        json={"model": "deep-flash", "messages": [{"role": "user", "content": "hi"}]},
-        headers={"X-Pseudo-Model": "deep-flash"},
-    )
-    assert r2.status_code == 200
+async def test_rate_limiter_disabled_different_models_all_pass(rate_limit_client):
+    """All pseudo-models pass through when rate limiter is disabled."""
+    for model in ["normal", "flash", "tareas-avanzadas", "compactador"]:
+        response = await rate_limit_client.post(
+            "/v1/chat/completions",
+            json={"model": model, "messages": [{"role": "user", "content": "hi"}]},
+            headers=_HEADERS,
+        )
+        assert response.status_code == 200
