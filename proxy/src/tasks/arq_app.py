@@ -12,14 +12,12 @@ Usage:
 import logging
 
 try:
-    from arq import create_pool as _create_pool_impl
-    from arq.connections import RedisSettings as _RedisSettingsImpl
+    from arq import create_pool as _create_pool_impl  # noqa: F401 — import to detect availability
 
     HAS_ARQ = True
 except ImportError:
     HAS_ARQ = False
     _create_pool_impl = None
-    _RedisSettingsImpl = None
 
 logger = logging.getLogger(__name__)
 

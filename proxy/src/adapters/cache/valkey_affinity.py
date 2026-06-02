@@ -123,26 +123,6 @@ class ValkeyAffinityAdapter:
         except Exception as e:
             logger.warning("affinity_record_failure_error model=%s error=%s", model, e)
 
-    async def get_failure_count(
-        self,
-        conversation_id: str,
-        model: str,
-    ) -> int:
-        """Get failure count for this model in this conversation (last 1h)."""
-        key = f"affinity_metrics:{conversation_id}:{model}"
-
-        try:
-            metrics = await self._client.get(key)
-            if metrics:
-                data = json.loads(metrics)
-                return data.get("errors_1h", 0)
-        except Exception as e:
-            logger.warning(
-                "affinity_get_failure_count_error model=%s error=%s", model, e
-            )
-
-        return 0
-
 
 async def setup_valkey(settings: Settings) -> valkey_async.Valkey:
     """Create and verify Valkey client. Called during FastAPI lifespan startup."""

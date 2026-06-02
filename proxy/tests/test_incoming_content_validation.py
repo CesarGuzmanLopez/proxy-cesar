@@ -1,67 +1,64 @@
-"""Tests for incoming content validation.
+"""Tests for content validation against physical models.
 
-Verifies that validate_incoming_content() returns appropriate signals:
+Verifies that validate_physical_model_content() returns appropriate signals:
 - None if content is supported
-- delegation signal if images can be delegated to tools
-- transform_unsupported signal if content type needs URL transformation
-- ValueError for unrecoverable errors (parallel tools)
+- delegation signal if content type needs URL transformation
 """
 
 import pytest
 
 from src.config.pseudo_models import load_config
 from src.domain.capabilities import TurnCapabilities
-from src.service.compatibility import validate_incoming_content
+from src.service.compatibility import validate_physical_model_content
 
 CONFIG = load_config()
 
 
-def _get_pm(name: str):
-    return CONFIG.pseudo_models[name]
+def _get_phys(pm_name: str, index: int = 0):
+    """Get a physical model from a pseudo-model by name."""
+    return CONFIG.pseudo_models[pm_name].physical_models[index]
 
 
 def test_image_sent_to_no_vision_model_returns_transform():
-    """Image sent to 'tareas-avanzadas' (no vision, no tools) → transform signal."""
+    """Image sent to non-vision physical model → transform signal."""
     turn_caps = TurnCapabilities(has_images=True)
-    result = validate_incoming_content(
-        turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas"
+    result = validate_physical_model_content(
+        turn_caps, _get_phys("tareas-avanzadas")
     )
     assert result == {"action": "transform_unsupported"}
 
 
 def test_image_sent_to_vision_model_proceeds():
-    """Image sent to 'vision' (has vision models) → no signal."""
+    """Image sent to vision-capable physical model → no signal."""
     turn_caps = TurnCapabilities(has_images=True)
-    result = validate_incoming_content(
-        turn_caps, _get_pm("vision"), "vision"
-    )
-    assert result is None
-
-
-def test_image_sent_to_no_vision_with_tool_returns_transform():
-    """Image sent to 'tareas-avanzadas' with a tool → transform_unsupported (proxy does not inspect tools)."""
-    turn_caps = TurnCapabilities(has_images=True)
-    tools = [{"function": {"name": "describe", "parameters": {"properties": {"url": {"type": "string"}}}}}]
-    result = validate_incoming_content(
-        turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas", tools
-    )
-    assert result == {"action": "transform_unsupported"}
+    # Find a vision model
+    for pm_name in ("vision", "normal"):
+        for phys in CONFIG.pseudo_models[pm_name].physical_models:
+            if getattr(phys, "vision", False):
+                result = validate_physical_model_content(turn_caps, phys)
+                assert result is None
+                return
+    pytest.skip("No vision model found in config")
 
 
 def test_audio_sent_to_model_with_audio_passes():
-    """Audio sent to pseudo-model with audio-capable physical model → no signal."""
+    """Audio sent to physical model with audio capability → no signal."""
     turn_caps = TurnCapabilities(has_audio=True)
-    result = validate_incoming_content(
-        turn_caps, _get_pm("compactador"), "compactador"
-    )
-    assert result is None  # compactador has whisper models with audio: true
+    # Find an audio model
+    for pm_name in ("compactador",):
+        for phys in CONFIG.pseudo_models[pm_name].physical_models:
+            if getattr(phys, "audio", False):
+                result = validate_physical_model_content(turn_caps, phys)
+                assert result is None
+                return
+    pytest.skip("No audio model found in config")
 
 
 def test_audio_sent_to_no_audio_model_returns_transform():
-    """Audio sent to 'normal' (no audio) → transform signal."""
+    """Audio sent to physical model without audio → transform signal."""
     turn_caps = TurnCapabilities(has_audio=True)
-    result = validate_incoming_content(
-        turn_caps, _get_pm("normal"), "normal"
+    result = validate_physical_model_content(
+        turn_caps, _get_phys("normal")
     )
     assert result == {"action": "transform_unsupported"}
 
@@ -69,20 +66,8 @@ def test_audio_sent_to_no_audio_model_returns_transform():
 def test_pdf_sent_to_no_pdf_model_returns_transform():
     """PDF sent to model without pdf capability → transform signal."""
     turn_caps = TurnCapabilities(has_pdf=True)
-    result = validate_incoming_content(
-        turn_caps, _get_pm("tareas-avanzadas"), "tareas-avanzadas"
-    )
-    assert result == {"action": "transform_unsupported"}
-
-
-def test_pdf_sent_to_pdf_capable_model_proceeds():
-    """PDF sent to model with pdf capability → proceeds."""
-    turn_caps = TurnCapabilities(has_pdf=True)
-    # normal model has MiMo-V2.5 which has vision but not pdf specifically.
-    # PDF delegation now checks 'pdf' capability, not 'vision'.
-    # Since no model in our YAML has pdf=true, this returns transform.
-    result = validate_incoming_content(
-        turn_caps, _get_pm("normal"), "normal"
+    result = validate_physical_model_content(
+        turn_caps, _get_phys("tareas-avanzadas")
     )
     assert result == {"action": "transform_unsupported"}
 
@@ -91,30 +76,14 @@ def test_video_sent_to_any_model_returns_transform():
     """Video sent to any model without video → transform signal."""
     turn_caps = TurnCapabilities(has_video=True)
     for name in ("normal", "vision", "flash"):
-        result = validate_incoming_content(
-            turn_caps, _get_pm(name), name
+        result = validate_physical_model_content(
+            turn_caps, _get_phys(name)
         )
         assert result == {"action": "transform_unsupported"}
 
 
-def test_parallel_tools_sent_to_no_parallel_model_returns_400():
-    """Parallel tools sent to a pseudo-model without parallel_tools → error."""
-    from unittest.mock import MagicMock
-
-    # All real pseudo-models support parallel tools now, so we mock one that doesn't
-    mock_pm = MagicMock()
-    mock_pm.physical_models = [MagicMock(parallel_tools=False)]
-    mock_pm_name = "mock-no-parallel"
-
-    turn_caps = TurnCapabilities(has_parallel_tools=True)
-    with pytest.raises(ValueError, match="ParallelToolsNotSupported"):
-        validate_incoming_content(
-            turn_caps, mock_pm, mock_pm_name
-        )
-
-
 def test_transform_signal_returned_for_all_unsupported_types():
-    """All unsupported content types return transform_unsupported signal instead of error."""
+    """All unsupported content types return transform_unsupported signal."""
     caps_list = [
         ("images", TurnCapabilities(has_images=True), "tareas-avanzadas"),
         ("audio", TurnCapabilities(has_audio=True), "normal"),
@@ -122,17 +91,18 @@ def test_transform_signal_returned_for_all_unsupported_types():
         ("video", TurnCapabilities(has_video=True), "normal"),
     ]
     for content_type, caps, pm_name in caps_list:
-        result = validate_incoming_content(
-            caps, _get_pm(pm_name), pm_name
+        result = validate_physical_model_content(
+            caps, _get_phys(pm_name)
         )
         assert result == {"action": "transform_unsupported"}, (
             f"{content_type} should return transform signal, got {result}"
         )
 
 
-def test_vision_accepts_images():
-    """'vision' should accept image content."""
-    result = validate_incoming_content(
-        TurnCapabilities(has_images=True), _get_pm("vision"), "vision"
+def test_no_content_returns_none():
+    """No content capabilities → None."""
+    turn_caps = TurnCapabilities()
+    result = validate_physical_model_content(
+        turn_caps, _get_phys("normal")
     )
     assert result is None

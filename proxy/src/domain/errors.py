@@ -41,31 +41,6 @@ class StreamPersistenceFailed:
 
 
 @dataclass(frozen=True, slots=True)
-class StreamInterrupted:
-    """Streaming interrupted before [DONE] was reached.
-
-    Client disconnection or internal error during chunk iteration.
-    """
-
-    conversation_id: str
-    chunks_received: int
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class ContextContaminated:
-    """Conversation context contains duplicated or corrupted messages.
-
-    Detected when turn_type is 'degradation_event' and would cause
-    the full historical context to be replayed.
-    """
-
-    conversation_id: str
-    turn_type: str
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
 class AllModelsFailed:
     """All physical models in the fallback chain failed.
 

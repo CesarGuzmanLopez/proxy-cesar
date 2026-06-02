@@ -100,12 +100,6 @@ class CompactionOrchestrator:
         finally:
             lock.release()
 
-    def reset_lock(self, conversation_id: str) -> None:
-        """Reset lock for a conversation (e.g., after cleanup)."""
-        conv_uuid = _parse_uuid(conversation_id)
-        if conv_uuid in self._locks:
-            del self._locks[conv_uuid]
-
 
 def _compaction_max_tokens(estimated_input: int, default: int = 12000) -> int:
     """Ensure compaction output is at least 5% of input."""

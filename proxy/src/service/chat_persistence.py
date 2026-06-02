@@ -69,7 +69,6 @@ def _process_tool_metadata(response_dict: dict, ctx) -> dict:
 
     if (
         ctx.tool_choice == "required"
-        and tool_calls
         and not enforce_tool_choice(response_dict, ctx.tool_choice)
     ):
         ctx.turn_caps.tools_incomplete = True

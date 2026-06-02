@@ -31,9 +31,3 @@ class AffinityPort(Protocol):
     async def get_key_slot(self, conversation_id: str) -> int:
         """Get the pinned key slot (1-based). Returns 1 if not set."""
         ...
-
-    async def set_key_slot(
-        self, conversation_id: str, slot: int, ttl_seconds: int = 86400
-    ) -> None:
-        """Pin a key slot to a conversation. Slot is 1-based."""
-        ...

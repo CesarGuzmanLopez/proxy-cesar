@@ -6,7 +6,6 @@ from src.service.tools_canonical import (
     determine_tools_level,
     determine_tool_level_for_turn,
     extract_tool_calls_from_response,
-    validate_arguments_json,
     validate_tool_call_ids,
 )
 
@@ -111,26 +110,6 @@ def test_empty_arguments_raises():
         assert False, "Expected ValueError"
     except ValueError as e:
         assert "empty" in str(e).lower()
-
-
-# ---------------------------------------------------------------------------
-# validate_arguments_json
-# ---------------------------------------------------------------------------
-
-
-def test_validate_valid_json():
-    """Valid JSON arguments string → True."""
-    assert validate_arguments_json('{"key": "value"}') is True
-
-
-def test_validate_invalid_json():
-    """Invalid JSON arguments string → False."""
-    assert validate_arguments_json("{invalid}") is False
-
-
-def test_validate_empty_json():
-    """Empty arguments string → False."""
-    assert validate_arguments_json("") is False
 
 
 # ---------------------------------------------------------------------------

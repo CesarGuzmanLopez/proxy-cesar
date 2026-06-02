@@ -28,7 +28,4 @@ DEFAULT_LLM_TIMEOUT_SECONDS = 60
 # 86400 = 24 hours — allows multi-turn conversations within a day
 BLOB_STORAGE_TTL_SECONDS = 86400
 
-# Compaction Job Constants
-# Hard timeout for compaction jobs (in seconds)
-# 300 = 5 minutes — increase if large conversations timeout
-COMPACTION_JOB_TIMEOUT_SECONDS = 300
+

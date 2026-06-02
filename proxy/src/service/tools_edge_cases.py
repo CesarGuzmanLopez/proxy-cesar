@@ -60,49 +60,6 @@ def _assemble_tool_call(
     }, was_incomplete
 
 
-async def accumulate_streaming_tool_calls(
-    stream_generator,
-) -> tuple[list[dict], bool]:
-    """Accumulate tool call deltas from streaming chunks.
-
-    plan-proxy.md §6.7: During SSE streaming, tool call arguments arrive
-    in multiple chunks. If the stream is interrupted, the tool call is
-    incomplete and marked as such.
-    """
-    tool_calls_by_index: dict[int, dict] = {}
-    was_incomplete = False
-
-    try:
-        async for chunk in stream_generator:
-            choices = chunk.get("choices", [])
-            if not choices:
-                continue
-            delta = choices[0].get("delta", {})
-            tool_call_deltas = delta.get("tool_calls", [])
-            if not tool_call_deltas:
-                continue
-
-            for tc_delta in tool_call_deltas:
-                _process_tool_delta(tc_delta, tool_calls_by_index)
-
-    except Exception as exc:
-        logger.debug("accumulate_streaming_tool_calls_error err=%s", exc)
-        was_incomplete = True
-
-    # Assemble final tool calls
-    complete: list[dict] = []
-    for idx in sorted(tool_calls_by_index.keys()):
-        entry = tool_calls_by_index[idx]
-        tc, was_incomplete = _assemble_tool_call(idx, entry, was_incomplete)
-        if tc is not None:
-            complete.append(tc)
-
-    if not complete:
-        was_incomplete = True
-
-    return complete, was_incomplete
-
-
 def truncate_tool_result(content: str, max_tokens: int = MAX_TOOL_RESULT_TOKENS) -> str:
     """Truncate tool result to max_tokens, adding a truncation marker.
 
@@ -225,22 +182,3 @@ def enforce_tool_choice(response: dict, tool_choice: str | None) -> bool:
     tool_calls = message.get("tool_calls", [])
 
     return len(tool_calls) > 0
-
-
-def is_mixed_content(message: dict) -> bool:
-    """Check if an assistant message has both text and tool calls.
-
-    plan-proxy.md §6.7: Text + tool_calls in the same turn is valid.
-    Both are stored as separate fields of the same assistant object.
-
-    Args:
-        message: An assistant message dict.
-
-    Returns:
-        True if the message has both content and tool_calls.
-    """
-    return bool(
-        message.get("content")
-        and message.get("role") == "assistant"
-        and message.get("tool_calls")
-    )

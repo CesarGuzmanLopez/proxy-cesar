@@ -29,46 +29,6 @@ def stable_message_hash(messages: list[dict]) -> str:
     return hashlib.sha256(stable_json_dumps_bytes(messages)).hexdigest()[:16]
 
 
-def assemble_canonical_messages(
-    system_prompt: str | None,
-    tool_definitions: list[dict] | None,
-    conversation_history: list[dict],
-    new_messages: list[dict],
-) -> tuple[list[dict], list[dict] | None]:
-    """Assemble messages in canonical order to maximize provider cache hits.
-
-    The prefix (system + tools + history) stays identical across turns because:
-      - System prompt is static per pseudo-model
-      - Tool definitions are sorted deterministically
-      - Conversation history grows predictably (append-only from oldest to newest)
-      - The only change each turn is the new_messages at the tail
-
-    Does NOT modify message content, reorder history, merge system messages,
-    deduplicate, strip content, or change tool_call_id values.
-    """
-    messages: list[dict] = []
-
-    # 1. System prompt — always first, maximizes cache prefix stability
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-
-    # 2. Tool definitions are passed to LiteLLM via the `tools` parameter.
-    #    For Anthropic they may be folded into the system message by LiteLLM.
-    #    Here we just sort them so any JSON serialization is deterministic.
-    #    The `tools` list is returned separately for the caller to pass to the API.
-    sorted_tools: list[dict] | None = None
-    if tool_definitions:
-        sorted_tools = sort_tool_definitions(tool_definitions)
-
-    # 3. Conversation history — oldest first, preserves turn order exactly
-    messages.extend(deepcopy(conversation_history))
-
-    # 4. New messages — at the tail (this is what changes each turn)
-    messages.extend(deepcopy(new_messages))
-
-    return messages, sorted_tools
-
-
 def stable_json_dumps(obj: dict | list) -> str:
     """Serialize to JSON with sorted keys for deterministic output.
 

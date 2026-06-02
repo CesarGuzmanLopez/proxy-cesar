@@ -9,6 +9,7 @@ import logging
 from src.adapters.db.models import Conversation, ConversationTurn
 from src.config.pseudo_models import ProxyConfigSchema
 from src.domain.ports import AsyncSessionPort
+from src.service.chat_fallback import _resolve_api_key
 from src.service.multimedia.image_describer import auto_describe_images
 
 logger = logging.getLogger(__name__)
@@ -207,7 +208,6 @@ async def _resolve_auto_describe_params(
     api_key = await _resolve_api_key(vision_phys)
     return (vision_model, current_pseudo_name, None, api_base, api_key)
 
-
 async def handle_auto_describe(
     conv: Conversation,
     current_pseudo_name: str,
@@ -289,13 +289,3 @@ async def handle_auto_describe(
     conv.capability_has_images = False
 
     return (described_in_flight, desc_meta)
-
-
-# ── Late import to avoid circular dependency ─────────────────────────────────
-
-
-async def _resolve_api_key(phys) -> str | None:
-    """Resolve API key from environment if the physical model has api_key_env set."""
-    from src.service.chat_fallback import _resolve_api_key as _raf
-
-    return await _raf(phys)

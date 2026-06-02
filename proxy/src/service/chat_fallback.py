@@ -5,7 +5,6 @@ and provider-specific cache optimisations.
 """
 
 import logging
-import re
 import time
 import uuid
 

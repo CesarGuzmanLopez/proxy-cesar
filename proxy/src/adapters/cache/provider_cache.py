@@ -123,12 +123,6 @@ def should_apply_cache_control(provider: str) -> bool:
     return provider.lower() in _PROVIDERS_WITH_CACHE_CONTROL
 
 
-@functools.lru_cache(maxsize=32)
-def provider_supports_cache(provider: str) -> bool:
-    """Check if provider has any caching support."""
-    return provider.lower() in _PROVIDERS_WITH_CACHE
-
-
 # ── Cache metadata extraction ────────────────────────────────────────────────
 
 

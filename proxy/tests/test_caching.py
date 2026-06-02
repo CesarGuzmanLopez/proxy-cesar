@@ -157,20 +157,14 @@ def test_cache_destruction():
 
 
 def test_provider_cache_detection():
-    """Only known providers report cache support."""
+    """Only known providers report cache control support."""
     from adapters.cache.provider_cache import (
         should_apply_cache_control,
-        provider_supports_cache,
     )
 
     assert should_apply_cache_control("anthropic") is True   # cache_control breakpoints
     assert should_apply_cache_control("deepseek") is False  # auto-cache
     assert should_apply_cache_control("groq") is False
-
-    assert provider_supports_cache("anthropic") is True      # cache_control breakpoints
-    assert provider_supports_cache("deepseek") is True
-    assert provider_supports_cache("groq") is True           # Groq automatic prefix caching
-    assert provider_supports_cache("ollama") is False
 
 
 # ── Canonical message ordering ─────────────────────────────────────────────
@@ -189,25 +183,3 @@ def test_canonicalize_message_order():
     assert ordered[0]["role"] == "system"
     assert ordered[1]["role"] == "user"
     assert ordered[2]["role"] == "assistant"
-
-
-def test_assemble_canonical_messages():
-    """Full message assembly with sorted tools."""
-    from adapters.cache.message_ordering import assemble_canonical_messages
-
-    result, tools = assemble_canonical_messages(
-        system_prompt="You are a bot.",
-        tool_definitions=[
-            {"function": {"name": "b_tool"}},
-            {"function": {"name": "a_tool"}},
-        ],
-        conversation_history=[{"role": "user", "content": "prev msg"}],
-        new_messages=[{"role": "user", "content": "new msg"}],
-    )
-    assert result[0]["role"] == "system"
-    assert result[1]["role"] == "user"
-    assert result[1]["content"] == "prev msg"
-    assert result[2]["role"] == "user"
-    assert result[2]["content"] == "new msg"
-    assert tools[0]["function"]["name"] == "a_tool"  # sorted
-    assert tools[1]["function"]["name"] == "b_tool"

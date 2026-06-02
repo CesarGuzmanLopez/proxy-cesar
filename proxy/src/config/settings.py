@@ -42,8 +42,6 @@ class Settings(BaseSettings):
     """Comma-separated list of providers to disable (e.g. 'opencode-go,deepseek').
     Disabled providers are skipped during fallback — the next provider is tried.
     Set to 'opencode-go' to fall back to deepseek/groq for all pseudo-models."""
-    keyclaw_enabled: bool = True
-    """Set to false to disable KeyClaw secret-filtering proxy even if installed."""
 
     @property
     def disabled_providers_set(self) -> set[str]:

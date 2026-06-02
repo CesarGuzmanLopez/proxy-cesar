@@ -93,7 +93,6 @@ def _build_turn_tool_metadata(
             turn_caps.tools_incomplete = True
     if (
         tool_choice == "required"
-        and tool_calls
         and not enforce_tool_choice(response_dict, tool_choice)
     ):
         turn_caps.tools_incomplete = True

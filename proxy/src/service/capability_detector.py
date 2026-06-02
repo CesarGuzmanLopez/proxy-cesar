@@ -10,7 +10,6 @@ python.md §4: pure functions, immutable data, declarative style.
 import asyncio
 import functools
 import logging
-import re
 import uuid
 
 import tiktoken

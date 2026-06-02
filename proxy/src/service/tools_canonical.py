@@ -8,7 +8,6 @@ python.md §3: Result monad for error handling.
 """
 
 import json
-from dataclasses import dataclass
 
 from src.domain.tools import ToolLevel
 
@@ -86,27 +85,6 @@ def validate_tool_call_ids(tool_calls: list[dict]) -> None:
             raise ValueError(f"Tool call '{tc_id}' has empty 'arguments' field")
 
 
-def validate_arguments_json(arguments: str) -> bool:
-    """Verify that the arguments string is valid JSON.
-
-    plan-proxy.md §6.5: arguments is stored as a JSON string, not parsed.
-    This function only validates — it does NOT modify the string.
-
-    Args:
-        arguments: The JSON string of tool call arguments.
-
-    Returns:
-        True if valid JSON, False otherwise.
-    """
-    if not arguments:
-        return False
-    try:
-        json.loads(arguments)
-        return True
-    except ValueError:
-        return False
-
-
 def extract_tool_calls_from_response(response: dict) -> list[dict]:
     """Extract tool calls from a LiteLLM response dict.
 
@@ -147,16 +125,3 @@ def determine_tool_level_for_turn(
     if tools_incomplete or not tool_calls:
         return ToolLevel.NONE if not tool_calls else ToolLevel.BASIC
     return determine_tools_level(tool_calls, tool_definitions)
-
-
-@dataclass
-class TurnToolMetadata:
-    """Metadata about tool usage in a turn, ready for DB storage.
-
-    plan-proxy.md §6.5: all tool history stored in canonical OpenAI format.
-    """
-
-    tool_definitions: list[dict] | None = None
-    thinking_blocks: dict | None = None
-    tools_incomplete: bool = False
-    tools_level_used: int = 0

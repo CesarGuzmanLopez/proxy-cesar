@@ -12,12 +12,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ── SSL_CERT_FILE must be set *before* any module imports httpx/litellm ────
-# Check KeyClaw combined CA first, then system CA
-_keyclaw_combined = Path.home() / ".keyclaw" / "combined-ca.pem"
 if not os.environ.get("SSL_CERT_FILE"):
     for candidate in (
         os.environ.get("NIX_SSL_CERT_FILE", ""),
-        str(_keyclaw_combined) if _keyclaw_combined.exists() else "",
         "/etc/ssl/certs/ca-certificates.crt",
         "/etc/ssl/cert.pem",
     ):
@@ -186,8 +183,7 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware)
 
 # 3. CORS — outermost (runs first)
-origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
-origins = [o.strip() for o in origins_str.split(",") if o.strip()]
+origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
