@@ -69,16 +69,20 @@ async def compact_conversation_endpoint(
                 },
             )
 
-        return result
+        # Handle Result type - convert domain errors to HTTPException
+        from src.domain.types import Err
+        if isinstance(result, Err):
+            error = result.error
+            error_msg = str(error)
+            status_code, error_type = _map_compaction_error(error_msg)
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": error_type, "message": error_msg},
+            )
+
+        return result.value
     except HTTPException:
         raise
-    except ValueError as e:
-        error_msg = str(e)
-        status_code, error_type = _map_compaction_error(error_msg)
-        raise HTTPException(
-            status_code=status_code,
-            detail={"error": error_type, "message": error_msg},
-        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=502,

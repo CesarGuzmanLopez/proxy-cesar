@@ -32,6 +32,7 @@ from src.config.pseudo_models import PhysicalModelSchema, ProxyConfigSchema
 from src.config.settings import settings as _global_settings
 from src.domain.capabilities import TurnCapabilities
 from src.domain.errors import ContextTooLargeForAllModels, AllModelsFailed
+from src.domain.types import Result, Ok, Err
 from src.service.capability_detector import estimate_tokens
 from src.service.chat_models import FallbackInfo
 from src.service.compatibility import validate_physical_model_content
@@ -701,7 +702,7 @@ async def call_with_fallback(
     turn_caps: TurnCapabilities | None = None,
     config: ProxyConfigSchema | None = None,
     **kwargs,
-) -> tuple:
+) -> Result[tuple[ModelResponse | dict, FallbackInfo], ContextTooLargeForAllModels | AllModelsFailed]:
     """Try each physical model in order. On retryable errors, move to next.
 
     Retryable errors: ServiceUnavailableError (503), RateLimitError (429),
@@ -709,18 +710,8 @@ async def call_with_fallback(
     AuthenticationError (401 — expired / invalid key for a given provider).
     Any other exception propagates immediately (the request fails fast).
 
-    feature applies provider-specific cache optimizations (Anthropic cache_control)
-    and tracks cache destruction on fallback.
-
-    feature token-limit fallback — if a non-streaming model finishes with
-    ``finish_reason="length"`` and there are more physical models available,
-    the partial response is appended as an assistant message and the next
-    model is called to continue (composite response built at the end).
-
-    ``start_index`` (default 0) allows resuming from a specific position in
-    the physical models list — used by streaming continuation.
-
-    FASE 2: conversation_id + valkey_client enable adaptive fallback scoring.
+    Returns Ok((response, fallback_info)) on success,
+    Err(ContextTooLargeForAllModels) or Err(AllModelsFailed) on failure.
     """
     fallback_info = FallbackInfo()
     last_error: Exception | None = None
@@ -822,7 +813,7 @@ async def call_with_fallback(
                 smart_fallback, conversation_id, phys.model, elapsed, success=True
             )
             _log_model_call_result(response, phys, stream, _trace_id, elapsed)
-            return response, fallback_info
+            return Ok((response, fallback_info))
 
         except _RETRYABLE as e:
             last_error = e
@@ -858,13 +849,13 @@ async def call_with_fallback(
             len(accumulated_parts),
             len(response_dict["choices"][0]["message"]["content"]),
         )
-        return response_dict, fallback_info
+        return Ok((response_dict, fallback_info))
 
     if len(_context_skipped) == len(pseudo_model_schema.physical_models):
         error = _build_context_too_large_error(
             _est_input, pseudo_model_schema, _context_skipped, _trace_id, elapsed
         )
-        raise ValueError(f"ContextTooLargeForAllModels: {error}")
+        return Err(error)
 
     logger.error(
         "llm_fail   | trace=%s elapsed=%.1fs models=%s last_error=%s",
@@ -876,4 +867,4 @@ async def call_with_fallback(
     all_error = _build_all_models_failed_error(
         fallback_info, pseudo_model_schema, last_error
     )
-    raise ValueError(f"AllModelsFailed: {all_error}")
+    return Err(all_error)

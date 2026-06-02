@@ -26,7 +26,7 @@ from src.adapters.db.models import Conversation
 from src.domain.affinity import AffinityPort
 from src.domain.ports import AsyncSessionPort
 from src.domain.types import Result, Ok, Err
-from src.domain.errors import InputExceedsThreshold, ContextUnusable
+from src.domain.errors import InputExceedsThreshold, ContextUnusable, ContextTooLargeForAllModels, AllModelsFailed
 from src.api.metrics import metrics
 from src.config.pseudo_models import ProxyConfigSchema, PseudoModelSchema
 from src.domain.capabilities import SessionCapabilities, TurnCapabilities
@@ -155,10 +155,11 @@ async def process_chat_request(
     valkey=None,
     thinking: dict | str | bool | None = None,
     trace: PipelineTrace | None = None,
-) -> ChatResult:
+) -> Result[ChatResult, InputExceedsThreshold | ContextUnusable | ContextTooLargeForAllModels | AllModelsFailed]:
     """Execute the full chat completion flow.
 
     Each logical step is delegated to a focused helper function.
+    Returns Ok(ChatResult) on success, Err(...) for domain errors.
     """
     _req_id = str(uuid.uuid4())[:8]
     _t0 = time.monotonic()
@@ -278,7 +279,7 @@ async def process_chat_request(
     )
     match threshold_check:
         case Err(error=err):
-            # Log and re-raise for router to handle
+            # Log and return domain error
             logger.error(
                 "req_failed | trace=%s reason=input_exceeds_threshold "
                 "estimated=%d threshold=%d",
@@ -286,7 +287,7 @@ async def process_chat_request(
                 err.estimated,
                 err.threshold,
             )
-            raise ValueError(f"InputExceedsThreshold: {err}")
+            return Err(err)
         case Ok():
             pass  # Threshold OK
 
@@ -306,7 +307,7 @@ async def process_chat_request(
             ctx_err.context_tokens,
             ctx_err.context_window,
         )
-        raise ValueError(f"ContextUnusable: {ctx_err}")
+        return Err(ctx_err)
 
     # Router LLM evaluation runs in parallel with the LLM call (see below)
     # feature Router LLM — evaluate complexity (non-blocking, never changes model)
@@ -332,7 +333,7 @@ async def process_chat_request(
 
     # Step 13: Call LiteLLM with fallback
     _t_llm_start = time.monotonic()
-    response, fallback_info = await call_with_fallback(
+    fallback_result = await call_with_fallback(
         pseudo_model_schema=pm_schema,
         messages=active_messages,
         stream=stream,
@@ -349,6 +350,9 @@ async def process_chat_request(
         turn_caps=turn_caps,
         config=config,
     )
+    if isinstance(fallback_result, Err):
+        return fallback_result
+    response, fallback_info = fallback_result.value
     _t_llm_elapsed = time.monotonic() - _t_llm_start
 
     # Collect router suggestion result (fire-and-forget — model already chosen)
@@ -401,7 +405,7 @@ async def process_chat_request(
     try:
         compatibility_info = _build_compatibility_info(turn_caps, pm_schema)
 
-        return await _save_and_return(
+        result = await _save_and_return(
             SaveContext(
                 db=db,
                 conv=conv,
@@ -428,6 +432,7 @@ async def process_chat_request(
                 compatibility=compatibility_info,
             )
         )
+        return Ok(result)
     except Exception:
         logger.exception(
             "_save_and_return failed | pseudo=%s physical=%s conv=%s",

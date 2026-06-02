@@ -27,6 +27,7 @@ from src.domain.errors import (
     CompactionFailed,
 )
 from src.domain.ports import AsyncSessionPort
+from src.domain.types import Result, Ok, Err
 from src.service.capability_detector import estimate_tokens
 from src.service.compactor.prompts import build_explicit_compaction_prompt
 
@@ -56,7 +57,7 @@ class CompactionOrchestrator:
         trigger: str = "explicit",  # "explicit", "pre", "continuous"
         arq_pool=None,
         valkey=None,
-    ) -> tuple[bool, dict]:
+    ) -> tuple[bool, Result[dict, ConversationNotFound | EmptyConversation | HistoryTooLargeForCompactor | CompactionFailed]]:
         """Try to acquire lock and start compaction.
 
         Args:
@@ -68,8 +69,8 @@ class CompactionOrchestrator:
             valkey: Optional Valkey client for images
 
         Returns:
-            (success: bool, result: dict) where:
-            - success=True: compaction started/completed, result has details
+            (success: bool, result: Result[dict, ...]) where:
+            - success=True: compaction started/completed, result is Ok(dict) or Err(...)
             - success=False: compaction already in progress, result is empty dict
         """
         conv_uuid = _parse_uuid(conversation_id)
@@ -84,7 +85,7 @@ class CompactionOrchestrator:
                 str(conv_uuid)[:12],
                 trigger,
             )
-            return False, {}
+            return False, Ok({})
 
         await lock.acquire()
 
@@ -208,14 +209,11 @@ async def _run_compaction_sync(
     turn_count: int = 0,
     valkey=None,
     trace_id: str | None = None,
-) -> dict:
+) -> Result[dict, CompactionFailed]:
     """Run compaction synchronously and store the snapshot.
 
-    Snapshot is created ONLY after the API call succeeds to avoid
-    orphan snapshots on failure. The flush + chaining happens after
-    the compactor response is received.
-
-    If turn_count is passed (pre-computed), skips re-querying turns.
+    Returns Ok(dict) with compaction metadata on success,
+    Err(CompactionFailed) on failure.
     """
     _trace = trace_id or str(uuid.uuid4())[:8]
     conv_uuid = _parse_uuid(conversation_id)
@@ -264,13 +262,12 @@ async def _run_compaction_sync(
             compactor_model,
             exc,
         )
-        # Return domain error - router will convert to HTTPException
-        error = CompactionFailed(
+        # Return domain error
+        return Err(CompactionFailed(
             conversation_id=conversation_id,
             compactor_model=compactor_model,
             reason=str(exc),
-        )
-        raise ValueError(f"CompactionFailed: {error}")
+        ))
 
     # ── Create snapshot ONLY after API call succeeds ───────────────────
     new_snapshot = ConversationSnapshot(
@@ -305,7 +302,7 @@ async def _run_compaction_sync(
         compactor_model,
     )
 
-    return {
+    return Ok({
         "status": "completed",
         "snapshot_id": str(new_snapshot.id),
         "tokens_before": total_tokens,
@@ -318,7 +315,7 @@ async def _run_compaction_sync(
         if len(snapshot_content or "") > 500
         else (snapshot_content or ""),
         "can_resume": True,
-    }
+    })
 
 
 # ── Main entry point ──────────────────────────────────────────────────────
@@ -330,7 +327,7 @@ async def compact_conversation(
     config,
     arq_pool=None,
     valkey=None,
-) -> dict:
+) -> Result[dict, ConversationNotFound | EmptyConversation | HistoryTooLargeForCompactor | CompactionFailed]:
     """Explicitly compact a conversation into a structured snapshot.
 
     Args:
@@ -341,18 +338,14 @@ async def compact_conversation(
         valkey: Optional Valkey client for image description cache.
 
     Returns:
-        Dict with compaction result metadata.
-
-    Raises:
-        HTTPException: 404 (not found), 400 (empty/no compactor),
-                       502 (compactor model failed).
+        Ok(dict) with compaction result metadata on success,
+        Err(...) for domain errors.
     """
     conv_uuid = _parse_uuid(conversation_id)
     conv = await db.get(Conversation, conv_uuid)
     if not conv:
-        # Return domain error - router will convert to HTTPException
-        error = ConversationNotFound(conversation_id=conversation_id)
-        raise ValueError(f"ConversationNotFound: {error}")
+        # Return domain error
+        return Err(ConversationNotFound(conversation_id=conversation_id))
 
     _trace = str(uuid.uuid4())[:8]
     logger.info(
@@ -370,8 +363,8 @@ async def compact_conversation(
     turns = result.scalars().all()  # type: ignore[union-attr]  # justification: ScalarResult.all() returns Sequence[object]; actual type depends on query entity
 
     if not turns:
-        # Return domain error - router will convert to HTTPException
-        raise ValueError(f"EmptyConversation: {EmptyConversation(conversation_id=conversation_id)}")
+        # Return domain error
+        return Err(EmptyConversation(conversation_id=conversation_id))
 
     # Reconstruct full history
     all_messages: list[dict] = []
@@ -402,12 +395,11 @@ async def compact_conversation(
                 for m in compactador_pm.physical_models
                 if not getattr(m, "audio", False)
             )
-        # Return domain error - router will convert to HTTPException
-        _err = HistoryTooLargeForCompactor(
+        # Return domain error
+        return Err(HistoryTooLargeForCompactor(
             total_tokens=total_tokens,
             max_compactor_window=max_window,
-        )
-        raise ValueError(f"HistoryTooLargeForCompactor: {_err}")
+        ))
 
     compactor_model = compactor_phys.model
     api_base = compactor_phys.api_base or None
@@ -422,7 +414,7 @@ async def compact_conversation(
             api_base,
             api_key,
         )
-        return {
+        return Ok({
             "status": "processing",
             "task_id": job.job_id,
             "message": (
@@ -431,7 +423,7 @@ async def compact_conversation(
             ),
             "estimated_tokens": total_tokens,
             "compactor_model": compactor_model,
-        }
+        })
 
     # Synchronous compaction for smaller histories
     return await _run_compaction_sync(
@@ -497,7 +489,7 @@ async def _compact_async(
         all_messages.extend(_build_compaction_history(turns))  # type: ignore[arg-type]  # justification: ScalarResult.all() returns Sequence[object]; turns are ConversationTurn at runtime
         total_tokens = conv.total_tokens
 
-        return await _run_compaction_sync(
+        compaction_result = await _run_compaction_sync(
             conversation_id=conversation_id,
             compactor_model=compactor_model,
             all_messages=all_messages,
@@ -510,6 +502,10 @@ async def _compact_async(
             turn_count=len(turns),
             valkey=valkey,
         )
+        # Handle Result type
+        if isinstance(compaction_result, Err):
+            return {"status": "failed", "error": str(compaction_result.error)}
+        return compaction_result.value
     finally:
         await db.close()
 

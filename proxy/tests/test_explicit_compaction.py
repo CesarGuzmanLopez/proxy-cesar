@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config.pseudo_models import PhysicalModelSchema
+from src.domain.errors import ConversationNotFound, EmptyConversation
+from src.domain.types import Ok, Err
 from src.service.compactor.explicit import (
     compact_conversation,
     select_compactor_model,
@@ -167,14 +169,16 @@ async def test_compact_generates_snapshot(
         arq_pool=None,
     )
 
-    assert result["status"] == "completed"
-    assert "snapshot_id" in result
-    assert result["tokens_before"] > 0
-    assert result["tokens_after"] > 0
-    assert result["tokens_reduced_pct"] > 0
-    assert result["compactor_model"] is not None
-    assert "preview" in result
-    assert result["can_resume"] is True
+    assert isinstance(result, Ok)
+    data = result.value
+    assert data["status"] == "completed"
+    assert "snapshot_id" in data
+    assert data["tokens_before"] > 0
+    assert data["tokens_after"] > 0
+    assert data["tokens_reduced_pct"] > 0
+    assert data["compactor_model"] is not None
+    assert "preview" in data
+    assert data["can_resume"] is True
 
 
 @pytest.mark.asyncio
@@ -238,7 +242,7 @@ async def test_active_snapshot_id_updated(
 
 @pytest.mark.asyncio
 async def test_empty_conversation_400(config_with_compactador, mock_db):
-    """Compacting an empty conversation returns 400 error."""
+    """Compacting an empty conversation returns Err(EmptyConversation)."""
     conv = MagicMock()
     conv.id = uuid.uuid4()
     conv.total_tokens = 0
@@ -252,27 +256,29 @@ async def test_empty_conversation_400(config_with_compactador, mock_db):
     )
     mock_db.execute = AsyncMock(return_value=scalar_result)
 
-    with pytest.raises(ValueError, match="EmptyConversation"):
-        await compact_conversation(
-            conversation_id=str(conv.id),
-            db=mock_db,
-            config=config_with_compactador,
-            arq_pool=None,
-        )
+    result = await compact_conversation(
+        conversation_id=str(conv.id),
+        db=mock_db,
+        config=config_with_compactador,
+        arq_pool=None,
+    )
+    assert isinstance(result, Err)
+    assert isinstance(result.error, EmptyConversation)
 
 
 @pytest.mark.asyncio
 async def test_conversation_not_found_404(config_with_compactador, mock_db):
-    """Compacting a non-existent conversation returns 404 error."""
+    """Compacting a non-existent conversation returns Err(ConversationNotFound)."""
     mock_db.get = AsyncMock(return_value=None)
 
-    with pytest.raises(ValueError, match="ConversationNotFound"):
-        await compact_conversation(
-            conversation_id=str(uuid.uuid4()),
-            db=mock_db,
-            config=config_with_compactador,
-            arq_pool=None,
-        )
+    result = await compact_conversation(
+        conversation_id=str(uuid.uuid4()),
+        db=mock_db,
+        config=config_with_compactador,
+        arq_pool=None,
+    )
+    assert isinstance(result, Err)
+    assert isinstance(result.error, ConversationNotFound)
 
 
 @pytest.mark.asyncio
@@ -308,9 +314,10 @@ async def test_async_dispatch_to_arq(
         arq_pool=mock_arq,
     )
 
-    assert result["status"] == "processing"
-    assert result["task_id"] == "arq-job-123"
-    assert "background worker" in result["message"]
+    assert isinstance(result, Ok)
+    assert result.value["status"] == "processing"
+    assert result.value["task_id"] == "arq-job-123"
+    assert "background worker" in result.value["message"]
 
     # Verify arq.enqueue_job was called with the right task name
     mock_arq.enqueue_job.assert_called_once_with(
@@ -346,7 +353,8 @@ async def test_multiple_compactions_chain(
         config=config_with_compactador,
         arq_pool=None,
     )
-    snapshot_id_1 = result1["snapshot_id"]
+    assert isinstance(result1, Ok)
+    snapshot_id_1 = result1.value["snapshot_id"]
 
     # Simulate that first snapshot is now active with an old_snapshot mock
     old_snapshot_mock = MagicMock()
@@ -369,8 +377,9 @@ async def test_multiple_compactions_chain(
         config=config_with_compactador,
         arq_pool=None,
     )
-    assert result2["status"] == "completed"
-    assert result2["snapshot_id"] != snapshot_id_1
+    assert isinstance(result2, Ok)
+    assert result2.value["status"] == "completed"
+    assert result2.value["snapshot_id"] != snapshot_id_1
 
 
 @pytest.mark.asyncio
@@ -394,12 +403,13 @@ async def test_snapshot_contains_required_sections(
         arq_pool=None,
     )
 
-    preview = result["preview"]
+    assert isinstance(result, Ok)
+    preview = result.value["preview"]
     assert preview is not None
 
     # The preview is truncated at 500 chars, so check for section markers
     # We verify the snapshot content was passed through to the compactor
-    assert result["tokens_after"] > 0
+    assert result.value["tokens_after"] > 0
 
 
 @pytest.mark.asyncio
@@ -441,5 +451,6 @@ async def test_snapshot_preview_truncated(
             arq_pool=None,
         )
 
-    assert result["preview"].endswith("...")
-    assert len(result["preview"]) <= 503  # 500 + "..."
+    assert isinstance(result, Ok)
+    assert result.value["preview"].endswith("...")
+    assert len(result.value["preview"]) <= 503  # 500 + "..."

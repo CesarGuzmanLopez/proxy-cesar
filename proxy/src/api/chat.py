@@ -14,6 +14,14 @@ from pydantic import BaseModel
 
 from src.api.metrics import metrics
 from src.api.chat_streaming import _handle_streaming
+from src.domain.errors import (
+    AllModelsFailed,
+    ContextTooLargeForAllModels,
+    ContextUnusable,
+    InputExceedsThreshold,
+    ParallelToolsNotSupported,
+)
+from src.domain.types import Err
 from src.service.chat_models import (
     MetadataContext,
     build_proxy_metadata,
@@ -308,12 +316,26 @@ async def chat_completions(
         await db.close()
 
 
-def _map_domain_error(error_msg: str) -> tuple[int, dict]:
-    """Map domain error ValueError messages to OpenAI-compatible error detail.
+def _map_domain_error(error) -> tuple[int, dict]:
+    """Map domain error to OpenAI-compatible error detail.
 
-    Service layer wraps domain errors as ``ValueError(f"ErrorName: {detail}")``.
+    Handles both legacy ValueError strings and new Result error types.
     Returns (status_code, error_detail_dict) for HTTPException.
     """
+    # Handle new Result error types (dataclasses)
+    if isinstance(error, AllModelsFailed):
+        return 503, _openai_error("All physical models in the fallback chain failed.", "server_error")
+    if isinstance(error, ContextTooLargeForAllModels):
+        return 400, _openai_error(str(error), "context_length_exceeded")
+    if isinstance(error, ContextUnusable):
+        return 400, _openai_error(str(error), "context_length_exceeded")
+    if isinstance(error, InputExceedsThreshold):
+        return 400, _openai_error(str(error), "context_length_exceeded")
+    if isinstance(error, ParallelToolsNotSupported):
+        return 400, _openai_error("Parallel tool calls are not supported by any physical model in this pseudo-model.", "unsupported_parameters")
+
+    # Handle legacy ValueError strings (fallback)
+    error_msg = str(error)
     if error_msg.startswith("AllModelsFailed:"):
         return 503, _openai_error("All physical models in the fallback chain failed.", "server_error")
     if error_msg.startswith("ContextTooLargeForAllModels:"):
@@ -368,33 +390,43 @@ async def _handle_non_streaming(
         trace=trace,
     )
 
-    # Build response with Feature+ Featureproxy_metadata
-    response_dict = result.response
+    # Handle Result type - convert domain errors to HTTPException
+    if isinstance(result, Err):
+        error = result.error
+        status_code, error_detail = _map_domain_error(error)
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_detail,
+        )
+
+    # Build response with proxy_metadata
+    chat_result = result.value
+    response_dict = chat_result.response
     response_dict["proxy_metadata"] = build_proxy_metadata(
         MetadataContext(
-            pseudo_model=result.pseudo_model,
-            physical_model=result.physical_model,
-            conversation_id=result.conversation_id,
-            context_tokens=result.total_tokens,
-            context_window=result.context_window,
-            fallback_info=result.fallback_info,
-            affinity_maintained=result.affinity_maintained,
-            session_caps=result.session_caps,
-            compatibility_warning=result.compatibility_warning,
-            compatibility_details=result.compatibility_details,
-            tools_filter_applied=result.tools_filter_applied,
-            tools_filter_reason=result.tools_filter_reason,
-            images_described=result.images_described,
-            images_described_by=result.images_described_by,
-            images_degraded_manually=result.images_degraded_manually,
-            router_suggestion=result.router_suggestion,
-            context_alert=result.context_alert,
-            cache_metadata=result.cache_metadata,
+            pseudo_model=chat_result.pseudo_model,
+            physical_model=chat_result.physical_model,
+            conversation_id=chat_result.conversation_id,
+            context_tokens=chat_result.total_tokens,
+            context_window=chat_result.context_window,
+            fallback_info=chat_result.fallback_info,
+            affinity_maintained=chat_result.affinity_maintained,
+            session_caps=chat_result.session_caps,
+            compatibility_warning=chat_result.compatibility_warning,
+            compatibility_details=chat_result.compatibility_details,
+            tools_filter_applied=chat_result.tools_filter_applied,
+            tools_filter_reason=chat_result.tools_filter_reason,
+            images_described=chat_result.images_described,
+            images_described_by=chat_result.images_described_by,
+            images_degraded_manually=chat_result.images_degraded_manually,
+            router_suggestion=chat_result.router_suggestion,
+            context_alert=chat_result.context_alert,
+            cache_metadata=chat_result.cache_metadata,
         )
     )
 
     # Always return conversation_id so the client can persist and reuse it
-    response_dict["conversation_id"] = result.conversation_id
+    response_dict["conversation_id"] = chat_result.conversation_id
 
     # Forward provider response headers to HTTP response
     # Exclude provider headers that conflict with the proxy's own response headers.
@@ -418,7 +450,7 @@ async def _handle_non_streaming(
         "content_len=%d finish=%s reasoning=%s preview=%s",
         conversation_id[:12],
         response_dict.get("model", "?"),
-        result.physical_model,
+        chat_result.physical_model,
         len(resp_content),
         response_dict.get("choices", [{}])[0].get("finish_reason", "?"),
         bool(

@@ -447,7 +447,8 @@ async def _handle_streaming_with_db(
     )
 
     # Call LiteLLM (streaming) with active_messages
-    litellm_response, fallback_info = await call_with_fallback(
+    from src.domain.types import Err
+    fallback_result = await call_with_fallback(
         pseudo_model_schema=pm_schema,
         messages=active_messages,
         stream=True,
@@ -464,6 +465,34 @@ async def _handle_streaming_with_db(
         turn_caps=turn_caps,
         config=config,
     )
+    if isinstance(fallback_result, Err):
+        error = fallback_result.error
+        error_msg = str(error)
+        if "ContextTooLargeForAllModels" in error_msg:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "message": error_msg.split(":", 1)[1].strip() if ":" in error_msg else error_msg,
+                        "type": "invalid_request_error",
+                        "param": None,
+                        "code": "context_length_exceeded",
+                    },
+                },
+            )
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "message": "All physical models in the fallback chain failed.",
+                        "type": "server_error",
+                        "param": None,
+                        "code": "server_error",
+                    },
+                },
+            )
+    litellm_response, fallback_info = fallback_result.value
 
     # feature Update physical_model from actual response when fallback occurred
     if fallback_info.applied:

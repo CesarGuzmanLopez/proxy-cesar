@@ -9,8 +9,8 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any
 
+import valkey.asyncio as valkey_async
 from fastapi import APIRouter, Request
 from sqlalchemy import func, select, text
 
@@ -29,7 +29,7 @@ class MetricsStore:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._valkey: Any = None
+        self._valkey: valkey_async.Valkey | None = None
         self._bg_tasks: set[asyncio.Task[None]] = set()
         self.total_requests: int = 0
         self.requests_by_pseudo: dict[str, int] = {}
