@@ -18,8 +18,9 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-# Lightweight scan: find "model":"<value>" in raw body bytes
-# Avoids full json.loads() of large chat bodies (images, tools, etc.)
+# Lightweight scan: find top-level "model":"<value>" in raw body bytes.
+# Tracks brace depth so nested "model" fields inside tool definitions
+# are not matched.  Avoids full json.loads() of large chat bodies.
 _MODEL_RE = re.compile(rb'"model"\s*:\s*"([^"]+)"', re.IGNORECASE)
 
 # Scan up to 64 KB — covers virtually all real-world payloads.
@@ -71,14 +72,48 @@ _CHAT_PATH = "/v1/chat/completions"
 
 
 def _extract_model(body_bytes: bytes) -> str:
-    """Extract model name from raw JSON body bytes without full parse.
+    """Extract top-level model name from raw JSON body bytes without full parse.
 
-    Scans only the first _MAX_BODY_SCAN bytes — the model field is always
-    near the start of the JSON payload.  For very large requests (base64
-    images) this avoids scanning megabytes of image data.
+    Counts brace depth to skip ``"model"`` fields nested inside tool definitions.
+    Only matches when depth <= 1 (root JSON object level).
     """
     scan_slice = body_bytes[:_MAX_BODY_SCAN]
     try:
+        depth = 0
+        in_string = False
+        escape_next = False
+        model_start = None  # byte offset where a potential "model" key starts
+
+        for i, byte in enumerate(scan_slice):
+            ch = chr(byte)
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                if not in_string and model_start is not None:
+                    # Just closed a string — check if it was "model"
+                    token = scan_slice[model_start:i + 1]
+                    if token == b'"model"' and depth <= 1:
+                        # Match the value right after the colon
+                        m = _MODEL_RE.search(scan_slice[i + 1:i + 200])
+                        if m:
+                            return m.group(1).decode()
+                    model_start = None
+                elif in_string:
+                    model_start = i
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+
+        # Fallback: first match (correct for the vast majority of payloads)
         m = _MODEL_RE.search(scan_slice)
         if m:
             return m.group(1).decode()
@@ -144,8 +179,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
             if count > limit:
                 logger.warning(
-                    "rate_limit_hit trace=%s | pseudo=%s limit=%d count=%d",
+                    "rate_limit_hit trace=%s | client_ip=%s pseudo=%s limit=%d count=%d",
                     _trace,
+                    client_ip,
                     pseudo_model,
                     limit,
                     count,
