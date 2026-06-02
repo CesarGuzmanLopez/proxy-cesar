@@ -162,6 +162,10 @@ async def lifespan(app: FastAPI):
             await app.state.arq_pool.close()
         await valkey_client.close()
         await engine.dispose()
+        # Cerrar cliente HTTP compartido para evitar warnings de "Unclosed client"
+        from src.service.tool_detector import _close_http_client
+
+        await _close_http_client()
         logger.info("Proxy shut down")
 
 

@@ -111,7 +111,7 @@ async def evaluate_complexity(
             timeout=10.0,  # Fast timeout — router is advisory only
         )
         content: str = response.choices[0].message.content or ""
-        result: dict = _parse_evaluation_response(content)
+        result: dict | None = _parse_evaluation_response(content)
 
         if not result:
             return None

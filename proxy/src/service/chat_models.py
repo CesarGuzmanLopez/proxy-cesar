@@ -83,7 +83,7 @@ class SaveContext:
     pseudo_model_name: str
     physical_model: str
     provider: str | None
-    turn_caps: SessionCapabilities
+    turn_caps: TurnCapabilities | SessionCapabilities
     messages: list[dict]
     response: ModelResponse | dict
     fallback_info: FallbackInfo
@@ -171,6 +171,14 @@ class ChatResult:
     tools_incomplete: bool = False
     thinking_content: str | None = None
     tool_result_truncated: bool = False
+
+    # Compaction feature fields
+    pre_compaction_applied: bool = False
+    pre_compaction_metadata: dict | None = None
+    continuous_compaction_applied: bool = False
+    continuous_compaction_metadata: dict | None = None
+    external_compaction_detected: bool = False
+    external_compaction_metadata: dict | None = None
 
     # Featurefields
     images_described: int = 0

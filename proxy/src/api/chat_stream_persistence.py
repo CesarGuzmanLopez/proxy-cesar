@@ -193,15 +193,16 @@ async def _persist_stream_turn(
         db.add(turn)
         conv.physical_model = ctx.physical_model
         conv.total_tokens += input_tokens + output_tokens
-        conv.updated_at = func.now()
+        conv.updated_at = func.now()  # type: ignore[assignment]  # justification: SQLAlchemy server_default expression; validated at DB level
 
         # Accumulate capabilities BEFORE commit — same transaction as turn save
+        session_caps = ctx.session_caps if ctx.session_caps is not None else SessionCapabilities(conversation_id=str(ctx.conv_uuid))
         updated_caps = await accumulate_capabilities(
-            db, ctx.conv_uuid, ctx.turn_caps, ctx.session_caps
+            db, ctx.conv_uuid, ctx.turn_caps, session_caps
         )
 
         await db.commit()
-        return Ok((db, conv, updated_caps))
+        return Ok((db, conv, updated_caps))  # type: ignore[arg-type]  # justification: AsyncSessionPort is protocol-compatible with AsyncSession at runtime
     except Exception as e:
         logger.error(
             "persist_stream_turn_error conv=%s turn_number=%s error=%s",

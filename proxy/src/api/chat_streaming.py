@@ -13,6 +13,8 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import selectinload
 
+from litellm.types.utils import ModelResponse
+
 from src.api.metrics import metrics
 from src.adapters.cache.message_ordering import canonicalize_message_order
 from src.adapters.cache.provider_cache import (
@@ -125,7 +127,7 @@ async def _handle_streaming(ctx: StreamingRequestContext):
     caller) because the generator runs lazily after this function returns.
     The generator is responsible for closing the session.
     """
-    db = ctx.db_session_factory()
+    db = ctx.db_session_factory()  # type: ignore[operator]  # justification: db_session_factory is typed as object but callable at runtime
     try:
         return await _handle_streaming_with_db(
             db=db,
@@ -263,7 +265,7 @@ async def _handle_streaming_with_db(
     # Load conversation FIRST (with eager-loaded turns) to avoid identity-map
     # issue when load_session_capabilities loads it next.
     conv = await db.get(
-        Conversation, conv_uuid, options=[selectinload(Conversation.turns)]
+        Conversation, conv_uuid, options=[selectinload(Conversation.turns)]  # type: ignore[arg-type]  # justification: AsyncSessionPort protocol can't express SQLAlchemy relationship descriptor types
     )
     is_new = conv is None
 
@@ -382,7 +384,7 @@ async def _handle_streaming_with_db(
         pre_compaction_enabled=False,
     )
     if not threshold_check.success:
-        error = threshold_check.error
+        error = threshold_check.error  # type: ignore[union-attr]  # justification: Result type union; .error exists on Err variant only; runtime guard via .success check
         raise HTTPException(
             status_code=400,
             detail={
@@ -583,7 +585,7 @@ async def _stream_response_generator(ctx: StreamContext):
     db = ctx.db
 
     # feature prepare for token-limit continuation across multiple models
-    current_stream = ctx.litellm_response
+    current_stream: ModelResponse | dict = ctx.litellm_response
     phys_models = (
         list(ctx.pm_schema.physical_models) if ctx.pm_schema and ctx.call_kwargs else []
     )
@@ -609,7 +611,7 @@ async def _stream_response_generator(ctx: StreamContext):
             try:
                 # Send initial message if content is being analyzed (first iteration only)
                 if not _analysis_message_sent and current_idx == 0:
-                    content_counts = _count_content_types(ctx.messages)
+                    content_counts = _count_content_types(ctx.messages or [])
                     has_content = ctx.images_described > 0 or any(content_counts.values())
                     if has_content:
                         _analysis_message_sent = True
@@ -629,7 +631,7 @@ async def _stream_response_generator(ctx: StreamContext):
                             content_counts.get("documents", 0),
                         )
 
-                async for chunk in current_stream:
+                async for chunk in current_stream:  # type: ignore[union-attr]  # justification: current_stream is ModelResponse at runtime; dict branch is unreachable
                     _chunk_index += 1
                     last_chunk = chunk  # Track last chunk; avoids storing all chunks in memory
 
@@ -685,9 +687,8 @@ async def _stream_response_generator(ctx: StreamContext):
                         _elapsed_first = time.monotonic() - _gen_start
                         logger.info("stream_first_chunk_timing stream_id=%s conv=%s elapsed=%.1fs", stream_id, ctx.conversation_id[:12], _elapsed_first)
                         _content_preview = (
-                            (delta.content or "")[:80]
-                            if hasattr(chunk.choices[0], "delta")
-                            and hasattr(chunk.choices[0].delta, "content")
+                            (getattr(delta, "content", None) or "")[:80]
+                            if delta is not None
                             else ""
                         )
                         logger.info(
@@ -766,7 +767,8 @@ async def _stream_response_generator(ctx: StreamContext):
                     exc_info=True,
                 )
                 try:
-                    await ctx.db.rollback()
+                    if ctx.db is not None:
+                        await ctx.db.rollback()
                 except Exception as rollback_err:
                     logger.debug("stream_db_rollback_error err=%s", rollback_err)
 
@@ -876,8 +878,25 @@ async def _stream_response_generator(ctx: StreamContext):
             # Continue the outer while loop to iterate the new stream
 
         # ── All streams consumed — persist and finalize ─────────────────
+        # Assemble final tool_calls from accumulated deltas (if any)
+        final_tool_calls: list[dict] | None = None
+        if tool_calls_by_index:
+            assembled: list[dict] = []
+            for _idx in sorted(tool_calls_by_index.keys()):
+                _entry = tool_calls_by_index[_idx]
+                _args = "".join(_entry["function"]["arguments_parts"])
+                assembled.append({
+                    "id": _entry["id"],
+                    "type": "function",
+                    "function": {
+                        "name": _entry["function"]["name"],
+                        "arguments": _args,
+                    },
+                })
+            if assembled:
+                final_tool_calls = assembled
         input_tokens, output_tokens, response_dict = _extract_tokens_from_chunks(
-            last_chunk, accumulated_content
+            last_chunk, accumulated_content, final_tool_calls
         )
 
         logger.info(

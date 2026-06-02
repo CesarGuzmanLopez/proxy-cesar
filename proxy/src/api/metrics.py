@@ -9,6 +9,7 @@ import asyncio
 import logging
 import threading
 import time
+from typing import Any
 
 from fastapi import APIRouter, Request
 from sqlalchemy import func, select, text
@@ -28,7 +29,7 @@ class MetricsStore:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._valkey: object | None = None
+        self._valkey: Any = None
         self._bg_tasks: set[asyncio.Task[None]] = set()
         self.total_requests: int = 0
         self.requests_by_pseudo: dict[str, int] = {}
@@ -127,7 +128,7 @@ class MetricsStore:
     async def _incrby(v, key: str, delta: int, ttl: int) -> None:
         try:
             await v.incrby(key, delta)
-            await v.expire(key, ttl, nx=True)
+            await v.expire(key, ttl)
         except Exception as exc:
             logger.debug("metrics_incrby_error key=%s err=%s", key, exc)
 
@@ -135,7 +136,7 @@ class MetricsStore:
     async def _hincrby(v, key: str, field: str, ttl: int) -> None:
         try:
             await v.hincrby(key, field, 1)
-            await v.expire(key, ttl, nx=True)
+            await v.expire(key, ttl)
         except Exception as exc:
             logger.debug(
                 "metrics_hincrby_error key=%s field=%s err=%s", key, field, exc
@@ -200,22 +201,22 @@ async def get_metrics(request: Request):
     if db_factory is not None:
         try:
             async with db_factory() as db:
-                total_convs = await db.scalar(select(func.count(Conversation.id))) or 0
+                total_convs = await db.scalar(select(func.count(Conversation.id))) or 0  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
                 active_convs = (
                     await db.scalar(
-                        select(func.count(Conversation.id)).where(
-                            Conversation.updated_at > func.now() - text("1 day")
+                        select(func.count(Conversation.id)).where(  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
+                            Conversation.updated_at > func.now() - text("1 day")  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
                         )
                     )
                     or 0
                 )
                 total_snapshots = (
-                    await db.scalar(select(func.count(ConversationSnapshot.id))) or 0
+                    await db.scalar(select(func.count(ConversationSnapshot.id))) or 0  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
                 )
                 total_explicit_compactions = (
                     await db.scalar(
-                        select(func.count(ConversationSnapshot.id)).where(
-                            ConversationSnapshot.snapshot_type == "explicit"
+                        select(func.count(ConversationSnapshot.id)).where(  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
+                            ConversationSnapshot.snapshot_type == "explicit"  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
                         )
                     )
                     or 0

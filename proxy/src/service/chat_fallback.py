@@ -171,7 +171,7 @@ async def _try_physical_model(
     conversation_id: str | None = None,
     affinity=None,
     timeout: float | None = None,
-) -> tuple[ModelResponse | dict, str | None]:
+) -> tuple[ModelResponse | dict | None, str | None]:
     """Attempt to call a single physical model.
 
     Args:
@@ -219,13 +219,19 @@ async def _try_physical_model(
         stream,
     )
 
-    call_messages = ordered_messages
+    call_messages = list(ordered_messages)
     if phys.system_prompt:
-        # Merge into first existing system message (don't add separate one)
+        # Merge into first existing system message (don't add separate one).
+        # Create a shallow copy of the list and a NEW dict for the system
+        # message so that mutations don't leak into subsequent fallback
+        # iterations that share the original ``ordered_messages``.
         merged = False
-        for msg in call_messages:
+        for i, msg in enumerate(call_messages):
             if msg.get("role") == "system":
-                msg["content"] = phys.system_prompt + "\n\n" + (msg.get("content") or "")
+                call_messages[i] = {
+                    **msg,
+                    "content": phys.system_prompt + "\n\n" + (msg.get("content") or ""),
+                }
                 merged = True
                 break
         if not merged:
@@ -358,7 +364,7 @@ def _log_model_call_result(
         else:
             c = response.choices[0].message.content or ""
             fr = response.choices[0].finish_reason
-            usage = response.usage
+            usage = response.usage  # type: ignore[attr-defined]  # justification: litellm ModelResponse has runtime attrs not in type stubs
 
         # Extract cache tokens from response
         cache_hit = 0
@@ -775,7 +781,7 @@ async def call_with_fallback(
                     idx, phys.model, delegation.get("action"),
                 )
                 from src.service.tool_detector import replace_base64_with_blob_refs
-                ordered_messages, _ = await replace_base64_with_blob_refs(
+                ordered_messages, _ = await replace_base64_with_blob_refs(  # type: ignore[assignment]  # justification: replace_base64_with_blob_refs return type annotation returns list[dict]; tuple unpacking pattern from prior API; compatible at runtime
                     ordered_messages, conversation_id, valkey_client, config,
                 )
 
@@ -867,7 +873,7 @@ async def call_with_fallback(
         fallback_info.attempted_models,
         last_error,
     )
-    error = _build_all_models_failed_error(
+    all_error = _build_all_models_failed_error(
         fallback_info, pseudo_model_schema, last_error
     )
-    raise ValueError(f"AllModelsFailed: {error}")
+    raise ValueError(f"AllModelsFailed: {all_error}")

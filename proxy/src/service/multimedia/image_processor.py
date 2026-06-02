@@ -95,7 +95,7 @@ def degrade_image(data_url: str) -> str:
             # If conversion failed, continue with SVG (will fail at PIL)
 
         raw, _mime = _decode_data_url(data_url)
-        img = Image.open(io.BytesIO(raw))
+        img: Image.Image = Image.open(io.BytesIO(raw))
 
         # Convert to RGB if necessary (JPEG doesn't support RGBA)
         if img.mode in ("RGBA", "P", "LA"):
@@ -107,7 +107,7 @@ def degrade_image(data_url: str) -> str:
             ratio = min(MAX_IMAGE_DIMENSION / w, MAX_IMAGE_DIMENSION / h)
             new_w = int(w * ratio)
             new_h = int(h * ratio)
-            img = img.resize((new_w, new_h), Image.LANCZOS)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
         # Save as JPEG with quality compression
         buf = io.BytesIO()

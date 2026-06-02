@@ -25,24 +25,70 @@ from src.config.constants import BLOB_STORAGE_TTL_SECONDS
 # ── Lenient JSON parser (handles trailing commas from Llama 4 Scout, etc.) ──
 
 _JSON_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
-_JSON_CTRL_CHAR_RE = re.compile(r"[\000-\037]")
 
 
 def _parse_json_lenient(text: str):
     """Parse JSON with lenient handling for common LLM output issues.
 
     - Strips trailing commas before ``]`` and ``}`` (common in Llama 4 Scout output)
-    - Strips unescaped control characters (newlines, tabs) inside strings
+    - Escapes unescaped control characters inside strings (preserving content)
     - Falls back to strict ``json.loads`` if cleaned version also fails
     """
+    # 0. Try strict parse first — most common path
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
     # 1. Strip trailing commas
     cleaned = _JSON_TRAILING_COMMA_RE.sub(r"\1", text)
-    # 2. Strip unescaped control characters inside strings
-    cleaned = _JSON_CTRL_CHAR_RE.sub("", cleaned)
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError:
-        return json.loads(text)  # Fallback: maybe original was fine
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2. Escape control characters ONLY inside JSON strings (not in structural
+    #    positions) so that content is preserved rather than destroyed.
+    escaped = _escape_control_chars_in_strings(cleaned)
+    try:
+        return json.loads(escaped)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 3. Last resort: strip all control chars (may destroy content)
+    cleaned_stripped = re.sub(r"[\000-\037]", "", cleaned)
+    return json.loads(cleaned_stripped)
+
+
+def _escape_control_chars_in_strings(text: str) -> str:
+    """Escape control characters (0x00-0x1F) that appear inside JSON string values.
+
+    Characters outside strings are left untouched so JSON structure is preserved.
+    This is better than blind ``re.sub`` removal because it keeps the content
+    (e.g. newlines in code blocks) while making the JSON parseable.
+    """
+    result: list[str] = []
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            result.append(ch)
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if in_string and ord(ch) < 0x20:
+            # Escape control chars inside strings: \n, \t, \r, etc.
+            result.append(f"\\u{ord(ch):04x}")
+        else:
+            result.append(ch)
+    return "".join(result)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +98,33 @@ _MAX_BLOB_SIZE = 10 * 1024 * 1024  # 10 MB
 _BLOB_FORMAT_VERSION = "v2"  # Increment when format changes
 
 
-# ── Content Type Classification (SINGLE source of truth) ────────────
+# ── HTTP Client para descarga de imágenes (connection pooling) ───────────────
+
+_http_client: httpx.AsyncClient | None = None
+_IMAGE_DOWNLOAD_TIMEOUT = 15.0
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Obtener cliente HTTP compartido con connection pooling.
+
+    Mantiene conexiones persistentes para evitar overhead de TCP+TLS
+    en cada descarga de imagen desde URLs remotas.
+    """
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(
+            timeout=_IMAGE_DOWNLOAD_TIMEOUT,
+            follow_redirects=True,
+        )
+    return _http_client
+
+
+async def _close_http_client() -> None:
+    """Cerrar cliente HTTP al shutdown de la aplicación."""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
 
 
 class ContentType:
@@ -722,7 +794,7 @@ async def _try_extract_xlsx_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
-def _classify_content_parts(  # noqa: S3776 — multiple content types × multiple formats
+async def _classify_content_parts(  # noqa: S3776 — multiple content types × multiple formats
     content: list,
 ) -> tuple[
     str,
@@ -761,7 +833,7 @@ def _classify_content_parts(  # noqa: S3776 — multiple content types × multip
             # Download HTTP(S) image URLs and convert to base64
             if raw and raw.startswith(("http://", "https://")):
                 try:
-                    resp = httpx.get(raw, timeout=15.0, follow_redirects=True)
+                    resp = await _get_http_client().get(raw)
                     resp.raise_for_status()
                     b64_data = base64.b64encode(resp.content).decode("ascii")
                     mime = resp.headers.get("content-type", "image/png")
@@ -955,9 +1027,7 @@ async def _process_msg_blobs(
         return [msg]
 
     # Pass 1: classify and store
-    user_text, image_blobs, audio_blobs, file_blobs, other_parts = (
-        _classify_content_parts(content)
-    )
+    user_text, image_blobs, audio_blobs, file_blobs, other_parts = await _classify_content_parts(content)
     store_tasks = [
         _store_blob_if_missing(valkey, f"{prefix}:{h}", r)
         for h, r, _, _, _ in image_blobs + audio_blobs + file_blobs
@@ -1120,10 +1190,9 @@ async def _store_blob_if_missing(valkey, key: str, raw: str) -> None:
 
 
 async def _store_desc(valkey, key: str, desc: str) -> None:
-    """Store description with SETNX + EXPIRE."""
+    """Store description atomically with SET NX EX (only if missing, with TTL)."""
     try:
-        stored = await valkey.setnx(key, desc)
-        await valkey.expire(key, BLOB_TTL)
+        stored = await valkey.set(key, desc, nx=True, ex=BLOB_TTL)
         if stored:
             logger.info(
                 "cache_write type=desc key=%s desc_len=%d ttl=%d",

@@ -7,10 +7,26 @@ in src/adapters/ layer.
 python.md §1: Hexagonal architecture - dependencies point inward.
 """
 
-from collections.abc import Coroutine
+from collections.abc import Sequence
 from typing import Protocol, TypeVar
+from uuid import UUID
 
 T_co = TypeVar("T_co", covariant=True)
+T = TypeVar("T")
+
+
+class ScalarResult(Protocol):
+    """Abstract query result — matches sqlalchemy.engine.Result API.
+
+    Used by callers after ``db.execute(statement)`` to chain
+    ``.scalars().all()`` or ``.scalar()``.
+    """
+
+    def scalars(self) -> "ScalarResult": ...
+
+    def all(self) -> Sequence[object]: ...
+
+    def scalar(self) -> object: ...
 
 
 class AsyncSessionPort(Protocol):
@@ -21,15 +37,15 @@ class AsyncSessionPort(Protocol):
     """
 
     async def get(
-        self, entity_type: type[T_co], ident: str | int, **kwargs: object
+        self, entity_type: type[T_co], ident: str | int | UUID, **kwargs: object
     ) -> T_co | None:
         """Get entity by primary key. Options can include eager loading."""
         ...
 
     async def execute(
         self, statement: object, **kwargs: object
-    ) -> Coroutine[None, None, object]:
-        """Execute a SQL statement."""
+    ) -> ScalarResult:
+        """Execute a SQL statement and return a result with .scalars()."""
         ...
 
     async def flush(self) -> None:

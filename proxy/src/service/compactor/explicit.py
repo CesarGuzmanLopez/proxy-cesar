@@ -15,6 +15,7 @@ import json
 import logging
 import uuid
 
+from collections.abc import Sequence
 from sqlalchemy import select
 
 from src.adapters.db.models import Conversation, ConversationSnapshot, ConversationTurn
@@ -158,7 +159,7 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, value)
 
 
-def _build_compaction_history(turns: list[ConversationTurn]) -> list[dict]:
+def _build_compaction_history(turns: Sequence[ConversationTurn]) -> list[dict]:
     """Build the full message history from conversation turns."""
     all_messages: list[dict] = []
     for turn in turns:
@@ -224,7 +225,7 @@ async def _run_compaction_sync(
     if turn_count == 0:
         result = await db.execute(
             select(ConversationTurn).where(
-                ConversationTurn.conversation_id == conv_uuid
+                ConversationTurn.conversation_id == conv_uuid  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool, runtime returns BinaryExpression
             )
         )
         all_turns = result.scalars().all()
@@ -363,15 +364,14 @@ async def compact_conversation(
     # Load all turns
     result = await db.execute(
         select(ConversationTurn)
-        .where(ConversationTurn.conversation_id == conv_uuid)
-        .order_by(ConversationTurn.turn_number)
+        .where(ConversationTurn.conversation_id == conv_uuid)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
+        .order_by(ConversationTurn.turn_number)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
     )
-    turns = result.scalars().all()
+    turns = result.scalars().all()  # type: ignore[union-attr]  # justification: ScalarResult.all() returns Sequence[object]; actual type depends on query entity
 
     if not turns:
         # Return domain error - router will convert to HTTPException
-        error = EmptyConversation(conversation_id=conversation_id)
-        raise ValueError(f"EmptyConversation: {error}")
+        raise ValueError(f"EmptyConversation: {EmptyConversation(conversation_id=conversation_id)}")
 
     # Reconstruct full history
     all_messages: list[dict] = []
@@ -388,7 +388,7 @@ async def compact_conversation(
                 }
             )
 
-    all_messages.extend(_build_compaction_history(turns))
+    all_messages.extend(_build_compaction_history(turns))  # type: ignore[arg-type]  # justification: ScalarResult.all() returns Sequence[object]; turns are ConversationTurn at runtime
     total_tokens = conv.total_tokens
 
     # Select compactador model
@@ -403,11 +403,11 @@ async def compact_conversation(
                 if not getattr(m, "audio", False)
             )
         # Return domain error - router will convert to HTTPException
-        error = HistoryTooLargeForCompactor(
+        _err = HistoryTooLargeForCompactor(
             total_tokens=total_tokens,
             max_compactor_window=max_window,
         )
-        raise ValueError(f"HistoryTooLargeForCompactor: {error}")
+        raise ValueError(f"HistoryTooLargeForCompactor: {_err}")
 
     compactor_model = compactor_phys.model
     api_base = compactor_phys.api_base or None
@@ -475,10 +475,10 @@ async def _compact_async(
 
         result = await db.execute(
             select(ConversationTurn)
-            .where(ConversationTurn.conversation_id == conv_uuid)
-            .order_by(ConversationTurn.turn_number)
+            .where(ConversationTurn.conversation_id == conv_uuid)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
+            .order_by(ConversationTurn.turn_number)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
         )
-        turns = result.scalars().all()
+        turns = result.scalars().all()  # type: ignore[union-attr]  # justification: ScalarResult.all() returns Sequence[object]; actual type depends on query entity
 
         all_messages: list[dict] = []
         if conv.active_snapshot_id:
@@ -494,7 +494,7 @@ async def _compact_async(
                     }
                 )
 
-        all_messages.extend(_build_compaction_history(turns))
+        all_messages.extend(_build_compaction_history(turns))  # type: ignore[arg-type]  # justification: ScalarResult.all() returns Sequence[object]; turns are ConversationTurn at runtime
         total_tokens = conv.total_tokens
 
         return await _run_compaction_sync(

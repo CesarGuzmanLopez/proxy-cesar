@@ -166,7 +166,7 @@ async def degrade_images(
                 api_base = getattr(vision_phys, "api_base", None) or None
                 from src.service.chat_fallback import _resolve_api_key as _resolve_key
 
-                api_key = _resolve_key(vision_phys)
+                api_key = await _resolve_key(vision_phys)
 
         if not vision_model:
             vision_model = "groq/meta-llama/llama-4-scout-17b-16e-instruct"
@@ -264,8 +264,8 @@ async def audit_log(
 
         turns_result = await db.execute(
             select(ConversationTurn)
-            .where(ConversationTurn.conversation_id == conv_uuid)
-            .order_by(ConversationTurn.turn_number)
+            .where(ConversationTurn.conversation_id == conv_uuid)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
+            .order_by(ConversationTurn.turn_number)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
         )
         prev_pseudo = conv.pseudo_model
         for turn in turns_result.scalars().all():
@@ -306,8 +306,8 @@ async def audit_log(
 
         snap_result = await db.execute(
             select(ConversationSnapshot)
-            .where(ConversationSnapshot.conversation_id == conv_uuid)
-            .order_by(ConversationSnapshot.created_at)
+            .where(ConversationSnapshot.conversation_id == conv_uuid)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
+            .order_by(ConversationSnapshot.created_at)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
         )
         for snap in snap_result.scalars().all():
             events.append(

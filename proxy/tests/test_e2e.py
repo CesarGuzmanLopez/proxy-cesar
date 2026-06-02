@@ -244,7 +244,7 @@ class TestComprehensive:
         assert data["proxy_metadata"]["pseudo_model"] == "normal"
 
     async def test_default_alias_for_unknown_model(self, async_client, mock_litellm):
-        """Unknown model names fall back to default alias."""
+        """Unknown model names fall back to default alias (flash)."""
         response = await async_client.post(
             "/v1/chat/completions",
             json={
@@ -255,7 +255,8 @@ class TestComprehensive:
         assert response.status_code == 200
 
         data = response.json()
-        assert data["proxy_metadata"]["pseudo_model"] == "normal"
+        # Config has default: flash in pseudo_models.yaml model_aliases
+        assert data["proxy_metadata"]["pseudo_model"] == "flash"
 
     async def test_cache_metadata_streaming(self, async_client, mock_litellm):
         """Streaming responses include cache metadata in the final chunk."""

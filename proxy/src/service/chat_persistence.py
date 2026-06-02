@@ -149,7 +149,7 @@ def _suggest_higher_threshold_models(
                     "input_token_threshold": pm.input_token_threshold,
                 }
             )
-    suggestions.sort(key=lambda x: x["input_token_threshold"])
+    suggestions.sort(key=lambda x: int(x["input_token_threshold"] or 0))  # type: ignore[arg-type]  # justification: dict values are object; int cast is safe at runtime
     return suggestions
 
 
@@ -217,10 +217,10 @@ async def _save_and_return(ctx: SaveContext) -> ChatResult:
 
     ctx.conv.physical_model = ctx.physical_model
     ctx.conv.total_tokens += input_tokens + output_tokens
-    ctx.conv.updated_at = func.now()
+    ctx.conv.updated_at = func.now()  # type: ignore[assignment]  # justification: SQLAlchemy server_default expression; validated at DB level
 
     updated_caps = await accumulate_capabilities(
-        ctx.db, ctx.conv_uuid, ctx.turn_caps, ctx.session_caps
+        ctx.db, ctx.conv_uuid, ctx.turn_caps, ctx.session_caps  # type: ignore[arg-type]  # justification: SessionCapabilities/TurnCapabilities compatible at runtime; protocol boundary
     )
 
     await ctx.db.commit()

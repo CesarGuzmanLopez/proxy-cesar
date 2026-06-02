@@ -83,7 +83,7 @@ async def _handle_status(
         )
 
     conv_uuid = _parse_uuid(conversation_id)
-    conv = await db.get(Conversation, conv_uuid)
+    conv = await db.get(Conversation, conv_uuid)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
     if not conv:
         return InlineCommandResult(
             handled=True,
@@ -94,9 +94,9 @@ async def _handle_status(
     caps = await load_session_capabilities(db, conv_uuid, conv.total_tokens)
 
     result = await db.execute(
-        select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)
+        select(ConversationTurn).where(ConversationTurn.conversation_id == conv_uuid)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
     )
-    turn_count = len(result.scalars().all())
+    turn_count = len(result.scalars().all())  # type: ignore[union-attr]  # justification: ScalarResult.all() returns Sequence[object]; actual type depends on query entity
 
     status_lines = [
         "📊 **Conversation Status**\n",

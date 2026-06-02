@@ -212,10 +212,11 @@ async def process_chat_request(
     delegation = validate_physical_model_content(turn_caps, selected_phys_model)
 
     # Debug logging for content delegation
+    _conv_short = conversation_id[:12] if conversation_id else "new"
     logger.info(
         "content_validation trace=%s conv=%s model=%s has_images=%s model_vision=%s delegation=%s",
         _req_id,
-        conversation_id[:12],
+        _conv_short,
         physical_model,
         getattr(turn_caps, "has_images", False),
         getattr(selected_phys_model, "vision", False),
@@ -228,7 +229,7 @@ async def process_chat_request(
         logger.info(
             "content_delegation_applying trace=%s conv=%s model=%s action=%s",
             _req_id,
-            conversation_id[:12],
+            _conv_short,
             physical_model,
             delegation.get("action"),
         )
@@ -296,18 +297,16 @@ async def process_chat_request(
         conversation_id=conv_id,
     )
     context_check = _check_context_usable(context_alert, conv, pm_schema, conv_id)
-    match context_check:
-        case Err(error=err):
-            logger.error(
-                "req_failed | trace=%s reason=context_unusable "
-                "context_tokens=%d context_window=%d",
-                _req_id,
-                err.context_tokens,
-                err.context_window,
-            )
-            raise ValueError(f"ContextUnusable: {err}")
-        case Ok():
-            pass  # Context is usable
+    if isinstance(context_check, Err):
+        ctx_err = context_check.error
+        logger.error(
+            "req_failed | trace=%s reason=context_unusable "
+            "context_tokens=%d context_window=%d",
+            _req_id,
+            ctx_err.context_tokens,
+            ctx_err.context_window,
+        )
+        raise ValueError(f"ContextUnusable: {ctx_err}")
 
     # Router LLM evaluation runs in parallel with the LLM call (see below)
     # feature Router LLM — evaluate complexity (non-blocking, never changes model)
@@ -513,7 +512,7 @@ async def _update_physical_model(
 
 
 def _build_compatibility_info(
-    turn_caps: TurnCapabilities, pm_schema: object
+    turn_caps: TurnCapabilities, pm_schema: PseudoModelSchema
 ) -> dict:
     """Build compatibility info for response metadata."""
     info: dict = {}
@@ -534,7 +533,7 @@ def _resolve_and_validate(
     messages: list[dict],
     tools: list[dict] | None,
     config: ProxyConfigSchema,
-) -> tuple[str, object, TurnCapabilities]:
+) -> tuple[str, PseudoModelSchema, TurnCapabilities]:
     """Steps 1-3: Normalize model and detect capabilities.
 
     Note: Content validation is deferred until AFTER physical model selection
@@ -576,7 +575,7 @@ async def _resolve_session_conv_and_models(
     existing_affinity = await affinity.get(conv_id)
 
     conv = await db.get(
-        Conversation, conv_uuid, options=[selectinload(Conversation.turns)]
+        Conversation, conv_uuid, options=[selectinload(Conversation.turns)]  # type: ignore[arg-type]  # justification: AsyncSessionPort protocol can't express SQLAlchemy relationship descriptor types
     )
     is_new = conv is None
 
@@ -652,9 +651,8 @@ def _check_input_threshold(
         estimated_tokens=estimated_input,
         pre_compaction_enabled=False,
     )
-    if not check.success:
-        error = check.error
-        return Err(error)
+    if isinstance(check, Err):
+        return check
     return Ok(None)
 
 
@@ -797,7 +795,7 @@ async def _evaluate_router_llm(
         messages=messages,
         suggester_model=suggester_model,
         api_base=suggester_phys.api_base or None,
-        api_key=_resolve_api_key(suggester_phys),
+        api_key=await _resolve_api_key(suggester_phys),
     )
 
     if not suggestion or not suggestion.get("suggested"):

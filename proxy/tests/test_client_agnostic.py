@@ -21,12 +21,9 @@ _CONFIG = load_config()
         ("tareas-avanzadas", "tareas-avanzadas"),
         ("pensamiento-profundo-caro", "pensamiento-profundo-caro"),
         ("flash", "flash"),
-        ("flash", "flash"),
-        ("vision", "vision"),
         ("vision", "vision"),
         ("compactador", "compactador"),
         # OpenCode local provider: "local/<pseudo>"
-        ("local/normal", "normal"),
         ("local/normal", "normal"),
         # Custom provider names: "cesar-proxy/<pseudo>"
         ("cesar-proxy/normal", "normal"),

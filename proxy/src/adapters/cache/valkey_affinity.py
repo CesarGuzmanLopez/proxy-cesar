@@ -8,7 +8,6 @@ Key schema:
 TTL: 86400s (24 hours) default, dynamic based on usage pattern.
 """
 
-import json
 import logging
 import time
 import valkey.asyncio as valkey_async
@@ -85,7 +84,11 @@ class ValkeyAffinityAdapter:
         key = f"conv:{conversation_id}:key_slot"
         raw = await self._client.get(key)
         if raw is not None:
-            return int(raw)
+            try:
+                return int(raw)
+            except (ValueError, TypeError):
+                logger.warning("affinity_key_slot_corrupt conv=%s raw=%s", conversation_id, raw)
+                return 1
         return 1
 
     async def set_key_slot(
@@ -95,30 +98,46 @@ class ValkeyAffinityAdapter:
         key = f"conv:{conversation_id}:key_slot"
         await self._client.set(key, str(slot), ex=ttl_seconds)
 
+    # Lua script for atomic read-modify-write of failure metrics.
+    # INCR creates the key with value 1 if it doesn't exist (no TOCTOU).
+    # EXPIRE only on count == 1 ensures the 1h window starts at first failure
+    # and is NOT reset by subsequent failures.
+    _LUA_RECORD_FAILURE = """
+local key = KEYS[1]
+local err = ARGV[1]
+local ttl = tonumber(ARGV[2])
+local count = redis.call('INCR', key)
+if count == 1 then
+    redis.call('EXPIRE', key, ttl)
+end
+if err and err ~= '' then
+    local ekey = key .. ':last_error'
+    redis.call('SET', ekey, err)
+    redis.call('EXPIRE', ekey, ttl)
+end
+return count
+"""
+
     async def record_failure(
         self,
         conversation_id: str,
         model: str,
         error: str | None = None,
     ) -> None:
-        """Record a failure for this model in this conversation."""
+        """Record a failure for this model in this conversation.
+
+        Uses an atomic Lua script to avoid TOCTOU races on the error counter.
+        TTL is only set on the first failure (count == 1) so subsequent failures
+        within the window don't extend it.
+        """
         key = f"affinity_metrics:{conversation_id}:{model}"
-
         try:
-            metrics = await self._client.get(key)
-            if metrics:
-                data = json.loads(metrics)
-            else:
-                data = {"errors_1h": 0, "last_error": None}
-
-            data["errors_1h"] = data.get("errors_1h", 0) + 1
-            if error:
-                data["last_error"] = error[:100]
-
-            await self._client.set(
-                key,
-                json.dumps(data),
-                ex=3600,  # 1 hour TTL
+            await self._client.eval(
+                self._LUA_RECORD_FAILURE,
+                1,           # number of keys
+                key,         # KEYS[1]
+                error[:100] if error else "",
+                3600,        # TTL in seconds
             )
         except Exception as e:
             logger.warning("affinity_record_failure_error model=%s error=%s", model, e)

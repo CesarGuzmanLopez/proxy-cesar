@@ -202,7 +202,7 @@ async def accumulate_capabilities(
 
     await db.execute(
         update(Conversation)
-        .where(Conversation.id == conversation_id)
+        .where(Conversation.id == conversation_id)  # type: ignore[arg-type]  # justification: ORM column comparison: SQLModel Field() types don't expose InstrumentedAttribute; mypy sees bool/int, runtime returns BinaryExpression
         .values(
             capability_has_images=updated.has_images,
             capability_has_audio=updated.has_audio,

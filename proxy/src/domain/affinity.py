@@ -31,3 +31,9 @@ class AffinityPort(Protocol):
     async def get_key_slot(self, conversation_id: str) -> int:
         """Get the pinned key slot (1-based). Returns 1 if not set."""
         ...
+
+    async def record_failure(
+        self, conversation_id: str, model: str, error: str | None = None
+    ) -> None:
+        """Record a failure for this model in this conversation."""
+        ...

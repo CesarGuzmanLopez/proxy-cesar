@@ -78,9 +78,10 @@ def _make_mixed_msg() -> dict:
 class TestClassifyContentParts:
     """10 tests for _classify_content_parts()."""
 
-    def test_image_url_standard_format(self):
+    @pytest.mark.asyncio
+    async def test_image_url_standard_format(self):
         msg = _make_image_url_msg()
-        user_text, images, audios, files, others = _classify_content_parts(
+        user_text, images, audios, files, others = await _classify_content_parts(
             msg["content"]
         )
         assert len(images) == 1
@@ -90,9 +91,10 @@ class TestClassifyContentParts:
         assert files == []
         assert len(others) == 1  # text part
 
-    def test_image_base64_format(self):
+    @pytest.mark.asyncio
+    async def test_image_base64_format(self):
         msg = _make_base64_image_msg()
-        user_text, images, audios, files, others = _classify_content_parts(
+        user_text, images, audios, files, others = await _classify_content_parts(
             msg["content"]
         )
         assert len(images) == 1
@@ -100,18 +102,20 @@ class TestClassifyContentParts:
         assert audios == []
         assert files == []
 
-    def test_text_with_data_url(self):
+    @pytest.mark.asyncio
+    async def test_text_with_data_url(self):
         msg = _make_text_with_data_url_msg()
-        user_text, images, audios, files, others = _classify_content_parts(
+        user_text, images, audios, files, others = await _classify_content_parts(
             msg["content"]
         )
         assert len(images) == 1
         assert images[0][2] == "image/jpeg"
         assert len(others) == 0
 
-    def test_multiple_images(self):
+    @pytest.mark.asyncio
+    async def test_multiple_images(self):
         msg = _make_mixed_msg()
-        user_text, images, audios, files, others = _classify_content_parts(
+        user_text, images, audios, files, others = await _classify_content_parts(
             msg["content"]
         )
         assert len(images) == 2
@@ -119,41 +123,45 @@ class TestClassifyContentParts:
         assert files == []
         assert len(others) == 2  # two text parts
 
-    def test_empty_content(self):
-        user_text, images, audios, files, others = _classify_content_parts([])
+    @pytest.mark.asyncio
+    async def test_empty_content(self):
+        user_text, images, audios, files, others = await _classify_content_parts([])
         assert images == []
         assert audios == []
         assert files == []
         assert others == []
 
-    def test_audio_format(self):
+    @pytest.mark.asyncio
+    async def test_audio_format(self):
         content = [
             {
                 "type": "input_audio",
                 "input_audio": {"data": "data:audio/wav;base64,UklGRiQ="},
             }
         ]
-        user_text, images, audios, files, others = _classify_content_parts(content)
+        user_text, images, audios, files, others = await _classify_content_parts(content)
         assert images == []
         assert len(audios) == 1
         assert files == []
 
-    def test_file_format(self):
+    @pytest.mark.asyncio
+    async def test_file_format(self):
         content = [
             {
                 "type": "file",
                 "file": {"data": "data:application/pdf;base64,JVBERi0="},
             }
         ]
-        user_text, images, audios, files, others = _classify_content_parts(content)
+        user_text, images, audios, files, others = await _classify_content_parts(content)
         assert images == []
         assert audios == []
         assert len(files) == 1
         assert files[0][2] == "application/pdf"
 
-    def test_tuple_has_filename_field(self):
+    @pytest.mark.asyncio
+    async def test_tuple_has_filename_field(self):
         msg = _make_base64_image_msg()
-        user_text, images, audios, files, others = _classify_content_parts(
+        user_text, images, audios, files, others = await _classify_content_parts(
             msg["content"]
         )
         assert len(images) == 1
@@ -161,9 +169,10 @@ class TestClassifyContentParts:
         assert len(images[0]) == 5
         assert images[0][4] == ""
 
-    def test_user_text_extracted(self):
+    @pytest.mark.asyncio
+    async def test_user_text_extracted(self):
         msg = _make_image_url_msg()
-        user_text, images, audios, files, others = _classify_content_parts(
+        user_text, images, audios, files, others = await _classify_content_parts(
             msg["content"]
         )
         assert user_text == "What is this?"

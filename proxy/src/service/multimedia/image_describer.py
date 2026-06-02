@@ -16,24 +16,67 @@ from src.config.constants import BLOB_STORAGE_TTL_SECONDS
 # ── Lenient JSON parser (handles trailing commas from Llama 4 Scout, etc.) ──
 
 _JSON_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
-_JSON_CTRL_CHAR_RE = re.compile(r"[\000-\037]")
 
 
 def _parse_json_lenient(text: str):
     """Parse JSON with lenient handling for common LLM output issues.
 
     - Strips trailing commas before ``]`` and ``}`` (common in Llama 4 Scout output)
-    - Strips unescaped control characters (newlines, tabs) inside strings
+    - Escapes unescaped control characters inside strings (preserving content)
     - Falls back to strict ``json.loads`` if cleaned version also fails
     """
+    # 0. Try strict parse first — most common path
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
     # 1. Strip trailing commas
     cleaned = _JSON_TRAILING_COMMA_RE.sub(r"\1", text)
-    # 2. Strip unescaped control characters inside strings
-    cleaned = _JSON_CTRL_CHAR_RE.sub("", cleaned)
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError:
-        return json.loads(text)  # Fallback: maybe original was fine
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2. Escape control characters ONLY inside JSON strings (not in structural
+    #    positions) so that content is preserved rather than destroyed.
+    escaped = _escape_control_chars_in_strings(cleaned)
+    try:
+        return json.loads(escaped)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 3. Last resort: strip all control chars (may destroy content)
+    cleaned_stripped = re.sub(r"[\000-\037]", "", cleaned)
+    return json.loads(cleaned_stripped)
+
+
+def _escape_control_chars_in_strings(text: str) -> str:
+    """Escape control characters (0x00-0x1F) that appear inside JSON string values.
+
+    Characters outside strings are left untouched so JSON structure is preserved.
+    """
+    result: list[str] = []
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            result.append(ch)
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if in_string and ord(ch) < 0x20:
+            result.append(f"\\u{ord(ch):04x}")
+        else:
+            result.append(ch)
+    return "".join(result)
 
 logger = logging.getLogger(__name__)
 
@@ -205,14 +248,21 @@ async def describe_image(
 async def _collect_cached_descriptions(
     refs: list[dict],
     valkey,
+    user_prompt: str | None = None,
 ) -> tuple[dict[str, str], dict[str, dict], list[dict], int]:
-    """Collect cached descriptions; return (url_cache, metadata_cache, uncached, total_tokens)."""
+    """Collect cached descriptions; return (url_cache, metadata_cache, uncached, total_tokens).
+
+    Cache key includes a hash of the user prompt so that the same image
+    asked with a different question gets a different (correct) description.
+    Key format: blob:desc:{prompt_hash}:{url_hash}
+    """
     import hashlib
 
     url_cache: dict[str, str] = {}
     metadata_cache: dict[str, dict] = {}
     uncached: list[dict] = []
     total_tokens: int = 0
+    prompt_hash = hashlib.sha256((user_prompt or "").encode()).hexdigest()[:8]
 
     for ref in refs:
         if ref["is_duplicate"]:
@@ -222,7 +272,7 @@ async def _collect_cached_descriptions(
         cached_desc: str | None = None
         if valkey is not None:
             try:
-                cached_desc = await valkey.get(f"blob:desc:generic:{url_hash}")
+                cached_desc = await valkey.get(f"blob:desc:{prompt_hash}:{url_hash}")
             except Exception as e:
                 logger.warning("image_cache_retrieval_error error=%s", str(e))
         if cached_desc:
@@ -449,7 +499,7 @@ async def auto_describe_images(
         return messages, {"ok": True, "images_described": 0, "reason": "no_images_found", "status": "no_images_found"}
 
     user_prompt = _extract_user_context(messages)
-    url_cache, metadata_cache, uncached, total_tokens = await _collect_cached_descriptions(refs, valkey)
+    url_cache, metadata_cache, uncached, total_tokens = await _collect_cached_descriptions(refs, valkey, user_prompt)
     unique_refs = [r for r in refs if not r["is_duplicate"]]
     duplicate_refs = [r for r in refs if r["is_duplicate"]]
 
@@ -459,20 +509,30 @@ async def auto_describe_images(
 
         instruction = _build_batch_instruction(user_prompt, len(uncached))
         batch_content: list[dict] = [{"type": "text", "text": instruction}]
-        for ref in uncached:
-            degraded = await degrade_image_async(ref["url"])
-            batch_content.append({"type": "image_url", "image_url": {"url": degraded, "detail": "high"}})
-            metadata_cache[ref["url"]] = _extract_image_metadata(ref["url"])
 
-        # Safety check
-        first_degraded = await degrade_image_async(uncached[0]["url"])
-        sample_tokens = estimate_image_tokens(first_degraded, "high")
+        # Primero degradar todas las imágenes para evitar redundancia
+        degraded_images: list[tuple[str, str]] = []  # (url, degraded_url)
+        for ref in uncached:
+            degraded_url = await degrade_image_async(ref["url"])
+            degraded_images.append((ref["url"], degraded_url))
+
+        # Safety check: usar la primera imagen ya degradada
+        if degraded_images:
+            sample_tokens = estimate_image_tokens(degraded_images[0][1], "high")
+        else:
+            sample_tokens = 0
+
         instruction_tokens = len(instruction) // 4
         if not can_batch_fit(len(uncached), sample_tokens, 128000, instruction_tokens):
             logger.warning(
                 "image_batch_large vision_model=%s images=%d estimated_tokens=%d",
                 vision_model, len(uncached), len(uncached) * sample_tokens,
             )
+
+        # Construir batch_content con las imágenes ya degradadas
+        for url, degraded_url in degraded_images:
+            batch_content.append({"type": "image_url", "image_url": {"url": degraded_url, "detail": "high"}})
+            metadata_cache[url] = _extract_image_metadata(url)
 
         try:
             response = await call_litellm(
