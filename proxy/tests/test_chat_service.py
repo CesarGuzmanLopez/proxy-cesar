@@ -31,23 +31,20 @@ class _MockConversation:
 
 
 def test_build_conversation_messages_basic():
-    """Simple conversation has history + current messages."""
+    """Client messages pass through directly."""
     from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Hello"}], None),
     ]
-    # If response is None, no assistant entry is added
     conv = _MockConversation(turns)
     result = build_conversation_messages(conv, [{"role": "user", "content": "Followup"}])
-    assert len(result) == 2  # history + current
-    assert result[0]["role"] == "user"
-    assert result[0]["content"] == "Hello"
-    assert result[1]["content"] == "Followup"
+    assert len(result) == 1  # Client messages only (DB reconstruction removed)
+    assert result[0]["content"] == "Followup"
 
 
 def test_build_conversation_messages_with_assistant_response():
-    """Assistant response is inserted after its turn's request messages."""
+    """Messages pass through directly regardless of DB content."""
     from src.service.chat_messages import build_conversation_messages
 
     turns = [
@@ -57,109 +54,58 @@ def test_build_conversation_messages_with_assistant_response():
     ]
     conv = _MockConversation(turns)
     result = build_conversation_messages(conv, [{"role": "user", "content": "Bye"}])
-    assert len(result) == 3
-    assert result[0]["content"] == "Hello"
-    assert result[1]["content"] == "Hi there!"
-    assert result[2]["content"] == "Bye"
+    assert len(result) == 1
+    assert result[0]["content"] == "Bye"
 
 
 def test_build_conversation_messages_preserves_tool_calls():
-    """tool_calls are preserved in the assistant entry."""
+    """Tool calls in messages pass through correctly."""
     from src.service.chat_messages import build_conversation_messages
 
-    turns = [
-        _MockTurn(1, [{"role": "user", "content": "Get weather"}], {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{"id": "call_1", "function": {"name": "get_weather"}}],
-                }
-            }]
-        }),
-    ]
-    conv = _MockConversation(turns)
-    result = build_conversation_messages(conv, [{"role": "tool", "tool_call_id": "call_1", "content": "22"}])
-
-    # Find the assistant message
-    asst_msgs = [m for m in result if m.get("role") == "assistant"]
-    assert len(asst_msgs) == 1
-    assert "tool_calls" in asst_msgs[0]
-    assert asst_msgs[0]["tool_calls"][0]["id"] == "call_1"
+    msg = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "test", "arguments": "{}"}}],
+    }
+    result = build_conversation_messages(None, [msg])
+    assert len(result) == 1
+    assert result[0]["tool_calls"] == msg["tool_calls"]
 
 
 def test_build_conversation_messages_preserves_reasoning():
-    """reasoning_content is preserved in the assistant entry."""
+    """Reasoning content in messages passes through correctly."""
     from src.service.chat_messages import build_conversation_messages
 
-    turns = [
-        _MockTurn(1, [{"role": "user", "content": "Think step by step"}], {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "Final answer",
-                    "reasoning_content": "Let me think...",
-                }
-            }]
-        }),
-    ]
-    conv = _MockConversation(turns)
-    result = build_conversation_messages(conv, [{"role": "user", "content": "Done"}])
-
-    asst_msgs = [m for m in result if m.get("role") == "assistant"]
-    assert len(asst_msgs) == 1
-    assert asst_msgs[0].get("reasoning_content") == "Let me think..."
+    msg = {"role": "assistant", "content": "Final answer", "reasoning_content": "Let me think..."}
+    result = build_conversation_messages(None, [msg])
+    assert len(result) == 1
+    assert result[0].get("reasoning_content") == "Let me think..."
 
 
 def test_build_conversation_messages_preserves_thinking_blocks():
-    """thinking_blocks are preserved in the assistant entry."""
+    """Thinking blocks in messages pass through correctly."""
     from src.service.chat_messages import build_conversation_messages
 
-    turns = [
-        _MockTurn(1, [{"role": "user", "content": "Explain"}], {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "Answer",
-                    "thinking_blocks": [{"type": "thinking", "content": "..."}],
-                }
-            }]
-        }),
-    ]
-    conv = _MockConversation(turns)
-    result = build_conversation_messages(conv, [{"role": "user", "content": "OK"}])
-
-    asst_msgs = [m for m in result if m.get("role") == "assistant"]
-    assert len(asst_msgs) == 1
-    assert asst_msgs[0].get("thinking_blocks") == [{"type": "thinking", "content": "..."}]
+    msg = {"role": "assistant", "content": "Answer", "thinking_blocks": [{"type": "thinking", "content": "..."}]}
+    result = build_conversation_messages(None, [msg])
+    assert len(result) == 1
+    assert result[0].get("thinking_blocks") == [{"type": "thinking", "content": "..."}]
 
 
 def test_build_conversation_messages_multiple_turns():
-    """Multiple turns are interleaved correctly in order.
-
-    Each ConversationTurn stores ALL messages cumulatively, so turn 2
-    includes turn 1's messages + its own user message. The assistant
-    response for the last turn is added from turn.response.
-    """
+    """Multiple turns pass through as-is from client."""
     from src.service.chat_messages import build_conversation_messages
 
-    turns = [
-        _MockTurn(1, [{"role": "user", "content": "Q1"}], {
-            "choices": [{"message": {"role": "assistant", "content": "A1"}}]
-        }),
-        _MockTurn(2, [{"role": "user", "content": "Q1"}, {"role": "assistant", "content": "A1"}, {"role": "user", "content": "Q2"}], {
-            "choices": [{"message": {"role": "assistant", "content": "A2"}}]
-        }),
+    client_msgs = [
+        {"role": "user", "content": "Q1"},
+        {"role": "assistant", "content": "A1"},
+        {"role": "user", "content": "Q2"},
     ]
-    conv = _MockConversation(turns)
-    result = build_conversation_messages(conv, [{"role": "user", "content": "Q3"}])
-
-    assert len(result) == 5  # Q1, A1, Q2, A2, Q3
+    result = build_conversation_messages(None, client_msgs)
+    assert len(result) == 3
     assert result[0]["content"] == "Q1"
     assert result[1]["content"] == "A1"
     assert result[2]["content"] == "Q2"
-    assert result[3]["content"] == "A2"
-    assert result[4]["content"] == "Q3"
 
 
 def test_build_conversation_messages_empty_turns():
