@@ -247,7 +247,7 @@ pseudo_models:
         vision: false
         strip_reasoning: true
         system_prompt: |
-          Reasoning: auto
+          No reasoning. Do NOT use <think> tags.
 
           You are a context compaction specialist.
 
@@ -267,7 +267,7 @@ pseudo_models:
         vision: false
         strip_reasoning: true
         system_prompt: |
-          Reasoning: auto
+          No reasoning. Do NOT use <think> tags.
 
           You are a context compaction specialist.
 

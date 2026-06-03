@@ -195,6 +195,11 @@ async def _parse_compactor_response(response) -> tuple[str, int]:
         snapshot_content = response.choices[0].message.content
         snapshot_tokens = getattr(response.usage, "completion_tokens", 0)
 
+    # Strip <think> blocks — the compactador does not need reasoning
+    if snapshot_content and "<think>" in snapshot_content:
+        import re
+        snapshot_content = re.sub(r"<think>.*?</think>", "", snapshot_content, flags=re.DOTALL).strip()
+
     if not snapshot_tokens:
         snapshot_tokens = await estimate_tokens(
             [{"role": "user", "content": snapshot_content or ""}]
