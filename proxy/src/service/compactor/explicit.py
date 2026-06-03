@@ -161,15 +161,22 @@ def _parse_uuid(value: str) -> uuid.UUID:
 
 
 def _build_compaction_history(turns: Sequence[ConversationTurn]) -> list[dict]:
-    """Build the full message history from conversation turns."""
-    all_messages: list[dict] = []
-    for turn in turns:
-        turn_msgs = turn.messages
-        if isinstance(turn_msgs, list):
-            all_messages.extend(turn_msgs)
-        elif isinstance(turn_msgs, dict) and "messages" in turn_msgs:
-            all_messages.extend(turn_msgs["messages"])
-    return all_messages
+    """Build the full message history from conversation turns.
+
+    Each ConversationTurn stores ALL messages cumulatively (the full history
+    up to that turn).  Iterating through all turns creates O(N^2) duplication.
+    Only the LAST turn's messages are needed — they already contain the
+    complete history.
+    """
+    if not turns:
+        return []
+    last_turn = turns[-1]
+    turn_msgs = last_turn.messages
+    if isinstance(turn_msgs, list):
+        return list(turn_msgs)
+    if isinstance(turn_msgs, dict) and "messages" in turn_msgs:
+        return list(turn_msgs["messages"])
+    return []
 
 
 async def _parse_compactor_response(response) -> tuple[str, int]:
