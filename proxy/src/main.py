@@ -120,8 +120,10 @@ async def lifespan(app: FastAPI):
     # FASE 3: Compaction Orchestrator
     app.state.compaction_orchestrator = CompactionOrchestrator()
 
+    from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter as _ValkeyAffinityAdapter
+
     app.state.valkey = None
-    app.state.affinity = None
+    app.state.affinity = _ValkeyAffinityAdapter()
 
     # LiteLLM
     setup_litellm(settings)
