@@ -18,19 +18,17 @@ def build_explicit_compaction_prompt() -> str:
     """
     return """You are a conversation compactor. Your task is to create a comprehensive, detailed, structured snapshot of a long conversation history.
 
-The conversation is split into THREE pieces:
+You will receive ALL messages from the conversation as a JSON array. Your job is to COMPACT EVERYTHING into a structured summary.
 
-1. **PRIMER MENSAJE DEL USUARIO** — The very first user message that started the conversation. PRESERVE THIS INTACT in the "Problem State" and "Goal" sections. This is the original context.
+Structure your output using the first user message for overall context, compact the entire middle history, and reference the last user message for current state. But you MUST output a complete summary of ALL content, not just the first and last messages.
 
-2. **HISTORIAL INTERMEDIO** — The middle of the conversation. Compact this into the Technical Decisions, Code Produced, Technical Context, Tools & Capabilities, and Pending Items sections.
-
-3. **ULTIMO MENSAJE DEL USUARIO** — The most recent user message. PRESERVE THIS INTACT in the "Current Status" and "Next Steps" sections. This is the current request.
-
-CRITICAL RULES:
-- PRESERVE the first user message's intent and context completely
-- PRESERVE the last user message's request and context completely
-- YOU MUST compact the middle history between them
+KEY RULES:
+- COMPACT ALL messages into the required sections below
+- The first user message provides the original goal — use it for context
+- The last user message provides the current request — reference it
+- DO NOT just repeat the first and last messages — compact EVERYTHING
 - Your output must be at least 5%% of the original conversation length
+- Be thorough — include technical decisions, code, and all important context
 
 # Required Sections
 
