@@ -34,7 +34,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy import inspect as sa_inspect  # noqa: E402
 
-from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter, setup_valkey  # noqa: E402
 from src.adapters.litellm.client import setup_litellm  # noqa: E402
 from src.service.compactor.explicit import CompactionOrchestrator  # noqa: E402
 from src.api.chat import router as chat_router  # noqa: E402
@@ -118,19 +117,11 @@ async def lifespan(app: FastAPI):
         engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    # Valkey
-    valkey_client = await setup_valkey(settings)
-    app.state.valkey = valkey_client
-    app.state.affinity = ValkeyAffinityAdapter(valkey_client)
-
     # FASE 3: Compaction Orchestrator
     app.state.compaction_orchestrator = CompactionOrchestrator()
 
-    # Metrics — persist to Valkey so counters survive restarts
-    from src.api.metrics import metrics as _metrics
-
-    _metrics.set_valkey(valkey_client)
-    await _metrics.restore_from_valkey()
+    app.state.valkey = None
+    app.state.affinity = None
 
     # LiteLLM
     setup_litellm(settings)
@@ -160,7 +151,6 @@ async def lifespan(app: FastAPI):
         # ── SHUTDOWN ─────────────────────────────────────────────────────
         if hasattr(app.state, "arq_pool") and app.state.arq_pool:
             await app.state.arq_pool.close()
-        await valkey_client.close()
         await engine.dispose()
         # Cerrar cliente HTTP compartido para evitar warnings de "Unclosed client"
         from src.service.tool_detector import _close_http_client
