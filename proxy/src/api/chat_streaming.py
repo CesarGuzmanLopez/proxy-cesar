@@ -674,9 +674,19 @@ async def _stream_response_generator(ctx: StreamContext):
                     _content_len = len(getattr(_delta_raw, "content", "") or "")
                     _fr_raw = getattr(_choices[0], "finish_reason", None) if _choices else None
                     _tc_raw = getattr(_delta_raw, "tool_calls", None) if _delta_raw else None
+                    _tool_name = ""
+                    if _tc_raw:
+                        try:
+                            _first_tc = _tc_raw[0]
+                            if hasattr(_first_tc, "function") and _first_tc.function:
+                                _tool_name = _first_tc.function.name or ""
+                            elif isinstance(_first_tc, dict):
+                                _tool_name = _first_tc.get("function", {}).get("name", "")
+                        except (AttributeError, IndexError, TypeError):
+                            pass
                     logger.info(
                         "stream_chunk_raw stream_id=%s conv=%s ix=%d "
-                        "reasoning_len=%d content_len=%d finish=%s tool_calls=%d",
+                        "reasoning_len=%d content_len=%d finish=%s tool_calls=%d tool=%s",
                         stream_id,
                         ctx.conversation_id[:12],
                         _chunk_index,
@@ -684,6 +694,7 @@ async def _stream_response_generator(ctx: StreamContext):
                         _content_len,
                         str(_fr_raw) if _fr_raw else "null",
                         len(_tc_raw) if _tc_raw else 0,
+                        _tool_name or "none",
                     )
 
                     # Accumulate text content and tool_calls for potential continuation
@@ -734,13 +745,18 @@ async def _stream_response_generator(ctx: StreamContext):
                         fr = None
 
                     if fr:
+                        _final_tc_name = ""
+                        if tool_calls_by_index:
+                            _first_tc = tool_calls_by_index.get(min(tool_calls_by_index.keys()) if tool_calls_by_index else 0, {})
+                            _final_tc_name = _first_tc.get("name", "") if isinstance(_first_tc, dict) else ""
                         logger.info(
                             "stream_chunk_finish conv=%s physical=%s reason=%s "
-                            "accumulated_len=%d",
+                            "accumulated_len=%d tool=%s",
                             ctx.conversation_id[:12],
                             ctx.physical_model,
                             fr,
                             len(accumulated_content),
+                            _final_tc_name or "none",
                         )
 
                     # Convert chunk to dict ONCE — reuse for all processing
