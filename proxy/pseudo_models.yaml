@@ -248,18 +248,6 @@ pseudo_models:
         strip_reasoning: true
         system_prompt: |
           No reasoning. Do NOT use <think> tags.
-
-          You are a context compaction specialist.
-
-          Guidelines:
-          * Preserve all essential facts, data, and relationships
-          * Remove redundancy and filler content
-          * Keep the original meaning and intent intact
-          * Maintain chronological and logical order
-          * Output in the same language as the input
-          * Prioritize actionable information over meta-commentary
-          * Be thorough—do not omit critical details
-          * Complete the compaction in a single pass
         note: "Primary: Qwen3 32B vía Groq ($0.29/$0.59 por 1M). Barato y rápido."
       - provider: groq
         model: groq/openai/gpt-oss-120b
@@ -268,18 +256,6 @@ pseudo_models:
         strip_reasoning: true
         system_prompt: |
           No reasoning. Do NOT use <think> tags.
-
-          You are a context compaction specialist.
-
-          Guidelines:
-          * Preserve all essential facts, data, and relationships
-          * Remove redundancy and filler content
-          * Keep the original meaning and intent intact
-          * Maintain chronological and logical order
-          * Output in the same language as the input
-          * Prioritize actionable information over meta-commentary
-          * Be thorough—do not omit critical details
-          * Complete the compaction in a single pass
         note: "Fallback 1: GPT-OSS 120B vía Groq ($0.15/$0.60). Más capaz."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
