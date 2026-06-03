@@ -250,10 +250,39 @@ async def _run_compaction_sync(
         all_messages, config, valkey
     )
 
-    # ── Call compactor model API ───────────────────────────────────────
+    # ── Split conversation into pieces ────────────────────────────────
+    # Keep the FIRST user message (original context) and LAST user message
+    # (current request) intact. Everything in between is the middle to compact.
+    first_user = None
+    last_user = None
+    middle_msgs = []
+
+    for msg in all_messages:
+        if msg.get("role") == "user":
+            if first_user is None:
+                first_user = msg
+            last_user = msg
+        else:
+            middle_msgs.append(msg)
+
+    # Build compaction messages with clear separation
+    compaction_parts = []
+    if first_user is not None:
+        compaction_parts.append(
+            f"[PRIMER MENSAJE DEL USUARIO — PRESERVAR INTACTO]\n{json.dumps(first_user, default=str)}"
+        )
+    if middle_msgs:
+        compaction_parts.append(
+            f"[HISTORIAL INTERMEDIO — COMPACTAR]\n{json.dumps(middle_msgs, default=str)}"
+        )
+    if last_user is not None and last_user is not first_user:
+        compaction_parts.append(
+            f"[ULTIMO MENSAJE DEL USUARIO — PRESERVAR INTACTO]\n{json.dumps(last_user, default=str)}"
+        )
+
     compaction_messages = [
         {"role": "system", "content": compaction_prompt},
-        {"role": "user", "content": json.dumps(all_messages, default=str)},
+        {"role": "user", "content": "\n\n---\n\n".join(compaction_parts)},
     ]
 
     try:

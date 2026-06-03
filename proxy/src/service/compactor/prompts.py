@@ -18,11 +18,25 @@ def build_explicit_compaction_prompt() -> str:
     """
     return """You are a conversation compactor. Your task is to create a comprehensive, detailed, structured snapshot of a long conversation history.
 
-The snapshot MUST be DETAILED — you have a large token budget, USE IT. Retain all important context, decisions, code, and discussion. The snapshot will be used as the starting context for future turns, and the user should be able to continue seamlessly.
+The conversation is split into THREE pieces:
 
-IMPORTANT: Your output must be at least 5%% of the original conversation length. Be thorough, not brief.
+1. **PRIMER MENSAJE DEL USUARIO** — The very first user message that started the conversation. PRESERVE THIS INTACT in the "Problem State" and "Goal" sections. This is the original context.
+
+2. **HISTORIAL INTERMEDIO** — The middle of the conversation. Compact this into the Technical Decisions, Code Produced, Technical Context, Tools & Capabilities, and Pending Items sections.
+
+3. **ULTIMO MENSAJE DEL USUARIO** — The most recent user message. PRESERVE THIS INTACT in the "Current Status" and "Next Steps" sections. This is the current request.
+
+CRITICAL RULES:
+- PRESERVE the first user message's intent and context completely
+- PRESERVE the last user message's request and context completely
+- YOU MUST compact the middle history between them
+- Your output must be at least 5%% of the original conversation length
 
 # Required Sections
+
+## Goal
+- What is the overall goal or task? (derived from the FIRST user message)
+- Current objective at time of compaction (derived from the LAST user message)
 
 ## Problem State
 - What problem or task is being worked on?
