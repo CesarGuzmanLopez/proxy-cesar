@@ -25,45 +25,59 @@ __all__ = [
 def _load_messages_from_turns(conv: Conversation) -> list[dict]:
     """Load all messages from conversation turns in order.
 
-    FASE D: Filter out degradation_event turns to prevent context contamination
+    Each ConversationTurn stores ALL messages cumulatively. Only the last
+    turn's messages are needed — they already contain the complete history.
+    Degradation_event turns are skipped to prevent context contamination
     from image auto-describe operations that replay full history.
     """
-    all_messages: list[dict] = []
-    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
-        # Skip degradation_event turns
-        if getattr(turn, "turn_type", None) == "degradation_event":
-            continue
-        turn_msgs = turn.messages
-        if isinstance(turn_msgs, list):
-            all_messages.extend(turn_msgs)
-    return all_messages
+    valid_turns = [
+        t for t in sorted(conv.turns, key=lambda t: t.turn_number)
+        if getattr(t, "turn_type", None) != "degradation_event"
+    ]
+    if not valid_turns:
+        return []
+    last_turn = valid_turns[-1]
+    turn_msgs = last_turn.messages
+    if isinstance(turn_msgs, list):
+        return list(turn_msgs)
+    return []
 
 
 def _build_history_from_turns(conv: Conversation) -> list[dict]:
-    """Reconstruct history from stored turns, skipping degradation_event turns."""
-    history: list[dict] = []
-    for turn in sorted(conv.turns, key=lambda t: t.turn_number):
-        if getattr(turn, "turn_type", None) == "degradation_event":
-            logger.debug(
-                "skip_degradation_event_turn conv=%s turn=%s",
-                conv.id,
-                turn.turn_number,
-            )
-            continue
+    """Reconstruct history from stored turns, skipping degradation_event turns.
 
-        if turn.messages:
-            history.extend(turn.messages)
-        if turn.response and isinstance(turn.response, dict):
-            choices = turn.response.get("choices", [])
-            if choices:
-                msg = choices[0].get("message", {})
-                assistant_entry: dict = {"role": "assistant"}
-                for field in ("content", "tool_calls", "reasoning_content", "name", "thinking_blocks"):
-                    val = msg.get(field)
-                    if val is not None:
-                        assistant_entry[field] = val
-                if len(assistant_entry) > 1:
-                    history.append(assistant_entry)
+    Each ConversationTurn stores ALL messages cumulatively. Only the last
+    non-degradation turn's messages are needed — they contain the complete
+    history up to that turn's user request. The assistant response for the
+    last turn is added separately from turn.response (it's not yet in
+    turn.messages at save time).
+    """
+    valid_turns = [
+        t for t in sorted(conv.turns, key=lambda t: t.turn_number)
+        if getattr(t, "turn_type", None) != "degradation_event"
+    ]
+    if not valid_turns:
+        return []
+
+    # Last turn's messages = full history up to the last user message
+    history: list[dict] = []
+    last_turn = valid_turns[-1]
+    if last_turn.messages and isinstance(last_turn.messages, list):
+        history = list(last_turn.messages)
+
+    # Add the latest assistant response (not yet in turn.messages)
+    if last_turn.response and isinstance(last_turn.response, dict):
+        choices = last_turn.response.get("choices", [])
+        if choices:
+            msg = choices[0].get("message", {})
+            assistant_entry: dict = {"role": "assistant"}
+            for field in ("content", "tool_calls", "reasoning_content", "name", "thinking_blocks"):
+                val = msg.get(field)
+                if val is not None:
+                    assistant_entry[field] = val
+            if len(assistant_entry) > 1:
+                history.append(assistant_entry)
+
     return history
 
 

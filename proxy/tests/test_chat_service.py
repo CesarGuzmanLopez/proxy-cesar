@@ -135,14 +135,19 @@ def test_build_conversation_messages_preserves_thinking_blocks():
 
 
 def test_build_conversation_messages_multiple_turns():
-    """Multiple turns are interleaved correctly in order."""
+    """Multiple turns are interleaved correctly in order.
+
+    Each ConversationTurn stores ALL messages cumulatively, so turn 2
+    includes turn 1's messages + its own user message. The assistant
+    response for the last turn is added from turn.response.
+    """
     from src.service.chat_messages import build_conversation_messages
 
     turns = [
         _MockTurn(1, [{"role": "user", "content": "Q1"}], {
             "choices": [{"message": {"role": "assistant", "content": "A1"}}]
         }),
-        _MockTurn(2, [{"role": "user", "content": "Q2"}], {
+        _MockTurn(2, [{"role": "user", "content": "Q1"}, {"role": "assistant", "content": "A1"}, {"role": "user", "content": "Q2"}], {
             "choices": [{"message": {"role": "assistant", "content": "A2"}}]
         }),
     ]
