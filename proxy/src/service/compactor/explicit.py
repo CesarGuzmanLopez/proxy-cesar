@@ -160,6 +160,41 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, value)
 
 
+def _estimate_json_size(messages: list[dict]) -> int:
+    """Rough estimate of JSON string length for a list of messages."""
+    # Each message has at least ~30 chars overhead for {"role":"x","content":"..."}
+    return sum(30 + len(str(msg.get("content", ""))) for msg in messages)
+
+
+def _split_into_chunks(messages: list[dict], max_chars: int) -> list[list[dict]]:
+    """Split messages into chunks that fit within max_chars of JSON.
+
+    Each chunk is compacted separately. Assembles messages one by one
+    until the estimated JSON size exceeds max_chars, then starts a new chunk.
+    """
+    if not messages:
+        return []
+
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+
+    for msg in messages:
+        # Estimate what the JSON would look like with this message added
+        test_chunk = current + [msg]
+        est_size = _estimate_json_size(test_chunk)
+
+        if current and est_size > max_chars:
+            chunks.append(current)
+            current = [msg]
+        else:
+            current.append(msg)
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
 def _build_compaction_history(turns: Sequence[ConversationTurn]) -> list[dict]:
     """Build the full message history from conversation turns.
 
@@ -245,70 +280,63 @@ async def _run_compaction_sync(
     if conv is None:
         conv = await db.get(Conversation, conv_uuid)
 
+    # ── Estimate safe JSON size budget ───────────────────────────────────
+    # JSON serialization overhead is ~2-3x message tokens. We chunk when
+    # the JSON string exceeds 80K chars (~20K tokens) to stay well within
+    # the compactador's context window for both input AND output.
+    _MAX_JSON_CHUNK_CHARS = 80000
+
     # ── Describe images using any available vision model ──────────────
     all_messages = await _prepare_multimedia_for_compaction(
         all_messages, config, valkey
     )
 
-    # ── Split conversation into pieces ────────────────────────────────
-    # Keep the FIRST user message (original context) and LAST user message
-    # (current request) intact. Everything in between is the middle to compact.
-    first_user = None
-    last_user = None
-    middle_msgs = []
+    # ── Split messages into chunks if needed ───────────────────────────
+    chunks = _split_into_chunks(all_messages, _MAX_JSON_CHUNK_CHARS)
 
-    for msg in all_messages:
-        if msg.get("role") == "user":
-            if first_user is None:
-                first_user = msg
-            last_user = msg
-        else:
-            middle_msgs.append(msg)
+    chunk_results: list[str] = []
+    for idx, chunk in enumerate(chunks):
+        chunk_label = f"## Block {idx + 1}\n" if len(chunks) > 1 else ""
 
-    # Build compaction messages with clear separation
-    compaction_parts = []
-    if first_user is not None:
-        compaction_parts.append(
-            f"[PRIMER MENSAJE DEL USUARIO — PRESERVAR INTACTO]\n{json.dumps(first_user, default=str)}"
-        )
-    if middle_msgs:
-        compaction_parts.append(
-            f"[HISTORIAL INTERMEDIO — COMPACTAR]\n{json.dumps(middle_msgs, default=str)}"
-        )
-    if last_user is not None and last_user is not first_user:
-        compaction_parts.append(
-            f"[ULTIMO MENSAJE DEL USUARIO — PRESERVAR INTACTO]\n{json.dumps(last_user, default=str)}"
-        )
+        compaction_messages = [
+            {"role": "system", "content": compaction_prompt},
+            {"role": "user", "content": chunk_label + json.dumps(chunk, default=str)},
+        ]
 
-    compaction_messages = [
-        {"role": "system", "content": compaction_prompt},
-        {"role": "user", "content": "\n\n---\n\n".join(compaction_parts)},
-    ]
+        try:
+            response = await call_litellm(
+                model=compactor_model,
+                messages=compaction_messages,
+                api_base=api_base,
+                api_key=api_key,
+                max_tokens=_compaction_max_tokens(total_tokens),
+                temperature=0.1,
+            )
+            chunk_content, _ = await _parse_compactor_response(response)
+            if chunk_content:
+                chunk_results.append(chunk_content)
+        except Exception as exc:
+            logger.error(
+                "compaction_chunk_failed trace=%s conv=%s chunk=%d/%d compactor=%s: %s",
+                _trace,
+                conversation_id[:12],
+                idx + 1,
+                len(chunks),
+                compactor_model,
+                exc,
+            )
 
-    try:
-        response = await call_litellm(
-            model=compactor_model,
-            messages=compaction_messages,
-            api_base=api_base,
-            api_key=api_key,
-            max_tokens=_compaction_max_tokens(total_tokens),
-            temperature=0.1,
-        )
-        snapshot_content, snapshot_tokens = await _parse_compactor_response(response)
-    except Exception as exc:
-        logger.error(
-            "compaction_failed trace=%s conv=%s compactor=%s: %s",
-            _trace,
-            conversation_id[:12],
-            compactor_model,
-            exc,
-        )
-        # Return domain error
+    if not chunk_results:
         return Err(CompactionFailed(
             conversation_id=conversation_id,
             compactor_model=compactor_model,
-            reason=str(exc),
+            reason="All compaction chunks failed",
         ))
+
+    snapshot_content = "\n\n".join(chunk_results)
+    snapshot_tokens = await estimate_tokens(
+        [{"role": "user", "content": snapshot_content}]
+    )
 
     # ── Create snapshot ONLY after API call succeeds ───────────────────
     new_snapshot = ConversationSnapshot(
