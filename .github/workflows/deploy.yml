@@ -107,7 +107,7 @@ jobs:
             # ── 4. Python virtual environment (cached in /tmp) ────
             if [ ! -d "$VENV_DIR" ]; then
               echo "[deploy] Creating virtual environment..."
-              python3.14 -m venv "$VENV_DIR"
+              python3.13 -m venv "$VENV_DIR"
             fi
             source "$VENV_DIR/bin/activate"
 
