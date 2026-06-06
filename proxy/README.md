@@ -291,12 +291,8 @@ python -m src.main              # :9110
 
 ## Deploy
 
-GitHub Actions → `chat.guzman-lopez.com`:
-- Target: `plata` (Ubuntu 22.04)
-- Service user: `proxy` (hardcoded)
-- Cache: Redis native :6380
-- DB: PostgreSQL 14 (persistent, no backup needed between deploys)
-- Verification: Health check post-deploy
+GitHub Actions deploy automático en cada push a `main`.
+Salud: Health check post-deploy.
 
 Config: [.github/workflows/deploy.yml](../.github/workflows/deploy.yml)
 

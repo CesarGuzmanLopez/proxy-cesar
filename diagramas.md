@@ -43,7 +43,7 @@ graph TB
         B[GitHub Actions deploy.yml]
     end
 
-    subgraph Servidor "plata"
+    subgraph Servidor
         C[git clone --depth 1]
         D[chown -R proxy:proxy]
         E[Backup/Restore SQLite DB]
@@ -67,7 +67,7 @@ graph TB
     E --> F
     F --> G
     G -.->|OK| H
-    H -->|chat.guzman-lopez.com| I
+    H -->|dominio| I
     I --> J
     I -.->|No depende| K
     I -.->|No depende| L
@@ -198,20 +198,17 @@ sequenceDiagram
     participant Dev as Desarrollador
     participant GH as GitHub
     participant GA as GitHub Actions
-    participant Server as Servidor (plata)
+    participant Server as Servidor
 
     Dev->>GH: git push origin main
     GH->>GA: trigger deploy.yml
-    GA->>Server: ssh root@plata
-    Server->>Server: git clone --branch main --depth 1 /tmp/proxy-cesar
-    Server->>Server: chown -R proxy:proxy /tmp/proxy-cesar
+    GA->>Server: ssh deploy
+    Server->>Server: git clone --branch main --depth 1
     Server->>Server: systemctl restart proxy-cesar
-    Server->>Server: Health check (curl localhost:9110/health)
+    Server->>Server: Health check
     Server-->>GA: Deploy result (OK/FAIL)
     GA-->>Dev: Notificación
 ```
-
-> **Nota:** El deploy corre como `root`, el servicio corre como `proxy`. El `chown` post-clone es crítico. La DB se preserva entre deploys.
 
 ---
 

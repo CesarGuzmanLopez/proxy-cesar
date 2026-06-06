@@ -1,10 +1,10 @@
-# .github/workflows/deploy.yml — Deploy proxy-cesar to plata on push to main
+# .github/workflows/deploy.yml — Deploy proxy-cesar on push to main
 #
 # Requires the following secrets in the repository:
-#   PLATA_HOST       — IP or hostname of the target server
-#   PLATA_SSH_PORT   — SSH port (default 22)
-#   PLATA_USER       — deploy user on the server (must have sudo for systemctl)
-#   PLATA_SSH_KEY    — private SSH key for the deploy user
+#   HOST             — IP or hostname of the target server
+#   SSH_PORT         — SSH port (default 22)
+#   SSH_USER         — deploy user on the server (must have sudo for systemctl)
+#   SSH_KEY          — private SSH key for the deploy user
 #   DATABASE_URL     — PostgreSQL connection string
 #   PROXY_API_KEY    — Bearer token for API access
 #   DEEPSEEK_API_KEY
@@ -14,7 +14,7 @@
 #   PRUNA_API_KEY
 #   VALKEY_URL        — Redis/Valkey URL (default: valkey://localhost:6380)
 
-name: Deploy to plata
+name: Deploy
 
 on:
   push:
