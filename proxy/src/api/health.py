@@ -70,6 +70,7 @@ async def health(request: Request):
         ("openrouter", "OPENROUTER_API_KEY"),
         ("deepseek", "DEEPSEEK_API_KEY"),
         ("groq", "GROQ_API_KEY"),
+        ("nvidia", "NVIDIA_API_KEY"),
         ("opencode-go", "OPENCODE_API_KEY"),
     ]:
         providers[provider] = "configured" if os.getenv(key_env) else "not configured"
