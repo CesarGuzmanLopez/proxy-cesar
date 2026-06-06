@@ -69,8 +69,8 @@ jobs:
           script: |
             set -euo pipefail
 
-            VENV_DIR="/tmp/proxy-cesar-venv"
-            REPO_DIR="/tmp/proxy-cesar"
+            VENV_DIR="/opt/proxy-cesar-venv"
+            REPO_DIR="/opt/proxy-cesar"
             BRANCH="main"
             PROXY_USER="proxy"
 
