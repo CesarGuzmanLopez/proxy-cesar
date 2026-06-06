@@ -99,6 +99,7 @@ jobs:
             # ── 3. Fix ownership ──────────────────────────────────
             echo "[deploy] Fixing permissions for user ${PROXY_USER}..."
             sudo chown -R "${PROXY_USER}:${PROXY_USER}" "$REPO_DIR"
+            sudo chown -R "${PROXY_USER}:${PROXY_USER}" "$VENV_DIR" 2>/dev/null || true
             sudo chmod 755 "$REPO_DIR" "$REPO_DIR/proxy"
 
             cd "$REPO_DIR/proxy"
