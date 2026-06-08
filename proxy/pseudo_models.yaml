@@ -10,27 +10,51 @@
 
 pseudo_models:
   # ── Razonamiento premium ──────────────────────────────────────────────────
-  pensamiento-profundo-caro:
-    display_name: Pensamiento Profundo
-    description: "Razonamiento de máximo nivel. Límite 261K tokens — si lo superas usa /compact para continuar."
-    input_token_threshold: 261144
-    context_window: 261144
+pensamiento-profundo-caro:
+  display_name: Pensamiento Profundo
+  description: "Razonamiento de máximo nivel. Límite 261K tokens — si lo superas usa /compact para continuar."
+  input_token_threshold: 261144
+  context_window: 262144
+  router_llm:
+    enabled: false
+  image_handling:
+    on_downgrade: auto_describe
+  physical_models:
+    - provider: opencode-go
+      model: openai/glm-5
+      api_base: https://opencode.ai/zen/go/v1
+      api_key_env: OPENCODE_API_KEY
+      openai_tools_compatible: true
+      tools_strict: true
+      parallel_tools: true
+      vision: false
+      pdf: false
+      context_window: 262144
+      note: "Go: GLM-5 vía OpenAI /chat/completions. Costo: $1.00/$3.20 por 1M tokens. Razonamiento vía servidor."
+    - provider: deepseek
+      model: deepseek/deepseek-v4-pro
+      openai_tools_compatible: true
+      tools_strict: true
+      parallel_tools: true
+      vision: false
+      pdf: false
+      context_window: 1000000
+      reasoning_effort: false
+      strip_reasoning: true
+      note: "Fallback: DeepSeek V4 Pro directo. Razonamiento max."
+  fallback_strategy: sequential
+
+  # ── Desarrollo sostenido ──────────────────────────────────────────────────
+  tareas-avanzadas:
+    display_name: Tareas Avanzadas
+    description: "Desarrollo profundo y sostenido. DeepSeek V4 Pro directo."
+    input_token_threshold: 195608
+    context_window: 1000000
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
-      - provider: opencode-go
-        model: openai/kimi-k2.5
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: true
-        parallel_tools: true
-        vision: false
-        pdf: false
-        context_window: 262144
-        note: "Go: Kimi K2.5 vía OpenAI /chat/completions. Cache prefix reportado. Razonamiento vía servidor (~9.250 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-pro
         openai_tools_compatible: true
@@ -41,31 +65,7 @@ pseudo_models:
         context_window: 1000000
         reasoning_effort: false
         strip_reasoning: true
-        note: "Fallback: DeepSeek V4 Pro directo. Razonamiento max."
-    fallback_strategy: sequential
-
-  # ── Desarrollo sostenido ──────────────────────────────────────────────────
-  tareas-avanzadas:
-    display_name: Tareas Avanzadas
-    description: "Desarrollo profundo y sostenido. Kimi K2.5 vía Go."
-    input_token_threshold: 195608
-    context_window: 262144
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: auto_describe
-    physical_models:
-      - provider: opencode-go
-        model: openai/kimi-k2.5
-        api_base: https://opencode.ai/zen/go/v1
-        api_key_env: OPENCODE_API_KEY
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: true
-        vision: false
-        pdf: false
-        context_window: 262144
-        note: "Go: Kimi K2.5 vía OpenAI /chat/completions. Razonamiento nativo (~9.250 req/mes)."
+        note: "Primary: DeepSeek V4 Pro. 1M contexto. Razonamiento max. (~$1.74/$3.48 por 1M)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
@@ -76,7 +76,7 @@ pseudo_models:
         context_window: 1000000
         reasoning_effort: false
         strip_reasoning: true
-        note: "Fallback: DeepSeek V4 Flash. Razonamiento max."
+        note: "Fallback: DeepSeek V4 Flash. 1M contexto. Razonamiento high."
     fallback_strategy: sequential
 
   # ── Normal (punto de entrada) ─────────────────────────────────────────────
