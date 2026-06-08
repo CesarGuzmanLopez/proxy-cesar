@@ -1,5 +1,20 @@
 # pseudo_models.yaml — Proxy pseudo-model configuration v1.3
 #
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  IMPORTANTE: Todos los modelos deben ser OpenAI-compatibles            ║
+# ║  (endpoint /v1/chat/completions).                                      ║
+# ║                                                                        ║
+# ║  NO usar modelos con formato Anthropic (/v1/messages).                 ║
+# ║  El proxy convierte automáticamente el formato de salida, pero         ║
+# ║  el razonamiento (thinking/thinking_blocks) se PIERDE al convertirlo   ║
+# ║  de Anthropic a OpenAI.                                                ║
+# ║                                                                        ║
+# ║  ⚠️  Antecedente: MiniMax M2.7 usaba Anthropic nativo. Al ponerlo     ║
+# ║     con prefijo "openai/" el servidor convertía el formato y el         ║
+# ║     razonamiento (thinking_blocks → reasoning_content) se perdía.      ║
+# ║     Solución: usar solo modelos que sean OpenAI nativos.                ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
 # Correcciones aplicadas desde v1.2:
 # - thinking solo en Anthropic, reasoning_effort solo en OpenAI
 # - Ventanas de contexto corregidas (min(physical) - 1K)
