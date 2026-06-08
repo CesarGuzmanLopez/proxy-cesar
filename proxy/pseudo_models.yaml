@@ -47,16 +47,16 @@ pseudo_models:
   # ── Desarrollo sostenido ──────────────────────────────────────────────────
   tareas-avanzadas:
     display_name: Tareas Avanzadas
-    description: "Desarrollo profundo y sostenido. MiniMax M2.7 vía Go."
+    description: "Desarrollo profundo y sostenido. Kimi K2.5 vía Go."
     input_token_threshold: 195608
-    context_window: 195608
+    context_window: 262144
     router_llm:
       enabled: false
     image_handling:
       on_downgrade: auto_describe
     physical_models:
       - provider: opencode-go
-        model: openai/minimax-m2.7
+        model: openai/kimi-k2.5
         api_base: https://opencode.ai/zen/go/v1
         api_key_env: OPENCODE_API_KEY
         openai_tools_compatible: true
@@ -64,8 +64,8 @@ pseudo_models:
         parallel_tools: true
         vision: false
         pdf: false
-        context_window: 196608
-        note: "Go: MiniMax M2.7 (192K contexto) vía OpenAI /chat/completions. Cache prefix reportado (~17.000 req/mes)."
+        context_window: 262144
+        note: "Go: Kimi K2.5 vía OpenAI /chat/completions. Razonamiento nativo (~9.250 req/mes)."
       - provider: deepseek
         model: deepseek/deepseek-v4-flash
         openai_tools_compatible: true
