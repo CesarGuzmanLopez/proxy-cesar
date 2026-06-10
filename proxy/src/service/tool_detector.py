@@ -1129,7 +1129,17 @@ async def _describe_images(valkey, prefix, blobs, user_text, config):
             )
 
     if all_cached:
-        return cached
+        # Shorten long descriptions on cache hit (repeated appearance)
+        shortened = []
+        for v in cached:
+            if len(v) > 5000:
+                shortened.append(
+                    f"[Image previously described — {_estimate_file_desc_size(v)} "
+                    f"of description stored in cache.]"
+                )
+            else:
+                shortened.append(v)
+        return shortened
 
     descs = await _describe_image_batch(
         [(h, r) for h, r, _, _, _ in blobs], user_text, config
@@ -1240,6 +1250,12 @@ async def _describe_audio(valkey, desc_key: str, raw: str, config) -> str:
                 len(cached),
                 cached[:300] if cached else "(empty)",
             )
+            # Shorten on cache hit (repeated appearance in follow-up requests)
+            if len(cached) > 5000:
+                return (
+                    f"[Audio previously transcribed — {_estimate_file_desc_size(cached)} "
+                    f"of transcription stored in cache.]"
+                )
             return cached
     except Exception as exc:
         logger.warning("blob_audio_cache_error key=%s err=%s", desc_key, exc)
