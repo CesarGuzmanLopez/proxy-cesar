@@ -794,8 +794,9 @@ async def _stream_response_generator(ctx: StreamContext):
                         for tc in (_chunk_tc or []):
                             if isinstance(tc, dict):
                                 _fn = tc.get("function") or {}
+                                _id_val = tc.get("id") or ""
                                 _tc_ids.append(
-                                    f"idx={tc.get('index')}|id={tc.get('id','')[:8]}|name={_fn.get('name','?')}"
+                                    f"idx={tc.get('index')}|id={_id_val[:8]}|name={_fn.get('name','?')}"
                                 )
                         logger.info(
                             "stream_sse_chunk conv=%s finish=%s tc=[%s]",

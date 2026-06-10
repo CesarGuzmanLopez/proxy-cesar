@@ -53,7 +53,7 @@ def test_tareas_avanzadas_no_parallel_returns_all():
     )
     models = [m.model for m in result]
     assert len(models) == 2
-    assert "openai/kimi-k2.5" in models
+    assert "deepseek/deepseek-v4-pro" in models
     assert "deepseek/deepseek-v4-flash" in models
 
     assert is_pinned_model_eligible("deepseek/deepseek-v4-flash", result) is True
