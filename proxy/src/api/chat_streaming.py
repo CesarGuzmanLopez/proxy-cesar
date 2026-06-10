@@ -798,11 +798,17 @@ async def _stream_response_generator(ctx: StreamContext):
                                 _tc_ids.append(
                                     f"idx={tc.get('index')}|id={_id_val[:8]}|name={_fn.get('name','?')}"
                                 )
+                        _chunk_json = json.dumps(chunk_dict)
                         logger.info(
                             "stream_sse_chunk conv=%s finish=%s tc=[%s]",
                             ctx.conversation_id[:12],
                             _chunk_fr or "null",
                             "; ".join(_tc_ids) if _tc_ids else "none",
+                        )
+                        # Dump the EXACT SSE JSON for tool_call / finish chunks
+                        logger.info(
+                            "stream_sse_raw chunk=%s",
+                            _chunk_json
                         )
 
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
