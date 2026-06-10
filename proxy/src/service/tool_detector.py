@@ -1255,6 +1255,16 @@ async def _describe_audio(valkey, desc_key: str, raw: str, config) -> str:
     return desc
 
 
+def _estimate_file_desc_size(desc: str) -> str:
+    """Estimate the size of a file description in human-readable format."""
+    size = len(desc)
+    if size > 100000:
+        return f"{size // 1000}KB"
+    if size > 1000:
+        return f"{size // 1000}KB"
+    return f"{size}B"
+
+
 async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> str:
     """Extract text from a file — PDF, DOCX, PPTX, XLSX, or plain text fallback.
 
@@ -1270,6 +1280,15 @@ async def _describe_file_generic(valkey, desc_key: str, raw: str, mime: str) -> 
                 len(cached),
                 cached[:400] if cached else "(empty)",
             )
+            # On cache hit (file already extracted in a previous turn), return a
+            # short summary instead of re-sending the full extracted text (which
+            # can be 100K+ chars). The full text is in Valkey if needed.
+            if len(cached) > 5000:
+                preview = cached[:300].strip()
+                return (
+                    f"[File previously extracted — {_estimate_file_desc_size(cached)} "
+                    f"of content stored in cache. Full text available on first request.]"
+                )
             return cached
     except Exception as exc:
         logger.warning("blob_file_cache_error key=%s err=%s", desc_key, exc)
