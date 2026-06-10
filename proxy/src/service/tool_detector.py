@@ -1070,6 +1070,13 @@ async def _process_msg_blobs(
         file_blobs,
         pdf_results,
     )
+    # Flatten to string if only text content (no images/audio) — some providers
+    # (Xiaomi/MiMo) reject list content for non-vision models.
+    if not image_blobs and not audio_blobs and out and all(
+        isinstance(p, dict) and p.get("type") == "text" for p in out
+    ):
+        combined = "\n\n".join(str(p.get("text", "")) for p in out)
+        return [{**msg, "content": combined}]
     return [{**msg, "content": out}]
 
 
