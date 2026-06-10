@@ -1038,6 +1038,12 @@ async def _stream_response_generator(ctx: StreamContext):
                 ctx, conv, session_caps, input_tokens, output_tokens
             )
             final_json = json.dumps(final_chunk)
+            logger.info(
+                "stream_metadata_chunk conv=%s finish=%s len=%d",
+                ctx.conversation_id[:12],
+                finish_reason or "?",
+                len(final_json),
+            )
             yield f"data: {final_json}\n\n"
         except Exception as e:
             logger.error(
