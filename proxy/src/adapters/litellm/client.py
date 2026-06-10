@@ -156,6 +156,14 @@ async def call_litellm(
         bool(api_base),
     )
 
+    # Debug: log kwargs sent to Xiaomi
+    debug_kwargs = {k: v for k, v in kwargs.items()
+                    if k not in ("tools", "messages")}
+    logger.info(
+        "litellm_kwargs model=%s kwargs=%s",
+        model, debug_kwargs,
+    )
+
     from src.config.constants import DEFAULT_LLM_TIMEOUT_SECONDS
 
     effective_timeout = timeout if timeout is not None else DEFAULT_LLM_TIMEOUT_SECONDS

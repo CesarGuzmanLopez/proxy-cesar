@@ -762,34 +762,19 @@ async def call_with_fallback(
             fallback_info.attempted_models.append(f"{phys.model} (banned)")
             continue
 
-        # Re-validate content compatibility for ALL models.
-        # The primary model's content was already validated upstream, but
-        # some providers (Xiaomi/MiMo) reject delegated content with
-        # "Param Incorrect". Skip the primary model if it can't handle
-        # the content directly — let it fall through to models that can.
-        if turn_caps:
+        # Re-validate content compatibility for fallback models
+        # (the first/primary model was already validated upstream)
+        if idx > start_index and turn_caps and valkey_client:
             delegation = validate_physical_model_content(turn_caps, phys)
             if delegation:
-                if idx == start_index:
-                    # Primary model doesn't support this content — skip to fallback
-                    logger.info(
-                        "content_skip_primary trace=%s model=%s reason=content_not_supported",
-                        _trace_id, phys.model,
-                    )
-                    fallback_info.applied = True
-                    fallback_info.reason = f"content_not_supported: {phys.model}"
-                    fallback_info.attempted_models.append(f"{phys.model} (content_unsupported)")
-                    continue
-                # Fallback model: transform content for compatibility
                 logger.info(
                     "content_fallback_delegation idx=%d model=%s action=%s",
                     idx, phys.model, delegation.get("action"),
                 )
-                if valkey_client:
-                    from src.service.tool_detector import replace_base64_with_blob_refs
-                    ordered_messages, _ = await replace_base64_with_blob_refs(
-                        ordered_messages, conversation_id, valkey_client, config,
-                    )
+                from src.service.tool_detector import replace_base64_with_blob_refs
+                ordered_messages, _ = await replace_base64_with_blob_refs(  # type: ignore[assignment]  # justification: replace_base64_with_blob_refs return type annotation returns list[dict]; tuple unpacking pattern from prior API; compatible at runtime
+                    ordered_messages, conversation_id, valkey_client, config,
+                )
 
         try:
             response, skip_reason = await _try_physical_model(
