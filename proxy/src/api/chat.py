@@ -49,7 +49,12 @@ def _build_message_log_summaries(messages: list[dict]) -> list[str]:
             _preview = f"[{len(_c)} parts]"
         else:
             _preview = str(_c)[:2000]
-        summaries.append(f"{_role}={_preview}")
+        if _role == "tool":
+            _tc_id = m.get("tool_call_id", "")[:12]
+            _summary = f"{_role}={_preview}" if _preview else f"{_role}=[EMPTY|tc={_tc_id}]"
+        else:
+            _summary = f"{_role}={_preview}"
+        summaries.append(_summary)
     return summaries
 
 
@@ -207,6 +212,24 @@ async def chat_completions(
 
     # Log full request details including message content
     _msg_summaries = _build_message_log_summaries(messages)
+    # Diagnostic: dump tool message details
+    for i, m in enumerate(messages):
+        if m.get("role") == "tool":
+            _tc_id = m.get("tool_call_id", "?")
+            _content = m.get("content", "")
+            if isinstance(_content, str):
+                _clen = len(_content)
+                _preview = _content[:300].replace("\n", " ")
+            elif isinstance(_content, list):
+                _clen = len(_content)
+                _preview = f"[list of {_clen} items]"
+            else:
+                _clen = 0
+                _preview = str(type(_content))
+            logger.info(
+                "tool_msg_detail msg=%d tc=%s content_len=%d preview=%s",
+                i, _tc_id, _clen, _preview,
+            )
     logger.info(
         "chat_request_full request_id=%s conv=%s model=%s stream=%s "
         "messages=%d tools=%d thinking=%s msgs=%s",
