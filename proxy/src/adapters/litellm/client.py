@@ -156,16 +156,6 @@ async def call_litellm(
         bool(api_base),
     )
 
-    # Debug: dump the actual messages and kwargs to find Xiaomi's "Param Incorrect"
-    import json as _json
-    _msg_preview = _json.dumps([{k: (v[:200] if isinstance(v, str) else v) for k, v in m.items()} for m in messages], ensure_ascii=False)
-    logger.info(
-        "litellm_debug model=%s messages_preview=%s kwargs_keys=%s",
-        model,
-        _msg_preview[:1000],
-        list(kwargs.keys()),
-    )
-
     from src.config.constants import DEFAULT_LLM_TIMEOUT_SECONDS
 
     effective_timeout = timeout if timeout is not None else DEFAULT_LLM_TIMEOUT_SECONDS
