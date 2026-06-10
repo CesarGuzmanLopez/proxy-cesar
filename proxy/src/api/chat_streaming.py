@@ -790,12 +790,18 @@ async def _stream_response_generator(ctx: StreamContext):
                     _chunk_fr = chunk_dict.get("choices", [{}])[0].get("finish_reason")
                     _chunk_tc = chunk_dict.get("choices", [{}])[0].get("delta", {}).get("tool_calls")
                     if _chunk_fr or _chunk_tc:
+                        _tc_ids = []
+                        for tc in (_chunk_tc or []):
+                            if isinstance(tc, dict):
+                                _fn = tc.get("function") or {}
+                                _tc_ids.append(
+                                    f"idx={tc.get('index')}|id={tc.get('id','')[:8]}|name={_fn.get('name','?')}"
+                                )
                         logger.info(
-                            "stream_sse_chunk conv=%s finish=%s tc_count=%s tc_names=%s",
+                            "stream_sse_chunk conv=%s finish=%s tc=[%s]",
                             ctx.conversation_id[:12],
                             _chunk_fr or "null",
-                            len(_chunk_tc) if _chunk_tc else 0,
-                            [tc.get("function", {}).get("name", "?") for tc in _chunk_tc] if _chunk_tc else "none",
+                            "; ".join(_tc_ids) if _tc_ids else "none",
                         )
 
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
