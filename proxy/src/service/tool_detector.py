@@ -884,7 +884,19 @@ async def _classify_content_parts(  # noqa: S3776 — multiple content types × 
 
         # Validate and process extracted data
         if not raw or not raw.startswith("data:"):
-            others.append(part)
+            # File without processable data — convert to text placeholder
+            filename = (
+                (part.get("file", {}) or {}).get("filename")
+                or part.get("filename", "")
+                or "unknown"
+            )
+            mime = (
+                (part.get("file", {}) or {}).get("mime_type")
+                or part.get("mime_type", "")
+                or "application/octet-stream"
+            )
+            desc = f"[Archivo adjunto: {filename} ({mime}) — no se pudo extraer el contenido automáticamente]"
+            others.append({"type": "text", "text": desc})
             continue
 
         h = _hash_content(raw)
