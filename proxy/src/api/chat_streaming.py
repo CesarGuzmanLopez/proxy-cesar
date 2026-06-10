@@ -639,7 +639,10 @@ async def _stream_response_generator(ctx: StreamContext):
             finish_reason: str | None = None
             try:
                 # Send initial message if content is being analyzed (first iteration only)
-                if not _analysis_message_sent and current_idx == 0:
+                # DISABLED: the analysis message injects text before model chunks
+                # which can confuse tool_call assembly in conversations with cached
+                # content (PDFs, images). The message is cosmetic and not essential.
+                if False and not _analysis_message_sent and current_idx == 0:
                     content_counts = _count_content_types(ctx.messages or [])
                     has_content = ctx.images_described > 0 or any(content_counts.values())
                     if has_content:
