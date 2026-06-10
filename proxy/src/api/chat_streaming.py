@@ -41,6 +41,16 @@ from src.service.model_resolver import (
 from src.service.threshold_guard import check_input_threshold
 from src.service.pipeline_trace import PipelineTrace
 from src.adapters.litellm.client import normalise_stream_chunk
+from src.api.chat_stream_helpers import (
+    _accumulate_tool_call_delta,
+    _build_analysis_message,
+    _chunk_to_dict,
+    _classify_file,
+    _count_content_types,
+    _map_stream_domain_error,
+    _openai_error_detail,
+    _should_stream_cache_be_applied,
+)
 from src.api.chat_stream_persistence import (
     _build_final_metadata_chunk,
     _extract_tokens_from_chunks,
@@ -51,69 +61,6 @@ from src.api.chat_stream_persistence import (
 
 
 logger = logging.getLogger(__name__)
-
-
-type _ContentType = str
-
-
-_CONTENT_TYPE_MAP: dict[_ContentType, list[_ContentType]] = {
-    "images": ["image_url", "image"],
-    "pdfs": ["pdf"],
-    "audios": ["audio", "wav", "mp3"],
-    "documents": ["word", "docx", "text", "csv", "excel"],
-}
-
-
-def _classify_file(mime_type: str) -> str:
-    """Classify a file mime_type into a content category."""
-    lower = mime_type.lower()
-    for category, keywords in _CONTENT_TYPE_MAP.items():
-        if category == "images":
-            continue
-        if any(k in lower for k in keywords):
-            return category
-    return "documents"
-
-
-def _count_content_types(messages: list[dict]) -> dict[str, int]:
-    """Count images, PDFs, audios, and other content types in messages."""
-    counts = {"images": 0, "pdfs": 0, "audios": 0, "documents": 0}
-
-    for msg in messages or []:
-        content = msg.get("content", [])
-        if not isinstance(content, list):
-            continue
-
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            item_type = item.get("type", "")
-            if item_type in _CONTENT_TYPE_MAP["images"]:
-                counts["images"] += 1
-            elif item_type == "file":
-                mime_type = item.get("file", {}).get("mime_type", "")
-                counts[_classify_file(mime_type)] += 1
-
-    return counts
-
-
-def _build_analysis_message(counts: dict[str, int], images_described: int) -> str:
-    """Build analysis message based on content types being processed."""
-    parts = []
-
-    if images_described > 0:
-        parts.append(f"imagen{'s' if images_described > 1 else ''}")
-    if counts.get("pdfs", 0) > 0:
-        parts.append(f"PDF{'s' if counts['pdfs'] > 1 else ''}")
-    if counts.get("audios", 0) > 0:
-        parts.append(f"audio{'s' if counts['audios'] > 1 else ''}")
-    if counts.get("documents", 0) > 0:
-        parts.append(f"documento{'s' if counts['documents'] > 1 else ''}")
-
-    if not parts:
-        return "Procesando contenido..."
-
-    return f"Analizando {', '.join(parts)}..."
 
 
 async def _handle_streaming(ctx: StreamingRequestContext):
@@ -585,16 +532,6 @@ async def _handle_streaming_with_db(
     return _streaming_response
 
 
-def _chunk_to_dict(chunk) -> dict:
-    """Convert a streaming chunk to a dict (single serialization, no string intermediate)."""
-    try:
-        return chunk.model_dump(exclude_none=False)
-    except (AttributeError, TypeError):
-        try:
-            return dict(chunk)
-        except Exception:
-            return {}
-
 
 async def _stream_response_generator(ctx: StreamContext):
     """SSE streaming: forward chunks, persist turn on success, append metadata.
@@ -795,18 +732,26 @@ async def _stream_response_generator(ctx: StreamContext):
                     # Strip null values from delta to prevent clients from
                     # misinterpreting e.g. "tool_calls": null in finish chunks.
                     for _choice in chunk_dict.get("choices", []):
-                        if isinstance(_choice, dict) and "delta" in _choice:
-                            _delta = _choice["delta"]
+                        if isinstance(_choice, dict):
+                            # Clean delta
+                            _delta = _choice.get("delta")
                             if isinstance(_delta, dict):
                                 _choice["delta"] = {k: v for k, v in _delta.items() if v is not None}
-                            # Also strip null from tool_calls entries
-                            _tc_list = _choice["delta"].get("tool_calls")
+                            # Clean tool_calls entries inside delta
+                            _tc_list = _choice.get("delta", {}).get("tool_calls")
                             if isinstance(_tc_list, list):
                                 for _tc in _tc_list:
                                     if isinstance(_tc, dict):
                                         _fn = _tc.get("function")
                                         if isinstance(_fn, dict):
                                             _tc["function"] = {k: v for k, v in _fn.items() if v is not None}
+                            # Clean choice-level nulls (logprobs, finish_reason kept)
+                            _choice.pop("logprobs", None)
+                            _choice.pop("provider_specific_fields", None)
+                    # Clean top-level null fields (keep required OpenAI fields)
+                    for _null_field in ("system_fingerprint", "provider_specific_fields",
+                                       "citations", "service_tier"):
+                        chunk_dict.pop(_null_field, None)
 
                     # Diagnostic: log the finish_reason and tool_calls in the chunk
                     _chunk_fr = chunk_dict.get("choices", [{}])[0].get("finish_reason")
@@ -1146,66 +1091,3 @@ async def _stream_response_generator(ctx: StreamContext):
                 logger.debug("stream_db_close_finally_error err=%s", exc)
 
 
-def _should_stream_cache_be_applied(ctx: StreamContext) -> bool:
-    """feature check if cache optimization was applied for the streaming path."""
-    if not ctx.provider:
-        return False
-    from src.adapters.cache.provider_cache import should_apply_cache_control
-
-    # Cache provider derived from physical model prefix, not YAML provider field.
-    # Only Anthropic models (anthropic/ prefix) get cache_control breakpoints.
-    if ctx.physical_model and "/" in ctx.physical_model:
-        model_prefix = ctx.physical_model.split("/")[0].lower()
-        if model_prefix in ("anthropic",):
-            return should_apply_cache_control("anthropic")
-    return False
-
-
-def _map_stream_domain_error(error_msg: str) -> tuple[int, dict]:
-    """Map domain error ValueError messages to OpenAI-compatible error detail for streaming path."""
-    if error_msg.startswith("AllModelsFailed:"):
-        return 503, _openai_error_detail("All physical models in the fallback chain failed.", "server_error")
-    if error_msg.startswith("ContextTooLargeForAllModels:"):
-        return 400, _openai_error_detail(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
-    if error_msg.startswith("ContextUnusable:"):
-        return 400, _openai_error_detail(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
-    if error_msg.startswith("InputExceedsThreshold:"):
-        return 400, _openai_error_detail(error_msg.split(":", 1)[1].strip(), "context_length_exceeded")
-    if error_msg.startswith("ParallelToolsNotSupported:"):
-        return 400, _openai_error_detail("Parallel tool calls are not supported by any physical model.", "unsupported_parameters")
-    return 502, _openai_error_detail(str(error_msg), "server_error")
-
-
-def _accumulate_tool_call_delta(tcd, tool_calls_by_index: dict[int, dict]) -> None:
-    """Accumulate a single tool_call delta into the running index map."""
-    idx = getattr(tcd, "index", None) or 0
-    if idx not in tool_calls_by_index:
-        tool_calls_by_index[idx] = {
-            "id": getattr(tcd, "id", "") or "",
-            "type": "function",
-            "function": {"name": "", "arguments_parts": []},
-        }
-    entry = tool_calls_by_index[idx]
-    tc_id = getattr(tcd, "id", None)
-    if tc_id:
-        entry["id"] = tc_id
-    func = getattr(tcd, "function", None)
-    if func:
-        func_name = getattr(func, "name", None)
-        if func_name:
-            entry["function"]["name"] += func_name
-        func_args = getattr(func, "arguments", None)
-        if func_args:
-            entry["function"]["arguments_parts"].append(func_args)
-
-
-def _openai_error_detail(message: str, code: str) -> dict:
-    """Build OpenAI-compatible error detail dict."""
-    return {
-        "error": {
-            "message": message,
-            "type": "invalid_request_error",
-            "param": None,
-            "code": code,
-        },
-    }

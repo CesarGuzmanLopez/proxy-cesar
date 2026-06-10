@@ -81,9 +81,9 @@ def _build_history_from_turns(conv: Conversation) -> list[dict]:
     return history
 
 
-def _extract_system_contents(messages: list[dict]) -> set:
+def _extract_system_contents(messages: list[dict]) -> set[tuple[str, str | tuple[str, ...]]]:
     """Extract system prompt contents for deduplication."""
-    contents: set = set()
+    contents: set[tuple[str, str | tuple[str, ...]]] = set()
     for m in messages:
         if m.get("role") != "system":
             continue
@@ -98,7 +98,7 @@ def _extract_system_contents(messages: list[dict]) -> set:
     return contents
 
 
-def _deduplicate_system_prompts(history: list[dict], to_remove: set) -> list[dict]:
+def _deduplicate_system_prompts(history: list[dict], to_remove: set[tuple[str, str | tuple[str, ...]]]) -> list[dict]:
     """Remove system prompts whose content matches the dedup set."""
     if not to_remove:
         return history

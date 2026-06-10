@@ -93,8 +93,8 @@ class SaveContext:
     session_caps: SessionCapabilities
     tools: list[dict] | None
     tool_choice: str | dict | None
-    tools_filter: dict
-    compatibility: dict = field(default_factory=dict)
+    tools_filter: dict[str, object]
+    compatibility: dict[str, object] = field(default_factory=dict)
     images_described: int = 0
     images_described_by: str | None = None
     router_suggestion: dict | None = None
@@ -152,7 +152,7 @@ class ChatResult:
     conversation_id: str
     pseudo_model: str
     physical_model: str
-    response: dict
+    response: dict[str, object]
     fallback_info: FallbackInfo
     is_new_conversation: bool
     affinity_maintained: bool

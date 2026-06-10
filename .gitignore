@@ -45,3 +45,4 @@ proxy/coverage.xml
 coverage.xml
 .test_env
 testeo/
+dump.rdb

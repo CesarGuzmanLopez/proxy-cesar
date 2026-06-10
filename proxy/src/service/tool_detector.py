@@ -16,8 +16,9 @@ import json
 import logging
 import re
 
-import fitz  # PyMuPDF — mandatory for PDF text extraction
 import httpx
+
+from src.service.file_extractors import _try_extract_pdf_text, _try_extract_docx_text, _try_extract_pptx_text, _try_extract_xlsx_text
 
 from src.config.constants import BLOB_STORAGE_TTL_SECONDS
 
@@ -431,112 +432,6 @@ async def _transcribe_audio(raw_data: str, config) -> str:
         return ""
 
 
-async def _try_extract_pdf_text(base64_data: str) -> str:
-    """Extract text from a base64-encoded PDF using PyMuPDF (offloaded to thread pool).
-
-    Returns a JSON structure with per-page details:
-      - Page number and content type (text / blank / image_only / mixed)
-      - Text preview (up to 2000 chars per page)
-      - Embedded image count
-      - Per-page notes (blank, image-only, truncation)
-    Plus document-level statistics (total pages, blank pages, image-only pages, etc.).
-
-    The JSON format allows the LLM to understand document structure, identify
-    which pages contain relevant information, and detect blank or image-only pages.
-    """
-
-    _PER_PAGE_TEXT_MAX = 4000
-    _MAX_DETAILED_PAGES = 100
-
-    def _sync_extract() -> str:
-        try:
-            pdf_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            page_count = len(doc)
-            size_kb = len(pdf_bytes) // 1024
-
-            pages: list[dict] = []
-            pages_with_text = 0
-            pages_blank = 0
-            pages_image_only = 0
-            total_chars = 0
-
-            for i, page in enumerate(doc):
-                if i >= _MAX_DETAILED_PAGES:
-                    break
-                page_num = i  # 0-indexed (PyMuPDF convention)
-                text = page.get_text().strip()
-                images = page.get_images()
-                has_images = len(images) > 0
-                char_count = len(text)
-                total_chars += char_count
-
-                if not text and not has_images:
-                    page_type = "blank"
-                    pages_blank += 1
-                elif not text and has_images:
-                    page_type = "image_only"
-                    pages_image_only += 1
-                elif text and not has_images:
-                    page_type = "text"
-                    pages_with_text += 1
-                else:
-                    page_type = "mixed"
-                    pages_with_text += 1
-
-                entry: dict = {"page": page_num, "type": page_type}
-
-                if text:
-                    if char_count <= _PER_PAGE_TEXT_MAX:
-                        entry["text_preview"] = text
-                    else:
-                        entry["text_preview"] = text[:_PER_PAGE_TEXT_MAX]
-                        entry["note"] = (
-                            f"Text truncated to first {_PER_PAGE_TEXT_MAX} chars "
-                            f"(page has {char_count} total)"
-                        )
-                if has_images:
-                    entry["image_count"] = len(images)
-
-                if page_type == "blank":
-                    entry["note"] = "No visible text or images on this page"
-                elif page_type == "image_only":
-                    entry["note"] = (
-                        f"Contains {len(images)} embedded image(s) but no "
-                        "extractable text; may require OCR"
-                    )
-
-                pages.append(entry)
-
-            doc.close()
-
-            remaining_pages = page_count - min(page_count, _MAX_DETAILED_PAGES)
-
-            result = {
-                "document_type": "PDF",
-                "total_pages": page_count,
-                "size_kb": size_kb,
-                "extraction_method": "PyMuPDF",
-                "statistics": {
-                    "pages_with_text": pages_with_text,
-                    "blank_pages": pages_blank,
-                    "image_only_pages": pages_image_only,
-                    "total_extracted_chars": total_chars,
-                    "detailed_pages_shown": len(pages),
-                    "pages_not_shown": remaining_pages,
-                },
-                "pages": pages,
-            }
-            return json.dumps(result, indent=2, ensure_ascii=False)
-        except Exception as exc:
-            return json.dumps({
-                "error": f"PDF could not parse: {str(exc)[:200]}",
-            })
-
-    return await asyncio.to_thread(_sync_extract)
-
-
-async def _try_extract_docx_text(base64_data: str) -> str:
     """Extract text from a base64-encoded DOCX file (offloaded to thread pool).
 
     Returns a JSON structure with document-level metadata, paragraph/table
@@ -623,100 +518,6 @@ async def _try_extract_docx_text(base64_data: str) -> str:
     return await asyncio.to_thread(_sync_extract)
 
 
-async def _try_extract_pptx_text(base64_data: str) -> str:
-    """Extract text from a base64-encoded PPTX file (offloaded to thread pool).
-
-    Returns a JSON structure with per-slide detail so the model can understand
-    the presentation structure, identify which slides have content, and decide
-    whether to use its own tools.
-    """
-
-    _SLIDE_TEXT_MAX = 4000
-    _MAX_DETAILED_SLIDES = 100
-
-    def _sync_extract() -> str:
-        try:
-            from pptx import Presentation
-            from io import BytesIO
-
-            pptx_bytes = base64.b64decode(base64_data.split(",", 1)[-1].strip())
-            prs = Presentation(BytesIO(pptx_bytes))
-            size_kb = len(pptx_bytes) // 1024
-            total_slides = len(prs.slides)
-
-            slides: list[dict] = []
-            slides_with_text = 0
-            slides_empty = 0
-            total_chars = 0
-
-            for i, slide in enumerate(prs.slides):
-                if i >= _MAX_DETAILED_SLIDES:
-                    break
-                slide_num = i + 1
-                slide_parts: list[str] = []
-                has_table = False
-                for shape in slide.shapes:
-                    if shape.has_text_frame:
-                        for para in shape.text_frame.paragraphs:
-                            text = para.text.strip()
-                            if text:
-                                slide_parts.append(text)
-                    if shape.has_table:
-                        has_table = True
-                        for row in shape.table.rows:
-                            row_text = [cell.text.strip() for cell in row.cells]
-                            slide_parts.append(" | ".join(row_text))
-                slide_text = "\n".join(slide_parts).strip()
-                char_count = len(slide_text)
-                total_chars += char_count
-
-                if not slide_text:
-                    slides_empty += 1
-                    slides.append({
-                        "slide": slide_num,
-                        "has_text": False,
-                        "note": "Empty slide (no extractable text)",
-                    })
-                else:
-                    slides_with_text += 1
-                    entry: dict = {"slide": slide_num, "has_text": True}
-                    if char_count <= _SLIDE_TEXT_MAX:
-                        entry["text_preview"] = slide_text
-                    else:
-                        entry["text_preview"] = slide_text[:_SLIDE_TEXT_MAX]
-                        entry["note"] = (
-                            f"Text truncated to first {_SLIDE_TEXT_MAX} chars "
-                            f"(slide has {char_count} total)"
-                        )
-                    if has_table:
-                        entry["has_table"] = True
-                    slides.append(entry)
-
-            remaining = total_slides - min(total_slides, _MAX_DETAILED_SLIDES)
-            result = {
-                "document_type": "PPTX",
-                "total_slides": total_slides,
-                "size_kb": size_kb,
-                "extraction_method": "python-pptx",
-                "statistics": {
-                    "slides_with_text": slides_with_text,
-                    "empty_slides": slides_empty,
-                    "total_extracted_chars": total_chars,
-                    "detailed_slides_shown": len(slides),
-                    "slides_not_shown": remaining,
-                },
-                "slides": slides,
-            }
-            return json.dumps(result, indent=2, ensure_ascii=False)
-        except ImportError:
-            return json.dumps({"error": "PPTX: python-pptx library not available"})
-        except Exception as exc:
-            return json.dumps({"error": f"PPTX could not parse: {str(exc)[:200]}"})
-
-    return await asyncio.to_thread(_sync_extract)
-
-
-async def _try_extract_xlsx_text(base64_data: str) -> str:
     """Extract text from a base64-encoded XLSX file (offloaded to thread pool).
 
     Returns a JSON structure with per-sheet detail so the model can understand
@@ -994,17 +795,17 @@ _EXTRACTION_LABELS = {
 
 
 def _determine_doc_extraction(mime: str) -> str:
-    """Determine extraction method label based on MIME type."""
-    mime_lower = mime.lower()
-    if "pdf" in mime_lower:
-        return "PyMuPDF (Python)"
-    if any(v in mime_lower for v in ("wordprocessingml", "word", "docx", "msword", "opendocument")):
-        return "python-docx (Python)"
-    if any(v in mime_lower for v in ("spreadsheet", "excel", "xls", "xlsx", "csv", "ods")):
-        return "openpyxl (Python)"
-    if any(v in mime_lower for v in ("presentation", "powerpoint", "ppt", "pptx")):
-        return "python-pptx (Python)"
-    return "text decode (UTF-8)"
+    """Determine the extraction method based on MIME type."""
+    lower = mime.lower()
+    if "pdf" in lower:
+        return "pdf"
+    if "word" in lower or "doc" in lower:
+        return "docx"
+    if "presentation" in lower or "ppt" in lower:
+        return "pptx"
+    if "excel" in lower or "xls" in lower or "spreadsheet" in lower or "csv" in lower:
+        return "xlsx"
+    return "text"
 
 
 def _build_blob_output(others, images, descs, audios, aresults, files, fresults):
