@@ -767,7 +767,7 @@ async def call_with_fallback(
         # some providers (Xiaomi/MiMo) reject delegated content with
         # "Param Incorrect". Skip the primary model if it can't handle
         # the content directly — let it fall through to models that can.
-        if turn_caps and valkey_client:
+        if turn_caps:
             delegation = validate_physical_model_content(turn_caps, phys)
             if delegation:
                 if idx == start_index:
@@ -785,10 +785,11 @@ async def call_with_fallback(
                     "content_fallback_delegation idx=%d model=%s action=%s",
                     idx, phys.model, delegation.get("action"),
                 )
-                from src.service.tool_detector import replace_base64_with_blob_refs
-                ordered_messages, _ = await replace_base64_with_blob_refs(  # type: ignore[assignment]  # justification: replace_base64_with_blob_refs return type annotation returns list[dict]; tuple unpacking pattern from prior API; compatible at runtime
-                    ordered_messages, conversation_id, valkey_client, config,
-                )
+                if valkey_client:
+                    from src.service.tool_detector import replace_base64_with_blob_refs
+                    ordered_messages, _ = await replace_base64_with_blob_refs(
+                        ordered_messages, conversation_id, valkey_client, config,
+                    )
 
         try:
             response, skip_reason = await _try_physical_model(
