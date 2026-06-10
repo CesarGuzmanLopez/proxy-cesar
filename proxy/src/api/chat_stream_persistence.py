@@ -446,11 +446,21 @@ def _extract_tokens_from_chunks(
         _response_dict["model"] = response_model
     _response_dict["object"] = "chat.completion"
 
+    # Extract the actual finish_reason from the model response (not hardcoded)
+    _finish_reason = "stop"
+    if last_chunk is not None:
+        try:
+            _fr = last_chunk.choices[0].finish_reason
+            if _fr:
+                _finish_reason = _fr
+        except (AttributeError, IndexError):
+            pass
+
     _message: dict[str, object] = {"content": accumulated_content or ""}
     if tool_calls:
         _message["tool_calls"] = tool_calls
     _response_dict["choices"] = [
-        {"message": _message, "finish_reason": "stop"}
+        {"message": _message, "finish_reason": _finish_reason}
     ]
     if _usage_dict:
         _response_dict["usage"] = _usage_dict
