@@ -506,7 +506,8 @@ def _extract_usage_dict_from_chunk(chunk) -> dict:
 
 
 def _build_final_metadata_chunk(
-    ctx: StreamContext, conv, session_caps, input_tokens: int, output_tokens: int
+    ctx: StreamContext, conv, session_caps, input_tokens: int, output_tokens: int,
+    finish_reason: str = "stop",
 ) -> dict:
     """Build the final SSE chunk with complete proxy_metadata."""
     final_context_tokens = (
@@ -537,6 +538,6 @@ def _build_final_metadata_chunk(
     return {
         "id": f"chatcmpl-{ctx.conversation_id[:12]}",
         "object": "chat.completion.chunk",
-        "choices": [{"delta": {}, "finish_reason": "stop"}],
+        "choices": [{"delta": {}, "finish_reason": finish_reason}],
         "proxy_metadata": metadata,
     }

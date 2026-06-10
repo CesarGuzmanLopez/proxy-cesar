@@ -1035,7 +1035,8 @@ async def _stream_response_generator(ctx: StreamContext):
         # Build and send final metadata chunk with fallback for json.dumps failure
         try:
             final_chunk = _build_final_metadata_chunk(
-                ctx, conv, session_caps, input_tokens, output_tokens
+                ctx, conv, session_caps, input_tokens, output_tokens,
+                finish_reason=finish_reason or "stop",
             )
             final_json = json.dumps(final_chunk)
             logger.info(
