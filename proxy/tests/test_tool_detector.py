@@ -292,17 +292,13 @@ class TestReplaceBase64WithBlobRefs:
         assert "A screenshot" in str(text_parts[1]["text"])
 
     @pytest.mark.asyncio
-    async def test_valkey_none_converts_content_anyway(self):
-        """Without valkey, file/image parts are still converted to text to avoid provider errors."""
+    async def test_valkey_none_raises_error(self):
+        """Without valkey, replace_base64_with_blob_refs raises ConnectionError."""
         messages = [_make_base64_image_msg()]
-        result = await replace_base64_with_blob_refs(
-            messages, conversation_id="test", valkey=None, config=None
-        )
-        assert len(result) == 1
-        content = result[0].get("content", "")
-        # Even without valkey, the content should not contain raw image/file parts
-        # It should be plain text (either string or all text-type parts)
-        assert "data:image/" not in (content if isinstance(content, str) else str(content))
+        with pytest.raises(ConnectionError, match="Valkey is REQUIRED"):
+            await replace_base64_with_blob_refs(
+                messages, conversation_id="test", valkey=None, config=None
+            )
 
     @pytest.mark.asyncio
     async def test_non_user_messages_unchanged(self):

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """Host to bind the server. Use '0.0.0.0' behind Nginx/Caddy reverse proxy."""
     proxy_port: int = 9110
     database_url: str = "sqlite+aiosqlite:///./proxy.db"
-    valkey_url: str = "valkey://localhost:6379"
+    valkey_url: str = "valkey://localhost:6380"
 
     # feature Auth
     proxy_api_key: str = ""

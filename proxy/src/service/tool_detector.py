@@ -1038,15 +1038,14 @@ async def _process_msg_blobs(
     if not isinstance(content, list):
         return [msg]
 
-    # Pass 1: classify and store (skip storage if no valkey)
+    # Pass 1: classify and store
     user_text, image_blobs, audio_blobs, file_blobs, other_parts = await _classify_content_parts(content)
-    if valkey is not None:
-        store_tasks = [
-            _store_blob_if_missing(valkey, f"{prefix}:{h}", r)
-            for h, r, _, _, _ in image_blobs + audio_blobs + file_blobs
-        ]
-        if store_tasks:
-            await asyncio.gather(*store_tasks)
+    store_tasks = [
+        _store_blob_if_missing(valkey, f"{prefix}:{h}", r)
+        for h, r, _, _, _ in image_blobs + audio_blobs + file_blobs
+    ]
+    if store_tasks:
+        await asyncio.gather(*store_tasks)
 
     # Pass 2: describe (skip cache if no valkey)
     descriptions = await _describe_images(
@@ -1181,32 +1180,21 @@ async def replace_base64_with_blob_refs(
     using the user's original prompt for context.
     Real URLs pass through unchanged.
 
-    Even without Valkey, file parts are converted to text to prevent
-    provider errors (Xiaomi rejects type:file in messages).
+    Raises:
+        ConnectionError: If Valkey is unavailable (required for content delegation).
     """
+    if valkey is None:
+        raise ConnectionError(
+            "Valkey is REQUIRED for content delegation (PDF, images, files). "
+            "Ensure Valkey/Redis is running and VALKEY_URL is configured correctly."
+        )
     prefix = f"blob:{conversation_id or 'anon'}"
     results: list[dict[str, object]] = []
     for msg in messages:
         if msg.get("role") != "user":
             results.append(msg)
         else:
-            try:
-                results.extend(await _process_msg_blobs(msg, prefix, valkey, config))
-            except Exception:
-                # If processing fails (e.g. no valkey, no config), convert
-                # file parts to basic text to avoid provider errors
-                msg_content = msg.get("content", "")
-                if isinstance(msg_content, list):
-                    text_parts = []
-                    for part in msg_content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text_parts.append(part.get("text", ""))
-                        elif isinstance(part, dict):
-                            # Non-text part: create a basic placeholder
-                            text_parts.append(f"[Attachment: {part.get('type', 'file')}]")
-                    results.append({**msg, "content": "\n".join(text_parts)})
-                else:
-                    results.append(msg)
+            results.extend(await _process_msg_blobs(msg, prefix, valkey, config))
     return results
 
 

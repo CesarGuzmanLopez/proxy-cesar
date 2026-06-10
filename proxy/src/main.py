@@ -120,10 +120,16 @@ async def lifespan(app: FastAPI):
     # FASE 3: Compaction Orchestrator
     app.state.compaction_orchestrator = CompactionOrchestrator()
 
-    from src.adapters.cache.valkey_affinity import ValkeyAffinityAdapter as _ValkeyAffinityAdapter
+    # ── Valkey (REQUIRED) ──────────────────────────────────────────────────
+    from src.adapters.cache.valkey_affinity import (
+        ValkeyAffinityAdapter as _ValkeyAffinityAdapter,
+        setup_valkey as _setup_valkey,
+    )
 
-    app.state.valkey = None
-    app.state.affinity = _ValkeyAffinityAdapter()
+    valkey_client = await _setup_valkey(settings)
+    app.state.valkey = valkey_client
+    app.state.affinity = _ValkeyAffinityAdapter(valkey_client)
+    logger.info("valkey_ready — content delegation and affinity enabled")
 
     # LiteLLM
     setup_litellm(settings)
