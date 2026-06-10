@@ -786,6 +786,18 @@ async def _stream_response_generator(ctx: StreamContext):
                     # The normalise_stream_chunk is intentionally a no-op for this reason.
                     normalise_stream_chunk(chunk_dict)
 
+                    # Diagnostic: log the finish_reason and tool_calls in the chunk
+                    _chunk_fr = chunk_dict.get("choices", [{}])[0].get("finish_reason")
+                    _chunk_tc = chunk_dict.get("choices", [{}])[0].get("delta", {}).get("tool_calls")
+                    if _chunk_fr or _chunk_tc:
+                        logger.info(
+                            "stream_sse_chunk conv=%s finish=%s tc_count=%s tc_names=%s",
+                            ctx.conversation_id[:12],
+                            _chunk_fr or "null",
+                            len(_chunk_tc) if _chunk_tc else 0,
+                            [tc.get("function", {}).get("name", "?") for tc in _chunk_tc] if _chunk_tc else "none",
+                        )
+
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
 
                     if fr:
