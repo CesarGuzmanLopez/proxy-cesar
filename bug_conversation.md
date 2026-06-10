@@ -1,10 +1,112 @@
-# Bug: Conversaciones largas con PDF + imagen fallan (tool_calls sin texto)
+# Bug: Conversaciones con PDF/imágenes no ejecutan tool_calls
 
 ## Resumen
 
-En conversaciones que contienen PDFs extraídos, imágenes y múltiples turnos de interacción, el modelo `mimo-v2.5` responde únicamente con `tool_calls` (web_search) sin generar texto (`content_len=0`, `accumulated_len=0`). opencode recibe las tool_calls pero **no envía un follow-up request** con los resultados de las herramientas.
+En conversaciones que contienen PDFs extraídos, imágenes o archivos adjuntos, el modelo responde correctamente con `tool_calls` (ej: `web_search`) pero **opencode no ejecuta las herramientas**. El usuario ve la respuesta como vacía o bloqueada.
 
-En conversaciones **nuevas y simples**, el flujo completo funciona correctamente: modelo llama tool → opencode ejecuta → envía resultados → modelo genera texto.
+**Causa raíz:** El proxy inyectaba un chunk SSE sintético (`stream_analysis_msg` — "Analizando contenido...") ANTES de los chunks del modelo. Este chunk falso con `"delta": {"content": "..."}` **rompía el ensamblado de tool_calls** en el cliente (opencode), que no podía parsear correctamente los deltas de tool_call después de recibir un chunk de contenido no-tool_call.
+
+## Síntomas
+
+- Solo afecta conversaciones con PDFs, imágenes o archivos extraídos
+- Conversaciones nuevas y simples funcionan correctamente
+- El modelo genera tool_calls válidos (confirmado en logs)
+- `finish_reason=tool_calls` se envía correctamente
+- opencode NO envía follow-up con resultados de herramientas
+- El problema empeora con el tiempo (más archivos = más probabilidad de fallo)
+
+## Causa raíz
+
+### `stream_analysis_msg` — el chunk fantasma
+
+En `_stream_response_generator()` (chat_streaming.py:642-661), cuando la conversación tiene contenido procesado (PDFs, imágenes), el proxy inyectaba un chunk SSE ANTES de empezar el streaming del modelo:
+
+```python
+# chat_streaming.py ~line 642
+if not _analysis_message_sent and current_idx == 0:
+    content_counts = _count_content_types(ctx.messages or [])
+    has_content = ctx.images_described > 0 or any(content_counts.values())
+    if has_content:
+        analysis_msg = _build_analysis_message(content_counts, ctx.images_described)
+        analysis_chunk = {
+            "id": f"chatcmpl-{ctx.conversation_id[:12]}",
+            "object": "chat.completion.chunk",
+            "choices": [{"delta": {"content": analysis_msg}, "finish_reason": None}],
+        }
+        yield f"data: {json.dumps(analysis_chunk)}\n\n"
+```
+
+Este chunk tiene `"delta": {"content": "Analizando 1 imagen, 1 PDF..."}` — es un chunk de **contenido de texto**, no un delta de tool_call. Al insertarse antes de los chunks reales del modelo, el cliente (opencode) recibe:
+
+```
+data: {"delta": {"content": "Analizando contenido..."}}    ← CHUNK FANTASMA
+data: {"delta": {"reasoning_content": "..."}}              ← chunks reales del modelo
+data: {"delta": {"tool_calls": [{"index": 0, ...}]}}       ← tool_call chunks
+data: {"finish_reason": "tool_calls"}                       ← finish
+```
+
+El cliente intenta ensamblar los tool_calls pero el chunk inicial de contenido interfiere con el parser SSE.
+
+### ¿Por qué solo con PDFs/imágenes?
+
+`_count_content_types()` detecta imágenes (`image_url`) y archivos PDF en los mensajes. Si encuentra alguno, `has_content=True` y se inyecta el mensaje de análisis. En conversaciones sin archivos adjuntos, `has_content=False` y no hay inyección → el flujo funciona.
+
+### Efectos colaterales
+
+Este bug no solo rompía tool_calls. Cualquier flujo que dependa del orden correcto de chunks SSE podía verse afectado:
+- Respuestas con `reasoning_content` (thinking) podían mostrarse incorrectamente
+- Clientes que esperan un formato específico de chunk podían fallar
+- El chunk falso agregaba latencia innecesaria al inicio del streaming
+
+## Solución
+
+**Deshabilitar permanentemente la inyección de `stream_analysis_msg`.**
+
+El mensaje de análisis era puramente cosmético ("Analizando 1 imagen, 1 PDF...") y no aportaba valor funcional. Los clientes modernos (opencode, Continue) muestran sus propios indicadores de progreso.
+
+```python
+# chat_streaming.py ~line 642
+# NOTE: Analysis message injection is intentionally disabled.
+# Injecting synthetic SSE chunks BEFORE the model's stream corrupts
+# tool_call assembly in clients like opencode.
+if False and not _analysis_message_sent and current_idx == 0:
+```
+
+**Commit:** `e7c27ec` y posteriores.
+
+## Bugs secundarios encontrados y solucionados
+
+Durante la investigación se encontraron y corrigieron varios bugs adicionales:
+
+### ✅ 1. Crash en tool_call sin `id` (TypeError: 'NoneType' object is not subscriptable)
+- **Síntoma:** El stream crasheaba cuando un chunk de continuación de tool_call tenía `id: null`
+- **Fix:** `_id_val = tc.get("id") or ""` en vez de `tc.get('id','')[:8]`
+- **Commit:** `cbb3faf`
+
+### ✅ 2. Valkey no disponible (causa de fallos anteriores)
+- **Síntoma:** `replace_base64_with_blob_refs()` retornaba mensajes sin cambios cuando `valkey=None`
+- **Fix:** Valkey es hard requirement; `setup_valkey` conecta realmente
+- **Commit:** `4a38921`
+
+### ✅ 3. `finish_reason` hardcodeado a "stop"
+- **Síntoma:** `_extract_tokens_from_chunks()` siempre ponía `finish_reason="stop"`
+- **Fix:** Extraer `finish_reason` real del último chunk del modelo
+- **Commit:** `5515e18`
+
+### ✅ 4. Texto extraído de PDF repetido 138KB por request
+- **Síntoma:** El PDF se re-extraía completo en cada request, saturando el contexto
+- **Fix:** Shorten en cache hit — referencia corta `[File previously extracted — NKB stored in cache.]`
+- **Commit:** `e7a6efc`, `9db102c`
+
+### ✅ 5. `finish_reason` en metadata chunk
+- **Síntoma:** El chunk de metadata siempre tenía `finish_reason="stop"` hardcodeado
+- **Fix:** Usar el `finish_reason` real del modelo
+- **Commit:** `4e97eed`
+
+### ✅ 6. Null fields en chunks SSE
+- **Síntoma:** `exclude_none=False` producía `"tool_calls": null` que podía confundir parsers
+- **Fix:** Strip null values del delta antes de enviar
+- **Commit:** `030ffa3`
 
 ## Servidor y conexión
 
@@ -14,139 +116,35 @@ En conversaciones **nuevas y simples**, el flujo completo funciona correctamente
 | SSH | `ssh personal` |
 | Proxy path | `/opt/proxy-cesar/proxy/` |
 | Logs | `/var/log/proxy-cesar/proxy.log` |
-| Reinicio | `ssh personal 'systemctl restart proxy-cesar'` |
-| Git deploy | `ssh personal 'cd /opt/proxy-cesar && git pull origin main && systemctl restart proxy-cesar'` |
-| Valkey | Puerto 6380 (iniciado manualmente con `redis-server --port 6380 --daemonize yes`) |
-| Conexión Valkey | `valkey://localhost:6379` (configurado desde .env) |
+| Reinicio | `ssh personal 'sudo systemctl restart proxy-cesar'` |
+| Git deploy | `ssh personal 'cd /opt/proxy-cesar && git pull origin main && sudo systemctl restart proxy-cesar'` |
+| Valkey | Puerto 6380 |
+| Conexión Valkey | `valkey://localhost:6379` |
 
-## Archivos relacionados
+## Archivos modificados
 
-| Archivo | Rol |
-|---------|-----|
-| `proxy/src/api/chat_streaming.py` | SSE streaming, ensamblado de tool_calls, logs de chunks |
-| `proxy/src/api/chat_stream_persistence.py` | `_extract_tokens_from_chunks` — ensamblado de respuesta final |
-| `proxy/src/service/chat_fallback.py` | `call_with_fallback` — lógica de reintentos y ban de modelos |
-| `proxy/src/service/tool_detector.py` | Delegación de contenido PDF/imagen/audio, extracción de texto |
-| `proxy/src/service/compatibility.py` | `validate_physical_model_content` — decide si delegar |
-| `proxy/src/service/chat_service.py` | Orchestración: content delegation + build de mensajes |
-| `proxy/src/adapters/cache/valkey_affinity.py` | Setup de Valkey, adapter de afinidad |
-| `proxy/src/main.py` | Startup, setup de Valkey como hard requirement |
-| `proxy/pseudo_models.yaml` | Config de modelos físicos |
+| Archivo | Cambio |
+|---------|--------|
+| `proxy/src/api/chat_streaming.py` | Deshabilitar `stream_analysis_msg`, fix crash null id, strip nulls, metadata finish_reason |
+| `proxy/src/api/chat_stream_persistence.py` | `_extract_tokens_from_chunks` finish_reason real, metadata chunk finish_reason param |
+| `proxy/src/service/tool_detector.py` | Shorten cache hits, Valkey hard requirement |
+| `proxy/src/adapters/cache/valkey_affinity.py` | `setup_valkey` real connection |
+| `proxy/src/main.py` | Valkey hard startup dependency |
+| `proxy/src/api/chat.py` | Tool message diagnostic logging |
 
-## Problemas identificados y soluciones aplicadas
-
-### ✅ 1. Valkey no estaba disponible (CAUSA RAÍZ #1)
-
-**Síntoma:** `replace_base64_with_blob_refs()` retornaba mensajes sin cambios cuando `valkey=None`, dejando `type: file` en los mensajes. Xiaomi (mimo-v2.5) rechazaba con `Param Incorrect`.
-
-**Solución:** 
-- `setup_valkey` ahora conecta realmente a Valkey (antes era no-op)
-- Valkey es hard requirement: el proxy no arranca si Valkey no responde
-- `replace_base64_with_blob_refs` lanza error si valkey=None
-
-### ✅ 2. `finish_reason` hardcodeado a "stop" (BLOG #2)
-
-**Síntoma:** En la respuesta ensamblada, `finish_reason` siempre era `"stop"` aunque el modelo devolviera `"tool_calls"`. opencode recibía `finish_reason="stop"` y no ejecutaba las herramientas.
-
-**Solución:** `_extract_tokens_from_chunks()` ahora extrae el `finish_reason` real del `last_chunk` en lugar de hardcodearlo.
-
-**Archivo:** `proxy/src/api/chat_stream_persistence.py:452`
-
-### ✅ 3. Texto extraído de PDF repetido 138KB en cada request (BLOG #3)
-
-**Síntoma:** opencode reenvía el archivo original en cada request. El proxy re-extráía el PDF completo (138KB) cada vez, saturando el contexto.
-
-**Solución:** Shorten en cache hit — cuando la descripción ya está en Valkey y es >5K chars, se devuelve una referencia corta (`[File previously extracted — 138KB stored in cache.]`).
-
-**Archivo:** `proxy/src/service/tool_detector.py:1269-1275`
-
-### ✅ 4. Content delegation sin Valkey fallaba (BLOG #4)
-
-**Síntoma:** Cuando Valkey no estaba disponible, `replace_base64_with_blob_refs` retornaba mensajes sin cambios. Esto causaba que `type: file` llegara a Xiaomi.
-
-**Solución:** Ahora requiere Valkey obligatoriamente. Si no hay Valkey, lanza `ConnectionError`.
-
-**Archivo:** `proxy/src/service/tool_detector.py:1171-1187`
-
-### ✅ 5. Content delegation para imágenes sin extracción (BLOG #5)
-
-**Síntoma:** Cuando opencode envía un archivo sin `data:` URL (ej: blob URL), el archivo no se procesaba y pasaba como `type: file` raw.
-
-**Solución:** Los archivos sin data: URL se convierten a texto placeholder.
-
-**Archivo:** `proxy/src/service/tool_detector.py:886-900`
-
-## Bugs NO resueltos / En investigación
-
-### 🔴 Bug principal: tool_calls no generan follow-up en conversaciones largas
-
-**Comportamiento observado:**
+## Commits
 
 ```
-Conversación nueva (funciona ✅):
-  Request 1: "que dia empieza el mundial"
-    → model calls web_search
-    → finish=tool_calls → opencode EJECUTA ✅
-    → Request 2 (follow-up con tool results) → model responde con texto ✅
-
-Conversación larga con PDF + imagen (falla ❌):
-  Request: "En terminos generales que dinero recibe"
-    → model calls web_search x2
-    → finish=tool_calls → opencode NO envía follow-up ❌
-    → No hay más requests en los logs
-```
-
-**Lo que sabemos:**
-- El SSE stream envía correctamente las tool_calls (confirmado por `stream_sse_chunk` logs: `idx=0|name=web_search`, `idx=1|name=web_search`)
-- El `finish_reason` es `"tool_calls"` (corregido)
-- La conversación tiene 9 mensajes con un system prompt enorme (~9K tokens)
-- Incluye resultados de web_search de turns anteriores en el system prompt
-- Incluye imágenes (enviadas directamente, delegation=False)
-- opencode NO envía follow-up request (no hay `chat_request_received` posterior)
-
-**Hipótesis:**
-1. opencode podría tener un bug procesando SSE con tool_calls cuando hay content delegado/imágenes
-2. El tamaño del system prompt podría estar causando que opencode ignore las tool_calls
-3. opencode podría esperar un formato diferente en la última chunk SSE
-
-**Próximos pasos:**
-1. [ ] Verificar que la última chunk SSE tiene `finish_reason="tool_calls"` y delta vacío
-2. [ ] Comparar SSE output exacto entre conversación que funciona y la que falla
-3. [ ] Verificar si opencode hace el follow-up request o no
-
-## Logs de diagnóstico disponibles
-
-```
-stream_sse_chunk      → Muestra cada chunk SSE con tool_calls (index, id, name)
-stream_tool_calls_assembled  → Tool_calls ensamblados al final del stream
-stream_response_assembled    → Respuesta final con content_len, finish_reason, tool_calls
-```
-
-## Notas adicionales
-
-- ValeKey corre en puerto 6380, pero la URL configurada apunta a 6379 (ambos responden)
-- Los logs se limpian con: `ssh personal 'truncate -s 0 /var/log/proxy-cesar/proxy.log'`
-- El proxy se despliega automáticamente via GitHub Actions para `main`
-- En personal hay que hacer git pull manual después del push
-- Los `.bak` logs rotados se acumulan en `/var/log/proxy-cesar/`
-
-## Commits relacionados
-
-```
+e7c27ec fix: disable analysis message injection that corrupts tool_call SSE streaming
+f316461 debug: log tool message content details (len, tc_id, preview)
+030ffa3 fix: strip null values from delta in SSE chunks to prevent client misinterpretation
+4e97eed fix: metadata chunk now uses actual model finish_reason instead of hardcoded stop
+00c3ef0 debug: log final metadata chunk (finish_reason and size)
+fed9dfb debug: log raw SSE JSON for tool_call and finish chunks
+cbb3faf fix: handle null tool_call id in SSE diagnostic to prevent stream crash
 962895e debug: log detailed tool_call chunk structure (index, id, name)
-41f021c debug: log exact SSE chunk finish_reason and tool_calls
 5515e18 fix: preserve finish_reason from model response instead of hardcoding 'stop'
 e7a6efc fix: shorten repeated extractions for all media types (files, audio, images)
 9db102c fix: shorten repeated file extractions to prevent context overflow
 4a38921 feat: make Valkey a hard requirement - fail fast if unavailable
-c47c136 fix: convert file parts to text even without Valkey
-8ffe9f5 fix: flatten blob content to string for providers that reject list content
 ```
-
-## Reproducir el bug
-
-1. Tener una conversación larga con PDF extraído + imagen + múltiples tool_calls
-2. Enviar un mensaje de texto simple ("En terminos generales que dinero recibe")
-3. Observar que el modelo responde con tool_calls (web_search) y finish_reason="tool_calls"
-4. opencode NO envía follow-up request con resultados
-5. El usuario ve una respuesta vacía (solo "Procesando contenido...")

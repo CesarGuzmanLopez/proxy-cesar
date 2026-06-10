@@ -638,10 +638,13 @@ async def _stream_response_generator(ctx: StreamContext):
         while True:
             finish_reason: str | None = None
             try:
-                # Send initial message if content is being analyzed (first iteration only)
-                # DISABLED: the analysis message injects text before model chunks
-                # which can confuse tool_call assembly in conversations with cached
-                # content (PDFs, images). The message is cosmetic and not essential.
+                # NOTE: Analysis message injection is intentionally disabled.
+                # Injecting synthetic SSE chunks (e.g. "Analizando contenido...")
+                # BEFORE the model's stream corrupts tool_call assembly in clients
+                # like opencode. This was the root cause of conversations with
+                # PDFs/images failing to execute tool_calls (finish=tool_calls sent
+                # correctly but client couldn't parse tool_call deltas after a
+                # non-tool_call content chunk). See bug_conversation.md for details.
                 if False and not _analysis_message_sent and current_idx == 0:
                     content_counts = _count_content_types(ctx.messages or [])
                     has_content = ctx.images_described > 0 or any(content_counts.values())
