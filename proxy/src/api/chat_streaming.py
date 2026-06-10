@@ -786,6 +786,22 @@ async def _stream_response_generator(ctx: StreamContext):
                     # The normalise_stream_chunk is intentionally a no-op for this reason.
                     normalise_stream_chunk(chunk_dict)
 
+                    # Strip null values from delta to prevent clients from
+                    # misinterpreting e.g. "tool_calls": null in finish chunks.
+                    for _choice in chunk_dict.get("choices", []):
+                        if isinstance(_choice, dict) and "delta" in _choice:
+                            _delta = _choice["delta"]
+                            if isinstance(_delta, dict):
+                                _choice["delta"] = {k: v for k, v in _delta.items() if v is not None}
+                            # Also strip null from tool_calls entries
+                            _tc_list = _choice["delta"].get("tool_calls")
+                            if isinstance(_tc_list, list):
+                                for _tc in _tc_list:
+                                    if isinstance(_tc, dict):
+                                        _fn = _tc.get("function")
+                                        if isinstance(_fn, dict):
+                                            _tc["function"] = {k: v for k, v in _fn.items() if v is not None}
+
                     # Diagnostic: log the finish_reason and tool_calls in the chunk
                     _chunk_fr = chunk_dict.get("choices", [{}])[0].get("finish_reason")
                     _chunk_tc = chunk_dict.get("choices", [{}])[0].get("delta", {}).get("tool_calls")
