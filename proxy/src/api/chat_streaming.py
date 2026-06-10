@@ -930,16 +930,25 @@ async def _stream_response_generator(ctx: StreamContext):
             for _idx in sorted(tool_calls_by_index.keys()):
                 _entry = tool_calls_by_index[_idx]
                 _args = "".join(_entry["function"]["arguments_parts"])
+                _tc_id = _entry.get("id", "")
+                _tc_name = _entry["function"]["name"]
                 assembled.append({
-                    "id": _entry["id"],
+                    "id": _tc_id,
                     "type": "function",
                     "function": {
-                        "name": _entry["function"]["name"],
+                        "name": _tc_name,
                         "arguments": _args,
                     },
                 })
             if assembled:
                 final_tool_calls = assembled
+                logger.info(
+                    "stream_tool_calls_assembled conv=%s finish=%s count=%d calls=%s",
+                    ctx.conversation_id[:12],
+                    finish_reason or "?",
+                    len(assembled),
+                    [tc["function"]["name"] for tc in assembled],
+                )
         input_tokens, output_tokens, response_dict = _extract_tokens_from_chunks(
             last_chunk, accumulated_content, final_tool_calls
         )
@@ -956,14 +965,16 @@ async def _stream_response_generator(ctx: StreamContext):
         _msg = response_dict.get("choices", [{}])[0].get("message", {})
         _content = _msg.get("content") or ""
         _reasoning = _msg.get("reasoning_content") or ""
+        _tc = _msg.get("tool_calls")
         logger.info(
             "stream_response_assembled conv=%s physical=%s "
-            "content_len=%d reasoning_len=%d finish=%s preview=%s",
+            "content_len=%d reasoning_len=%d finish=%s tool_calls=%s preview=%s",
             ctx.conversation_id[:12],
             ctx.physical_model,
             len(_content),
             len(_reasoning),
             response_dict.get("choices", [{}])[0].get("finish_reason", "?"),
+            [tc["function"]["name"] for tc in _tc] if _tc else "none",
             _content[:2000],
         )
 
