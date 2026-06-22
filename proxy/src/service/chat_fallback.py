@@ -772,7 +772,7 @@ async def call_with_fallback(
                     idx, phys.model, delegation.get("action"),
                 )
                 from src.service.tool_detector import replace_base64_with_blob_refs
-                ordered_messages, _ = await replace_base64_with_blob_refs(  # type: ignore[assignment]  # justification: replace_base64_with_blob_refs return type annotation returns list[dict]; tuple unpacking pattern from prior API; compatible at runtime
+                ordered_messages = await replace_base64_with_blob_refs(
                     ordered_messages, conversation_id, valkey_client, config,
                 )
 
