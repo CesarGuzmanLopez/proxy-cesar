@@ -1,0 +1,56 @@
+#!/bin/bash
+# Pre-commit hook: block API keys from being committed
+# Checks for patterns like sk-xxx, api_key=xxx, DEEPSEEK_API_KEY=xxx, etc.
+
+EXIT_CODE=0
+
+# Patterns to block (case-insensitive)
+PATTERNS=(
+    'sk-[a-zA-Z0-9]{20,}'                    # OpenAI/Deepseek style keys
+    '(?i)(api[_-]?key|secret[_-]?key|token)\s*[=:]\s*["\x27]?[a-zA-Z0-9_\-]{20,}'  # Generic API keys
+    '(?i)(DEEPSEEK|OPENAI|GROQ|OPENROUTER|PRUNA|ANTHROPIC|NVIDIA)\s*_API_KEY\s*=\s*["\x27]?sk-'  # Provider keys
+    '(?i)bearer\s+[a-zA-Z0-9_\-]{20,}'      # Bearer tokens
+)
+
+# Files to check
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+
+if [ -z "$CHANGED_FILES" ]; then
+    exit 0
+fi
+
+echo "🔍 Checking for API keys in staged files..."
+
+for FILE in $CHANGED_FILES; do
+    # Skip binary files and lock files
+    case "$FILE" in
+        *.lock|*.bin|*.db|*.sqlite|node_modules/*|.git/*) continue ;;
+    esac
+
+    # Read file content
+    CONTENT=$(git show ":$FILE" 2>/dev/null)
+    if [ -z "$CONTENT" ]; then
+        continue
+    fi
+
+    for PATTERN in "${PATTERNS[@]}"; do
+        MATCHES=$(echo "$CONTENT" | grep -nE "$PATTERN" 2>/dev/null | head -5)
+        if [ -n "$MATCHES" ]; then
+            echo "❌ POTENTIAL API KEY in $FILE:"
+            echo "$MATCHES" | while read LINE; do
+                echo "   $LINE"
+            done
+            EXIT_CODE=1
+        fi
+    done
+done
+
+if [ $EXIT_CODE -eq 1 ]; then
+    echo ""
+    echo "⚠️  API keys detected in staged files!"
+    echo "   If intentional, use: git commit --no-verify"
+    echo "   Or remove the keys before committing."
+    exit 1
+fi
+
+exit 0
