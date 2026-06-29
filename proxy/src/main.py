@@ -80,6 +80,11 @@ async def lifespan(app: FastAPI):
     engine = create_async_engine(
         _db_url,
         echo=False,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=1800,
+        pool_pre_ping=True,
         connect_args={"check_same_thread": False, "timeout": 15} if "sqlite" in _db_url else {},
     )
     # Enable WAL mode for SQLite — allows concurrent reads
