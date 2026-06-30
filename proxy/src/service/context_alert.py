@@ -36,7 +36,7 @@ def get_context_alert(
       60-80%  → moderate (warning + compaction endpoint)
       80-99%  → high (strong warning + compaction endpoint)
       100%+   → unusable (HTTP 400, feature available)
-      None    → none (compactador pseudo-model, no window)
+      None    → none (no context window configured)
 
     Args:
         total_tokens: Current total tokens in the conversation.

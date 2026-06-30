@@ -112,10 +112,9 @@ def _compaction_max_tokens(estimated_input: int, default: int = 12000) -> int:
 
 
 def select_compactor_model(config, total_tokens: int):
-    """Select the compactador model with enough context window for the history.
+    """Select a compactor model with enough context window for the history.
 
-    Uses by_context_window strategy: picks the first physical model whose
-    context_window >= total_tokens. Falls back to the largest available.
+    Looks for a "compactador" pseudo-model in config. Returns None if not found.
 
     Args:
         config: Proxy config with pseudo-model definitions.
@@ -125,20 +124,20 @@ def select_compactor_model(config, total_tokens: int):
         Physical model dict/object with ``.model``, ``.context_window``,
         ``.api_base``, ``.api_key_env``, or ``None`` if no model available.
     """
-    compactador_pm = config.pseudo_models.get("compactador")
-    if not compactador_pm or not compactador_pm.physical_models:
+    compactor_pm = config.pseudo_models.get("compactador")
+    if not compactor_pm or not compactor_pm.physical_models:
         return None
 
-    # Try to find a model with enough context window (skip audio capability models)
-    for phys in compactador_pm.physical_models:
+    # Try to find a model with enough context window (skip audio models)
+    for phys in compactor_pm.physical_models:
         if getattr(phys, "audio", False):
-            continue  # Skip whisper — not a chat model
+            continue
         if phys.context_window and phys.context_window >= total_tokens:
             return phys
 
     # Fall back to the model with the largest context window (skip audio models)
     candidates = [
-        m for m in compactador_pm.physical_models if not getattr(m, "audio", False)
+        m for m in compactor_pm.physical_models if not getattr(m, "audio", False)
     ]
     if not candidates:
         return None
@@ -230,7 +229,7 @@ async def _parse_compactor_response(response) -> tuple[str, int]:
         snapshot_content = response.choices[0].message.content
         snapshot_tokens = getattr(response.usage, "completion_tokens", 0)
 
-    # Strip <think> blocks — the compactador does not need reasoning
+    # Strip <think> blocks — the compactor does not need reasoning
     if snapshot_content and "<think>" in snapshot_content:
         import re
         snapshot_content = re.sub(r"<think>.*?</think>", "", snapshot_content, flags=re.DOTALL).strip()
@@ -283,7 +282,7 @@ async def _run_compaction_sync(
     # ── Estimate safe JSON size budget ───────────────────────────────────
     # JSON serialization overhead is ~2-3x message tokens. We chunk when
     # the JSON string exceeds 80K chars (~20K tokens) to stay well within
-    # the compactador's context window for both input AND output.
+    # the compactor's context window for both input AND output.
     _MAX_JSON_CHUNK_CHARS = 80000
 
     # ── Describe images using any available vision model ──────────────
@@ -453,21 +452,12 @@ async def compact_conversation(
     all_messages.extend(_build_compaction_history(turns))  # type: ignore[arg-type]  # justification: ScalarResult.all() returns Sequence[object]; turns are ConversationTurn at runtime
     total_tokens = conv.total_tokens
 
-    # Select compactador model
+    # Select compactor model (requires a "compactador" pseudo-model in config)
     compactor_phys = select_compactor_model(config, total_tokens)
     if not compactor_phys:
-        compactador_pm = config.pseudo_models.get("compactador")
-        max_window = 0
-        if compactador_pm and compactador_pm.physical_models:
-            max_window = max(
-                (m.context_window or 0)
-                for m in compactador_pm.physical_models
-                if not getattr(m, "audio", False)
-            )
-        # Return domain error
         return Err(HistoryTooLargeForCompactor(
             total_tokens=total_tokens,
-            max_compactor_window=max_window,
+            max_compactor_window=0,
         ))
 
     compactor_model = compactor_phys.model
@@ -495,7 +485,7 @@ async def compact_conversation(
         })
 
     # Synchronous compaction for smaller histories
-    return await _run_compaction_sync(
+    return await _run_compaction_sync(  # type: ignore[return-value]  # CompactionFailed ⊂ union
         conversation_id=conversation_id,
         compactor_model=compactor_model,
         api_base=api_base,

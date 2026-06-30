@@ -28,7 +28,7 @@ def check_input_threshold(
         Err(InputExceedsThreshold) if exceeded and no pre_compaction.
     """
     if input_token_threshold is None:
-        # No limit (e.g., compactador)
+        # No limit configured — always passes
         return Ok(None)
 
     if estimated_tokens > input_token_threshold:

@@ -70,7 +70,7 @@ def test_context_above_100_unusable():
 
 
 def test_context_null_window_none():
-    """No context_window (compactador) → 'none' alert level."""
+    """No context_window configured → 'none' alert level."""
     alert = get_context_alert(
         total_tokens=50000, context_window=None, conversation_id="test-conv"
     )

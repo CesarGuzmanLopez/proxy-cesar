@@ -29,9 +29,9 @@ def test_input_above_threshold_with_pre_compaction():
     assert result.success is True
 
 
-def test_compactador_null_threshold():
-    """compactador (null threshold) → always passes."""
-    result = check_input_threshold("compactador", None, 999999)
+def test_null_threshold_always_passes():
+    """Null threshold → always passes."""
+    result = check_input_threshold("any-model", None, 999999)
     assert result.success is True
 
 

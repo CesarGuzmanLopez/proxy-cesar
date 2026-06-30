@@ -45,7 +45,8 @@ def test_audio_sent_to_model_with_audio_passes():
     """Audio sent to physical model with audio capability → no signal."""
     turn_caps = TurnCapabilities(has_audio=True)
     # Find an audio model
-    for pm_name in ("compactador",):
+    # Find an audio model across all pseudo-models
+    for pm_name in CONFIG.pseudo_models:
         for phys in CONFIG.pseudo_models[pm_name].physical_models:
             if getattr(phys, "audio", False):
                 result = validate_physical_model_content(turn_caps, phys)

@@ -72,7 +72,7 @@ async def test_rate_limiter_disabled_all_requests_pass(rate_limit_client):
 
 async def test_rate_limiter_disabled_different_models_all_pass(rate_limit_client):
     """All pseudo-models pass through when rate limiter is disabled."""
-    for model in ["normal", "flash", "tareas-avanzadas", "compactador"]:
+    for model in ["normal", "flash", "tareas-avanzadas"]:
         response = await rate_limit_client.post(
             "/v1/chat/completions",
             json={"model": model, "messages": [{"role": "user", "content": "hi"}]},

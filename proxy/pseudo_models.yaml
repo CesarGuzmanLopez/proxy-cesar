@@ -245,62 +245,6 @@ pseudo_models:
         note: "Fallback: DeepSeek V4 Flash directo. Rápido, 1M contexto."
     fallback_strategy: sequential
 
-  # ── Compactador (con helpers internos) ────────────────────────────────────
-  compactador:
-    display_name: Compactador
-    description: "Compactación de contexto con delegación de modelos. Puede procesar hasta 3M tokens dividiendo en pedazos según el modelo disponible."
-    input_token_threshold: 3000000
-    context_window: 3000000
-    router_llm:
-      enabled: false
-    image_handling:
-      on_downgrade: auto_describe
-    physical_models:
-      - provider: groq
-        model: groq/qwen/qwen3-32b
-        context_window: 131072
-        vision: false
-        strip_reasoning: true
-        system_prompt: |
-          No reasoning. Do NOT use <think> tags.
-        note: "Primary: Qwen3 32B vía Groq ($0.29/$0.59 por 1M). Barato y rápido."
-      - provider: groq
-        model: groq/openai/gpt-oss-120b
-        context_window: 131072
-        vision: false
-        strip_reasoning: true
-        system_prompt: |
-          No reasoning. Do NOT use <think> tags.
-        note: "Fallback 1: GPT-OSS 120B vía Groq ($0.15/$0.60). Más capaz."
-      - provider: deepseek
-        model: deepseek/deepseek-v4-flash
-        context_window: 1000000
-        openai_tools_compatible: true
-        reasoning_effort: false
-        strip_reasoning: true
-        vision: false
-        note: "Fallback 2: DeepSeek V4 Flash. 1M contexto para historias grandes."
-      # Modelos helper (no participan en fallback de chat)
-      - provider: groq
-        model: groq/whisper-large-v3
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        audio: true
-        context_window: 131072
-        note: "Whisper Large V3 — transcripción de audio (helper interno)."
-      - provider: groq
-        model: groq/whisper-large-v3-turbo
-        openai_tools_compatible: true
-        tools_strict: false
-        parallel_tools: false
-        vision: false
-        audio: true
-        context_window: 131072
-        note: "Whisper Large V3 Turbo — transcripción de audio rápida (helper interno)."
-    fallback_strategy: by_context_window
-
 model_aliases:
   gpt-4o: normal
   gpt-4o-mini: normal

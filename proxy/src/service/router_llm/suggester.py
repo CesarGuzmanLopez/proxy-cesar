@@ -54,9 +54,8 @@ ALLOWED_SUGGESTIONS: set[str] = {
     "vision",
     "normal-gratis",
     "flash",
-    "compactador",
 }
-"""All 7 pseudo-models can be suggested by the router."""
+"""All 6 pseudo-models can be suggested by the router."""
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

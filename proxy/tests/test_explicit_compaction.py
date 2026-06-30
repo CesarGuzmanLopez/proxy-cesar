@@ -73,8 +73,8 @@ def mock_litellm_success():
 
 
 @pytest.fixture
-def config_with_compactador():
-    """Config with compactador pseudo-model using real schemas."""
+def config_with_compactor():
+    """Config with compactor pseudo-model using real schemas."""
     config = MagicMock()
     phys1 = PhysicalModelSchema(
         provider="google",
@@ -91,9 +91,9 @@ def config_with_compactador():
         model="glm-4.5-flash",
         context_window=128000,
     )
-    compactador_pm = MagicMock()
-    compactador_pm.physical_models = [phys1, phys2, phys3]
-    config.pseudo_models = {"compactador": compactador_pm}
+    compactor_pm = MagicMock()
+    compactor_pm.physical_models = [phys1, phys2, phys3]
+    config.pseudo_models = {"compactador": compactor_pm}
     return config
 
 
@@ -119,24 +119,24 @@ def conversation_with_turns():
 # ── Compactor model selection tests ─────────────────────────────────────
 
 
-def test_select_compactor_model_large_enough(config_with_compactador):
+def test_select_compactor_model_large_enough(config_with_compactor):
     """Selects model with enough context window for the history."""
-    model = select_compactor_model(config_with_compactador, 50000)
+    model = select_compactor_model(config_with_compactor, 50000)
     assert model is not None
     assert model.model == "gemini-3.5-flash"  # First model with 1M ctx window (enough for 50K)
     assert model.context_window == 1000000
 
 
-def test_select_compactor_model_largest_fallback(config_with_compactador):
+def test_select_compactor_model_largest_fallback(config_with_compactor):
     """When history exceeds all models, returns the one with largest window."""
-    model = select_compactor_model(config_with_compactador, 2000000)
+    model = select_compactor_model(config_with_compactor, 2000000)
     assert model is not None
     assert model.model == "gemini-3.5-flash"  # Largest available
     assert model.context_window == 1000000
 
 
-def test_select_compactor_model_no_compactador():
-    """When compactador pseudo-model is missing, returns None."""
+def test_select_compactor_model_no_compactor():
+    """When compactor pseudo-model is missing, returns None."""
     config = MagicMock()
     config.pseudo_models = {}
     model = select_compactor_model(config, 50000)
@@ -148,7 +148,7 @@ def test_select_compactor_model_no_compactador():
 
 @pytest.mark.asyncio
 async def test_compact_generates_snapshot(
-    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+    mock_litellm_success, config_with_compactor, mock_db, conversation_with_turns
 ):
     """POST /compact generates a snapshot with required fields."""
     conv, turns = conversation_with_turns
@@ -165,7 +165,7 @@ async def test_compact_generates_snapshot(
     result = await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
 
@@ -183,7 +183,7 @@ async def test_compact_generates_snapshot(
 
 @pytest.mark.asyncio
 async def test_snapshot_stored_in_db(
-    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+    mock_litellm_success, config_with_compactor, mock_db, conversation_with_turns
 ):
     """Snapshot stored in conversation_snapshots table via db.add."""
     conv, turns = conversation_with_turns
@@ -198,7 +198,7 @@ async def test_snapshot_stored_in_db(
     await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
 
@@ -214,7 +214,7 @@ async def test_snapshot_stored_in_db(
 
 @pytest.mark.asyncio
 async def test_active_snapshot_id_updated(
-    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+    mock_litellm_success, config_with_compactor, mock_db, conversation_with_turns
 ):
     """active_snapshot_id is updated on the conversation after compaction."""
     conv, turns = conversation_with_turns
@@ -230,7 +230,7 @@ async def test_active_snapshot_id_updated(
     await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
 
@@ -241,7 +241,7 @@ async def test_active_snapshot_id_updated(
 
 
 @pytest.mark.asyncio
-async def test_empty_conversation_400(config_with_compactador, mock_db):
+async def test_empty_conversation_400(config_with_compactor, mock_db):
     """Compacting an empty conversation returns Err(EmptyConversation)."""
     conv = MagicMock()
     conv.id = uuid.uuid4()
@@ -259,7 +259,7 @@ async def test_empty_conversation_400(config_with_compactador, mock_db):
     result = await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
     assert isinstance(result, Err)
@@ -267,14 +267,14 @@ async def test_empty_conversation_400(config_with_compactador, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_conversation_not_found_404(config_with_compactador, mock_db):
+async def test_conversation_not_found_404(config_with_compactor, mock_db):
     """Compacting a non-existent conversation returns Err(ConversationNotFound)."""
     mock_db.get = AsyncMock(return_value=None)
 
     result = await compact_conversation(
         conversation_id=str(uuid.uuid4()),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
     assert isinstance(result, Err)
@@ -283,7 +283,7 @@ async def test_conversation_not_found_404(config_with_compactador, mock_db):
 
 @pytest.mark.asyncio
 async def test_async_dispatch_to_arq(
-    mock_litellm_success, config_with_compactador, mock_db
+    mock_litellm_success, config_with_compactor, mock_db
 ):
     """History > 500K tokens dispatches to arq when pool is available."""
     conv = MagicMock()
@@ -310,7 +310,7 @@ async def test_async_dispatch_to_arq(
     result = await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=mock_arq,
     )
 
@@ -331,7 +331,7 @@ async def test_async_dispatch_to_arq(
 
 @pytest.mark.asyncio
 async def test_multiple_compactions_chain(
-    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+    mock_litellm_success, config_with_compactor, mock_db, conversation_with_turns
 ):
     """Multiple explicit compactions chain correctly via superseded_by."""
     conv, turns = conversation_with_turns
@@ -350,7 +350,7 @@ async def test_multiple_compactions_chain(
     result1 = await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
     assert isinstance(result1, Ok)
@@ -374,7 +374,7 @@ async def test_multiple_compactions_chain(
     result2 = await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
     assert isinstance(result2, Ok)
@@ -384,7 +384,7 @@ async def test_multiple_compactions_chain(
 
 @pytest.mark.asyncio
 async def test_snapshot_contains_required_sections(
-    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+    mock_litellm_success, config_with_compactor, mock_db, conversation_with_turns
 ):
     """Snapshot contains all required sections (Problem State, Technical Decisions, etc.)."""
     conv, turns = conversation_with_turns
@@ -399,7 +399,7 @@ async def test_snapshot_contains_required_sections(
     result = await compact_conversation(
         conversation_id=str(conv.id),
         db=mock_db,
-        config=config_with_compactador,
+        config=config_with_compactor,
         arq_pool=None,
     )
 
@@ -414,7 +414,7 @@ async def test_snapshot_contains_required_sections(
 
 @pytest.mark.asyncio
 async def test_snapshot_preview_truncated(
-    mock_litellm_success, config_with_compactador, mock_db, conversation_with_turns
+    mock_litellm_success, config_with_compactor, mock_db, conversation_with_turns
 ):
     """Long snapshot content is truncated in preview with ellipsis."""
     # Create a response with very long content
@@ -447,7 +447,7 @@ async def test_snapshot_preview_truncated(
         result = await compact_conversation(
             conversation_id=str(conv.id),
             db=mock_db,
-            config=config_with_compactador,
+            config=config_with_compactor,
             arq_pool=None,
         )
 
