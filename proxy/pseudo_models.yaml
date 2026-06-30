@@ -174,9 +174,9 @@ pseudo_models:
   # ── Gratuito (sin Go) ─────────────────────────────────────────────────────
   normal-gratis:
     display_name: Normal Gratis
-    description: "Modelos gratuitos y de bajo costo. Límite 900K tokens — usa /compact si lo superas."
-    input_token_threshold: 900000
-    context_window: 900000
+    description: "Modelos gratuitos y de bajo costo. Límite 500K tokens — lento con contextos mayores."
+    input_token_threshold: 500000
+    context_window: 500000
     router_llm:
       enabled: false
     image_handling:
