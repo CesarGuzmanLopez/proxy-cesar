@@ -986,29 +986,32 @@ async def _stream_response_generator(ctx: StreamContext):
         )
 
         # feature extract cache metadata from streaming response
-        if ctx.cache_metadata is None:
-            provider = ctx.provider or ""
-            cache_applied = _should_stream_cache_be_applied(ctx)
-            cache_meta = build_cache_metadata(response_dict, provider, cache_applied)
-            # Add fallback cache destruction if applicable
-            if (
-                ctx.fallback_info
-                and ctx.fallback_info.applied
-                and ctx.fallback_info.attempted_models
-            ):
-                prev = (
-                    ctx.fallback_info.attempted_models[0]
-                    if len(ctx.fallback_info.attempted_models) > 1
-                    else ""
-                )
-                new_m = ctx.fallback_info.attempted_models[-1]
-                destruction = build_cache_destruction_metadata(
-                    previous_model=prev,
-                    new_model=new_m,
-                    previous_cached_tokens=cache_meta.get("cached_tokens", 0),
-                )
-                cache_meta["fallback_cache_destruction"] = destruction
-            ctx.cache_metadata = cache_meta
+        try:
+            if ctx.cache_metadata is None:
+                provider = ctx.provider or ""
+                cache_applied = _should_stream_cache_be_applied(ctx)
+                cache_meta = build_cache_metadata(response_dict, provider, cache_applied)
+                # Add fallback cache destruction if applicable
+                if (
+                    ctx.fallback_info
+                    and ctx.fallback_info.applied
+                    and ctx.fallback_info.attempted_models
+                ):
+                    prev = (
+                        ctx.fallback_info.attempted_models[0]
+                        if len(ctx.fallback_info.attempted_models) > 1
+                        else ""
+                    )
+                    new_m = ctx.fallback_info.attempted_models[-1]
+                    destruction = build_cache_destruction_metadata(
+                        previous_model=prev,
+                        new_model=new_m,
+                        previous_cached_tokens=cache_meta.get("cached_tokens", 0),
+                    )
+                    cache_meta["fallback_cache_destruction"] = destruction
+                ctx.cache_metadata = cache_meta
+        except Exception as e:
+            logger.error("stream_cache_meta_error conv=%s error=%s", ctx.conversation_id, str(e))
 
         # Set defaults for final metadata chunk (before persistence runs)
         session_caps = ctx.session_caps
