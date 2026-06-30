@@ -17,7 +17,7 @@
 #
 # Correcciones aplicadas desde v1.2:
 # - thinking solo en Anthropic, reasoning_effort solo en OpenAI
-# - Ventanas de contexto corregidas (min(physical) - 1K)
+# - Ventanas de contexto = 90% del modelo físico con menor contexto
 # - vision/pdf/documents separados como capacidades independientes
 # - strip_reasoning donde aplica
 # - System prompts optimizados para Groq
@@ -27,9 +27,9 @@ pseudo_models:
   # ── Razonamiento premium ──────────────────────────────────────────────────
   pensamiento-profundo-caro:
     display_name: Pensamiento Profundo
-    description: "Razonamiento de máximo nivel. Límite 261K tokens — si lo superas usa /compact para continuar."
-    input_token_threshold: 261144
-    context_window: 262144
+    description: "Razonamiento de máximo nivel. Límite 235K tokens — si lo superas usa /compact para continuar."
+    input_token_threshold: 235930
+    context_window: 235930
     router_llm:
       enabled: false
     image_handling:
@@ -63,8 +63,8 @@ pseudo_models:
   tareas-avanzadas:
     display_name: Tareas Avanzadas
     description: "Desarrollo profundo y sostenido. DeepSeek V4 Pro directo."
-    input_token_threshold: 195608
-    context_window: 1000000
+    input_token_threshold: 900000
+    context_window: 900000
     router_llm:
       enabled: false
     image_handling:
@@ -98,8 +98,8 @@ pseudo_models:
   normal:
     display_name: Normal
     description: "Punto de entrada recomendado. MiMo-V2.5 vía Go. Coding extenso."
-    input_token_threshold: 999000
-    context_window: 999000
+    input_token_threshold: 900000
+    context_window: 900000
     router_llm:
       enabled: false
     image_handling:
@@ -135,9 +135,9 @@ pseudo_models:
   # ── Visión ────────────────────────────────────────────────────────────────
   vision:
     display_name: Visión
-    description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 130K tokens — usa /compact si superas."
-    input_token_threshold: 130072
-    context_window: 130072
+    description: "Visión unificada: OCR, diagramas, UI, screenshots. Límite 117K tokens — usa /compact si superas."
+    input_token_threshold: 117965
+    context_window: 117965
     router_llm:
       enabled: false
     image_handling:
@@ -174,9 +174,9 @@ pseudo_models:
   # ── Gratuito (sin Go) ─────────────────────────────────────────────────────
   normal-gratis:
     display_name: Normal Gratis
-    description: "Modelos gratuitos y de bajo costo. Límite 999K tokens — usa /compact si lo superas."
-    input_token_threshold: 999000
-    context_window: 999000
+    description: "Modelos gratuitos y de bajo costo. Límite 900K tokens — usa /compact si lo superas."
+    input_token_threshold: 900000
+    context_window: 900000
     router_llm:
       enabled: false
     image_handling:
@@ -208,8 +208,8 @@ pseudo_models:
   flash:
     display_name: Flash
     description: "Sub-agentes rápidos. Clasificación, extracción, parsing. GPT-OSS 120B (Groq) + fallback Go Flash."
-    input_token_threshold: 127000
-    context_window: 127000
+    input_token_threshold: 115200
+    context_window: 115200
     router_llm:
       enabled: false
     image_handling:
