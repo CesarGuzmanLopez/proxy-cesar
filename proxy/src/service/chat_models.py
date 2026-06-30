@@ -70,6 +70,8 @@ class StreamContext:
     """Pipeline trace for observability — logs LLM in/out events."""
     timeout: float | None = None
     """LLM call timeout in seconds — propagated to _try_physical_model for continuation."""
+    stream_options: dict | None = None
+    """OpenAI-compatible stream options (e.g. {"include_usage": true})."""
 
 
 @dataclass

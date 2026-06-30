@@ -54,6 +54,7 @@ from src.api.chat_stream_helpers import (
 from src.api.chat_stream_persistence import (
     _build_final_metadata_chunk,
     _extract_tokens_from_chunks,
+    _extract_usage_dict_from_chunk,
     _filter_eligible_models,
     _persist_stream_turn,
     _resolve_physical_model,
@@ -524,6 +525,7 @@ async def _handle_streaming_with_db(
                 },
                 trace=trace,
                 timeout=60.0,  # Use same default as DEFAULT_LLM_TIMEOUT_SECONDS
+                stream_options=stream_options,
             ),
         ),
         media_type="text/event-stream",
@@ -557,6 +559,7 @@ async def _stream_response_generator(ctx: StreamContext):
     )
     current_idx: int = 0
     accumulated_content: str = ""
+    accumulated_reasoning: str = ""
     tool_calls_by_index: dict[int, dict] = {}
 
     logger.info(
@@ -650,6 +653,11 @@ async def _stream_response_generator(ctx: StreamContext):
                         # Content: safe to process
                         if hasattr(delta, "content") and delta.content:
                             accumulated_content += delta.content
+
+                        # Reasoning content: accumulate for usage estimation
+                        _rc = getattr(delta, "reasoning_content", None)
+                        if _rc:
+                            accumulated_reasoning += _rc
 
                         # Tool calls: accumulate with defensive extraction
                         tc_deltas = getattr(delta, "tool_calls", None)
@@ -945,12 +953,19 @@ async def _stream_response_generator(ctx: StreamContext):
             last_chunk, accumulated_content, final_tool_calls
         )
 
+        # Estimate reasoning_tokens from accumulated reasoning text
+        # (upstream providers don't always report reasoning_tokens in streaming)
+        reasoning_tokens_estimate = len(accumulated_reasoning) // 4 if accumulated_reasoning else 0
+        # Also try to extract upstream usage if available (has actual reasoning_tokens)
+        upstream_usage = _extract_usage_dict_from_chunk(last_chunk) if last_chunk else {}
+
         logger.info(
-            "stream_complete conv=%s physical=%s tokens=%d+%d",
+            "stream_complete conv=%s physical=%s tokens=%d+%d reasoning_est=%d",
             ctx.conversation_id[:12],
             ctx.physical_model,
             input_tokens,
             output_tokens,
+            reasoning_tokens_estimate,
         )
 
         # Log the assembled response for debugging
@@ -1004,6 +1019,8 @@ async def _stream_response_generator(ctx: StreamContext):
             final_chunk = _build_final_metadata_chunk(
                 ctx, conv, session_caps, input_tokens, output_tokens,
                 finish_reason=finish_reason or "stop",
+                reasoning_tokens=reasoning_tokens_estimate,
+                upstream_usage=upstream_usage or None,
             )
             final_json = json.dumps(final_chunk)
             logger.info(

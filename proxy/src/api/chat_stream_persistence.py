@@ -485,7 +485,7 @@ def _extract_usage_from_chunk(chunk) -> tuple[int, int]:
 
 
 def _extract_usage_dict_from_chunk(chunk) -> dict:
-    """Extract usage dict from a single chunk."""
+    """Extract usage dict from a single chunk, including reasoning_tokens."""
     try:
         usage = getattr(chunk, "usage", None)
         if usage is None:
@@ -500,6 +500,14 @@ def _extract_usage_dict_from_chunk(chunk) -> dict:
         tt = getattr(usage, "total_tokens", None)
         if tt is not None:
             result["total_tokens"] = int(tt)
+        # Extract reasoning_tokens from completion_tokens_details
+        details = getattr(usage, "completion_tokens_details", None)
+        if details is not None:
+            rt = getattr(details, "reasoning_tokens", None)
+            if rt is not None:
+                result["completion_tokens_details"] = {
+                    "reasoning_tokens": int(rt),
+                }
         return result
     except (TypeError, ValueError):
         return {}
@@ -508,8 +516,11 @@ def _extract_usage_dict_from_chunk(chunk) -> dict:
 def _build_final_metadata_chunk(
     ctx: StreamContext, conv, session_caps, input_tokens: int, output_tokens: int,
     finish_reason: str = "stop",
+    *,
+    reasoning_tokens: int = 0,
+    upstream_usage: dict | None = None,
 ) -> dict:
-    """Build the final SSE chunk with complete proxy_metadata."""
+    """Build the final SSE chunk with complete proxy_metadata and optional usage."""
     final_context_tokens = (
         conv.total_tokens if conv is not None else (input_tokens + output_tokens)
     )
@@ -535,9 +546,29 @@ def _build_final_metadata_chunk(
             cache_metadata=ctx.cache_metadata,
         )
     )
-    return {
+    chunk: dict = {
         "id": f"chatcmpl-{ctx.conversation_id[:12]}",
         "object": "chat.completion.chunk",
         "choices": [{"delta": {}, "finish_reason": finish_reason}],
         "proxy_metadata": metadata,
     }
+    # Include usage when client requested stream_options.include_usage
+    include_usage = (ctx.stream_options or {}).get("include_usage", False)
+    if include_usage:
+        usage_dict: dict = {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+        # Prefer upstream reasoning_tokens if available
+        upstream_rt = 0
+        if upstream_usage:
+            details = upstream_usage.get("completion_tokens_details") or {}
+            upstream_rt = details.get("reasoning_tokens", 0)
+        effective_rt = upstream_rt or reasoning_tokens
+        if effective_rt:
+            usage_dict["completion_tokens_details"] = {
+                "reasoning_tokens": effective_rt,
+            }
+        chunk["usage"] = usage_dict
+    return chunk
